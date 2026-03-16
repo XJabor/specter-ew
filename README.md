@@ -52,3 +52,8 @@ Debug mode is disabled. Use on a **trusted network only** (tactical LAN, isolate
 
 ### Disclaimer
 This application was built with AI. These models are used as a conservative estimates. Use these calculators at your own risk.
+
+### To Do
+- Create a "workbench" to create more enemy and friendly icons
+- Offline mode
+- Center on icons feature
