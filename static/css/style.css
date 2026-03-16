@@ -134,6 +134,111 @@ input, select {
     cursor: pointer;
 }
 
+/* Mobile sidebar toggle button — hidden on desktop */
+#sidebar-toggle {
+    display: none;
+}
+
+/* Mobile results chip — hidden on desktop */
+#mobile-results {
+    display: none;
+}
+
+/* Mobile sidebar overlay — hidden on desktop */
+#sidebar-overlay {
+    display: none;
+}
+
+/* ===================== MOBILE / TABLET ===================== */
+@media (max-width: 768px) {
+    body {
+        flex-direction: column;
+    }
+
+    #sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 85vw;
+        max-width: 320px;
+        height: 100vh;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        z-index: 2000;
+        overflow-y: auto;
+    }
+
+    #sidebar.open {
+        transform: translateX(0);
+    }
+
+    #sidebar-overlay {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 1999;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+    }
+
+    #sidebar-overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    #map {
+        width: 100vw;
+        height: 100vh;
+        flex-grow: unset;
+    }
+
+    #sidebar-toggle {
+        display: block;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 3000;
+        background-color: rgba(30, 30, 30, 0.85);
+        color: #fff;
+        border: 1px solid #666;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+    }
+
+    #mobile-results {
+        display: block;
+        position: fixed;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        background-color: rgba(20, 20, 20, 0.88);
+        color: #e0e0e0;
+        border: 1px solid #555;
+        border-radius: 6px;
+        padding: 7px 14px;
+        font-size: 13px;
+        white-space: nowrap;
+        pointer-events: none;
+    }
+
+    #mobile-margin {
+        font-weight: bold;
+        font-size: 1.1em;
+    }
+
+    /* Push clear button up so it doesn't overlap the results chip */
+    #clear-nodes-btn {
+        bottom: 70px;
+    }
+}
+/* ===================== END MOBILE ===================== */
+
 /* Sidebar utility buttons */
 .sidebar-btn {
     background-color: #555;
