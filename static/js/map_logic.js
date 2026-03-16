@@ -192,6 +192,7 @@ document.getElementById('clear-nodes-btn').addEventListener('click', function() 
 
     document.getElementById('js_margin').innerText = '--';
     document.getElementById('js_effect').innerText = 'Awaiting Map Placement...';
+    setMobileResult('--', 'Awaiting Map Placement...');
 });
 
 map.on('click', function(e) {
@@ -230,7 +231,9 @@ function updateTacticalPicture() {
     if (!enemyTxMarker || !enemyRxMarker || !jammerMarker || !isJammingActive) {
         if (jammerLinkLine) { map.removeLayer(jammerLinkLine); jammerLinkLine = null; }
         document.getElementById('js_margin').innerText = '--';
-        document.getElementById('js_effect').innerText = isJammingActive ? 'Awaiting Map Placement...' : 'Jamming Ceased';
+        const awaitText = isJammingActive ? 'Awaiting Map Placement...' : 'Jamming Ceased';
+        document.getElementById('js_effect').innerText = awaitText;
+        setMobileResult('--', awaitText);
     }
 
     let enemyDistKm = 0;
@@ -276,8 +279,10 @@ function updateTacticalPicture() {
         .then(data => {
             // NEW: Explicit Server Error Handling
             if (data.status === 'error') {
-                document.getElementById('js_effect').innerText = 'SERVER ERROR: ' + data.message;
+                const errText = 'ERROR: ' + data.message;
+                document.getElementById('js_effect').innerText = errText;
                 document.getElementById('js_effect').style.color = 'red';
+                setMobileResult('--', errText);
                 return;
             }
             document.getElementById('js_effect').style.color = ''; // Reset color
@@ -287,6 +292,7 @@ function updateTacticalPicture() {
             if(data.status === 'success') {
                 document.getElementById('js_margin').innerText = data.margin;
                 document.getElementById('js_effect').innerText = data.effect;
+                setMobileResult(data.margin, data.effect);
                 
                 let lineColor = 'gray';
                 if (data.margin <= -6) lineColor = '#ff3333';        // Strong Red
@@ -355,6 +361,26 @@ function updateTacticalPicture() {
 
 document.querySelectorAll('input, select').forEach(element => {
     element.addEventListener('change', updateTacticalPicture);
+});
+
+// --- MOBILE SIDEBAR TOGGLE ---
+function setMobileResult(margin, effect) {
+    document.getElementById('mobile-margin').textContent = margin;
+    document.getElementById('mobile-effect').textContent = effect;
+}
+
+const sidebarToggle = document.getElementById('sidebar-toggle');
+const sidebar = document.getElementById('sidebar');
+const sidebarOverlay = document.getElementById('sidebar-overlay');
+
+sidebarToggle.addEventListener('click', function() {
+    sidebar.classList.toggle('open');
+    sidebarOverlay.classList.toggle('visible');
+});
+
+sidebarOverlay.addEventListener('click', function() {
+    sidebar.classList.remove('open');
+    sidebarOverlay.classList.remove('visible');
 });
 
 // --- TOGGLE FH UI ---
