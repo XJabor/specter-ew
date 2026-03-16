@@ -1,6 +1,6 @@
-# EW Planner
+# Specter EW Planning Tool
 
-A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs locally in the browser — no internet required.
+A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs locally in the browser.
 
 ## Features
 
@@ -15,13 +15,15 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - Python 3.12+
 - Flask 3.0.0
 
-## Setup
+## Install and Setup
 
 ```bash
-python -m venv venv
+git clone https://github.com/XJabor/specter-ew.git
+cd specter-ew
+python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+pip3 install -r requirements.txt
+python3 app.py
 ```
 
 Open `http://localhost:5000` in your browser.
@@ -45,3 +47,6 @@ http://<host-ip>:5000
 Debug mode is disabled. Use on a **trusted network only** (tactical LAN, isolated hotspot, etc.).
 
 > **Security note:** This tool has no authentication and is not hardened for internet-facing deployment. Do not expose it on a public network without adding authentication and HTTPS.
+
+### Disclaimer
+This application was built with AI. These models are used as a conservative estimates. Use these calculators at your own risk.
