@@ -2,6 +2,8 @@
 
 A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs locally in the browser — no internet required.
 
+![Specter Interface](images/ui-screenshot.png)
+
 ## Features
 
 - **Jamming effectiveness (J/S margin)** — calculates jammer-to-signal ratio at the enemy receiver
