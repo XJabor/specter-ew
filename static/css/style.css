@@ -88,7 +88,23 @@ input, select {
 
 /* Hides the little speech-bubble triangle pointing down */
 .leaflet-tooltip.dist-label::before {
-    display: none; 
+    display: none;
+}
+
+/* MGRS coordinate label above each marker */
+.mgrs-label {
+    background-color: rgba(0, 0, 0, 0.75);
+    border: 1px solid #888;
+    color: #f0f0f0;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 2px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+.leaflet-tooltip.mgrs-label::before {
+    display: none;
 }
 
 /* Floating Clear Button */
