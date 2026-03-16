@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPECTER &#128123;</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous" />
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/mgrs@1.0.0/dist/mgrs.js" integrity="sha384-Vc5FnKUcRBV6CdFHk75c9G1+FBRVd2BSD6txVIXP6t7+FLRM2OAj7B8Kmo8Xqn3d" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div id="sidebar">
+        <h3>SPECTER EW Planning Tool</h3>
+        <div class="control-group" style="border-left: 4px solid #ffffff;">
+            <h3>Jump to Location</h3>
+            <input type="text" id="loc_search" placeholder="e.g. 39.36, -94.91 OR 15SUD49887308">
+            <button id="btn_search" class="sidebar-btn" style="width: 100%; margin-top: 8px;">Go to Grid</button>
+        </div>
+
+        <div class="control-group">
+            <h3>Environment</h3>
+            <label>Frequency (MHz): <input type="number" id="freq_mhz" value="150"></label>
+        </div>
+
+        <div class="control-group" style="padding: 10px 15px;">
+            <label style="color: #ffaa00; font-weight: bold; margin: 0; cursor: pointer;">
+                <input type="checkbox" id="fh_toggle"> Enable Frequency Hopping (FH) Tax
+            </label>
+        </div>
+
+        <div class="control-group red-team">
+            <h3>Enemy Link (Red)</h3>
+            <label>Enemy-to-Enemy Terrain: 
+                <select id="enemy_terrain">
+                    <option value="free space">Free Space (Air)</option>
+                    <option value="rural">Rural / Open</option>
+                    <option value="light forest">Light Forest / Suburbs</option>
+                    <option value="dense forest">Dense Forest / Urban</option>
+                </select>
+            </label>
+            <label>Tx Power (W): <input type="number" id="enemy_tx_w" value="5"></label>
+            <label>Tx Ant Gain (dBi): <input type="number" id="enemy_tx_gain" value="0"></label>
+            <label>Rx Ant Gain (dBi): <input type="number" id="enemy_rx_gain" value="0"></label>
+            
+            <div id="enemy_bw_container" style="display: none;">
+                <label style="color: #ffaa00;">Signal Bandwidth (kHz): <input type="number" id="enemy_bw_khz" value="25"></label>
+            </div>
+        </div>
+
+        <div class="control-group blue-team">
+            <h3>Friendly Assets (Blue)</h3>
+            <label>Jammer-to-Target Terrain: 
+                <select id="jammer_terrain">
+                    <option value="free space">Free Space (Air)</option>
+                    <option value="rural">Rural / Open</option>
+                    <option value="light forest">Light Forest / Suburbs</option>
+                    <option value="dense forest">Dense Forest / Urban</option>
+                </select>
+            </label>
+            <label>Jammer Tx Power (W): <input type="number" id="jammer_tx_w" value="20"></label>
+            <label>Jammer Tx Ant Gain (dBi): <input type="number" id="jammer_tx_gain" value="3"></label>
+            
+            <div id="jammer_bw_container" style="display: none;">
+                <label style="color: #ffaa00;">Jamming Sweep BW (kHz): <input type="number" id="jammer_bw_khz" value="20000"></label>
+            </div>
+            
+            <hr style="border-top: 1px solid #555; margin: 15px 0;">
+            <label>Sensor Rx Sensitivity (dBm): <input type="number" id="rx_sensitivity" value="-90"></label>
+            <label>Sensor Rx Ant Gain (dBi): <input type="number" id="friendly_rx_gain" value="0"></label>
+        </div>
+
+        <div id="results-panel">
+            <h3>Effectiveness</h3>
+            <p>J/S Margin: <span id="js_margin">--</span> dB</p>
+            <p>Status: <span id="js_effect">Awaiting Map Placement...</span></p>
+        </div>
+    </div>
+
+    <button id="clear-nodes-btn">Clear All Nodes</button>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+    <script src="/static/js/map_logic.js"></script>
+</body>
+</html>

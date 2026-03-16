@@ -1,0 +1,16 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+
+# Claude Code
+.claude/
+
+# OS / Editor
+.DS_Store
+*.swp
+*.swo

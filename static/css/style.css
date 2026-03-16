@@ -1,0 +1,135 @@
+body, html {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    overflow: hidden; /* Prevents weird scrollbars */
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+}
+
+/* THE MISSING SIDEBAR BLOCK */
+#sidebar {
+    width: 320px;
+    background-color: #2d2d2d;
+    padding: 20px;
+    box-shadow: 2px 0 5px rgba(0,0,0,0.5);
+    
+    /* These three lines keep it from extending off the screen and add a scrollbar */
+    height: 100vh; 
+    box-sizing: border-box; 
+    overflow-y: auto; 
+    
+    z-index: 1000;
+}
+
+#map {
+    flex-grow: 1;
+    height: 100%;
+    position: relative;
+    z-index: 1; /* Keeps it behind the popups */
+}
+
+h2, h3 {
+    margin-top: 0;
+    color: #ffffff;
+    border-bottom: 1px solid #444;
+    padding-bottom: 5px;
+}
+
+.control-group {
+    background-color: #383838;
+    padding: 15px;
+    margin-bottom: 15px;
+    border-radius: 5px;
+}
+
+.red-team { border-left: 4px solid #ff4444; }
+.blue-team { border-left: 4px solid #44aaff; }
+
+label {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+input, select {
+    width: 100%;
+    padding: 8px;
+    margin-top: 4px;
+    background-color: #222;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 3px;
+    box-sizing: border-box;
+}
+
+#results-panel {
+    background-color: #111;
+    padding: 15px;
+    border-radius: 5px;
+    border: 1px solid #555;
+}
+
+#js_margin { font-weight: bold; font-size: 1.2em; }
+
+/* Custom styling for the distance labels on the map */
+.dist-label {
+    background-color: rgba(0, 0, 0, 0.7);
+    border: 1px solid #555;
+    color: #fff;
+    font-weight: bold;
+    font-size: 12px;
+    padding: 2px 4px;
+    text-align: center;
+    border-radius: 4px;
+}
+
+/* Hides the little speech-bubble triangle pointing down */
+.leaflet-tooltip.dist-label::before {
+    display: none; 
+}
+
+/* Floating Clear Button */
+#clear-nodes-btn {
+    position: absolute;
+    bottom: 30px; /* Moved from the top to the bottom */
+    right: 30px;
+    z-index: 1000; /* Keeps it above the map tiles */
+    background-color: #ff4444;
+    color: white;
+    border: 1px solid #cc0000;
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+}
+
+#clear-nodes-btn:hover {
+    background-color: #cc0000;
+}
+
+/* Make popup buttons readable against the white Leaflet background */
+.leaflet-popup-content button {
+    color: black;
+    margin-top: 5px;
+    cursor: pointer;
+}
+
+/* Sidebar utility buttons */
+.sidebar-btn {
+    background-color: #555;
+    color: white;
+    border: 1px solid #777;
+    padding: 4px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.sidebar-btn:hover {
+    background-color: #777;
+}
