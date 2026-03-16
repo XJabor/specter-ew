@@ -51,7 +51,7 @@ Debug mode is disabled. Use on a **trusted network only** (tactical LAN, isolate
 > **Security note:** This tool has no authentication and is not hardened for internet-facing deployment. Do not expose it on a public network without adding authentication and HTTPS.
 
 ### Disclaimer
-This application was built with AI. These models are used as a conservative estimates. Use these calculators at your own risk.
+This application was built with AI. These models are conservative estimates. Use these estimates at your own risk.
 
 ### To Do
 - Create a "workbench" to create more enemy and friendly icons
