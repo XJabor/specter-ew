@@ -24,19 +24,28 @@ def calculate_ea():
         freq_mhz = float(data.get('freq_mhz', 150))
         enemy_terrain = data.get('enemy_terrain', 'free space')
         jammer_terrain = data.get('jammer_terrain', 'free space')
-        
+
         enemy_tx_w = float(data.get('enemy_tx_w', 5))
         enemy_tx_gain = float(data.get('enemy_tx_gain', 0))
         enemy_rx_gain = float(data.get('enemy_rx_gain', 0))
         enemy_dist_km = float(data.get('enemy_dist_km', 1.0))
-        
+
         jammer_tx_w = float(data.get('jammer_tx_w', 20))
         jammer_tx_gain = float(data.get('jammer_tx_gain', 3))
         jammer_dist_km = float(data.get('jammer_dist_km', 1.0))
 
         apply_fh = data.get('apply_fh', False)
-        enemy_bw_khz = float(data.get('enemy_bw_khz', 25)) 
-        jammer_bw_khz = float(data.get('jammer_bw_khz', 25)) 
+        enemy_bw_khz = float(data.get('enemy_bw_khz', 25))
+        jammer_bw_khz = float(data.get('jammer_bw_khz', 25))
+
+        if freq_mhz <= 0:
+            return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
+        if enemy_tx_w <= 0 or jammer_tx_w <= 0:
+            return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
+        if enemy_dist_km <= 0 or jammer_dist_km <= 0:
+            return jsonify({'status': 'error', 'message': 'Distance must be greater than zero.'})
+        if enemy_bw_khz <= 0 or jammer_bw_khz <= 0:
+            return jsonify({'status': 'error', 'message': 'Bandwidth must be greater than zero.'})
 
         # Enemy Math
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
@@ -76,12 +85,17 @@ def calculate_es():
     try:
         freq_mhz = float(data.get('freq_mhz', 150))
         sensor_terrain = data.get('jammer_terrain', 'free space')
-        
+
         enemy_tx_w = float(data.get('enemy_tx_w', 5))
         enemy_tx_gain = float(data.get('enemy_tx_gain', 0))
-        
+
         rx_sensitivity = float(data.get('rx_sensitivity', -90))
         rx_gain = float(data.get('friendly_rx_gain', 0))
+
+        if freq_mhz <= 0:
+            return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
+        if enemy_tx_w <= 0:
+            return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
         
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
         enemy_eirp = calculate_eirp(enemy_tx_dbm, enemy_tx_gain)
