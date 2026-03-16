@@ -211,6 +211,17 @@ map.on('click', function(e) {
     updateTacticalPicture();
 });
 
+// --- MGRS TOOLTIPS ---
+function updateMGRSTooltips() {
+    const markers = [enemyTxMarker, enemyRxMarker, jammerMarker];
+    markers.forEach(function(marker) {
+        if (!marker) return;
+        const latlng = marker.getLatLng();
+        const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
+        marker.bindTooltip(mgrsStr, {permanent: true, direction: 'top', className: 'mgrs-label'});
+    });
+}
+
 // --- MATH & DRAWING ENGINE ---
 function updateTacticalPicture() {
     if (!enemyTxMarker || !enemyRxMarker) {
@@ -338,6 +349,8 @@ function updateTacticalPicture() {
         if (txRangeCircle) { map.removeLayer(txRangeCircle); txRangeCircle = null; }
         if (rxRangeCircle) { map.removeLayer(rxRangeCircle); rxRangeCircle = null; }
     }
+
+    updateMGRSTooltips();
 }
 
 document.querySelectorAll('input, select').forEach(element => {
