@@ -65,14 +65,6 @@ input, select {
     box-sizing: border-box;
 }
 
-#results-panel {
-    background-color: #111;
-    padding: 15px;
-    border-radius: 5px;
-    border: 1px solid #555;
-}
-
-#js_margin { font-weight: bold; font-size: 1.2em; }
 
 /* Custom styling for the distance labels on the map */
 .dist-label {
@@ -110,9 +102,9 @@ input, select {
 /* Floating Clear Button */
 #clear-nodes-btn {
     position: absolute;
-    bottom: 30px; /* Moved from the top to the bottom */
+    bottom: 30px;
     right: 30px;
-    z-index: 1000; /* Keeps it above the map tiles */
+    z-index: 1000;
     background-color: #ff4444;
     color: white;
     border: 1px solid #cc0000;
@@ -125,6 +117,23 @@ input, select {
 
 #clear-nodes-btn:hover {
     background-color: #cc0000;
+}
+
+/* Center-on-Nodes Leaflet Control Button */
+.center-nodes-btn {
+    background-color: #2a7abf;
+    color: white;
+    border: 1px solid #1a5a9f;
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+    display: block;
+}
+
+.center-nodes-btn:hover {
+    background-color: #1a5a9f;
 }
 
 /* Make popup buttons readable against the white Leaflet background */
@@ -232,12 +241,231 @@ input, select {
         font-size: 1.1em;
     }
 
-    /* Push clear button up so it doesn't overlap the results chip */
+    /* Push buttons up so they don't overlap the results chip */
     #clear-nodes-btn {
         bottom: 70px;
     }
+
 }
 /* ===================== END MOBILE ===================== */
+
+/* ============================================================
+   WORKBENCH PANEL
+   ============================================================ */
+
+#workbench {
+    position: fixed;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    z-index: 999;
+    background-color: rgba(30, 30, 30, 0.92);
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 10px;
+    width: 280px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+}
+
+.workbench-title {
+    color: #aaa;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    text-align: center;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #444;
+    padding-bottom: 5px;
+}
+
+.workbench-section {
+    margin-bottom: 8px;
+}
+
+.workbench-section-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #777;
+    font-size: 9px;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.minimize-btn {
+    background: none;
+    border: none;
+    color: #777;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.minimize-btn:hover { color: #fff; }
+
+#link-statuses-body {
+    max-height: 260px;
+    overflow-y: auto;
+    margin-top: 2px;
+}
+
+.workbench-btn {
+    display: block;
+    width: 100%;
+    padding: 7px 8px;
+    margin-bottom: 4px;
+    background-color: #3a3a3a;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.workbench-btn:hover {
+    background-color: #4a4a4a;
+}
+
+.workbench-btn.active {
+    background-color: #1a5a9f;
+    border-color: #2a7abf;
+    color: #fff;
+}
+
+.workbench-btn.red-btn { border-left: 3px solid #ff4444; }
+.workbench-btn.blue-btn { border-left: 3px solid #44aaff; }
+.workbench-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.workbench-btn.unlink-btn { border-left: 3px solid #ff4444; color: #ff9999; }
+
+#mode-indicator {
+    margin-top: 6px;
+    padding: 5px 6px;
+    background-color: #111;
+    border: 1px solid #444;
+    border-radius: 3px;
+    font-size: 10px;
+    color: #aaa;
+    text-align: center;
+    line-height: 1.3;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ============================================================
+   RESULTS TABLE
+   ============================================================ */
+
+.results-empty {
+    color: #777;
+    font-style: italic;
+    font-size: 12px;
+    margin: 4px 0;
+}
+
+.results-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    table-layout: fixed;
+}
+
+.results-table th {
+    color: #666;
+    text-align: left;
+    padding: 2px 4px;
+    border-bottom: 1px solid #444;
+    font-weight: normal;
+}
+
+.results-table td {
+    padding: 4px 4px;
+    border-bottom: 1px solid #2a2a2a;
+    color: #ccc;
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.results-table td:nth-child(4) {
+    white-space: normal;
+    text-overflow: clip;
+}
+
+/* Column widths */
+.results-table th:nth-child(1),
+.results-table td:nth-child(1) { width: 20px; }  /* remove btn */
+.results-table th:nth-child(2),
+.results-table td:nth-child(2) { width: 70px; }  /* Link */
+.results-table th:nth-child(3),
+.results-table td:nth-child(3) { width: 52px; }  /* J/S */
+.results-table th:nth-child(4),
+.results-table td:nth-child(4) { width: 98px; }  /* Effect */
+
+/* Enemy comms header rows */
+.enemy-link-row { cursor: pointer; background-color: rgba(255,255,255,0.04); }
+.enemy-link-row:hover { background-color: rgba(255,255,255,0.08); }
+.enemy-link-row td { color: #ddd; font-weight: bold; }
+
+/* Jammer sub-rows */
+.jammer-sub-row { cursor: pointer; }
+.jammer-sub-row:hover { background-color: rgba(255,255,255,0.05); }
+.jammer-sub-row td:nth-child(2) { padding-left: 12px; }
+
+/* Result color coding */
+.results-table tr.result-complete td { color: #00ee00; }
+.results-table tr.result-warbling td { color: #ff9900; }
+.results-table tr.result-none    td { color: #ff3333; }
+.results-table tr.result-unknown td { color: #666; font-style: italic; }
+
+/* Uncontested label */
+td.uncontested { color: #666; font-style: italic; font-weight: normal; }
+
+/* Selected row highlight */
+.row-selected td { background-color: rgba(255, 255, 255, 0.12) !important; }
+
+/* Orphaned jammer section divider */
+.section-divider td {
+    color: #555;
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 5px 4px 2px;
+    border-bottom: 1px solid #444;
+}
+
+.remove-link-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0 2px;
+    line-height: 1;
+}
+
+.remove-link-btn:hover { color: #ff4444; }
+
+/* ============================================================
+   MOBILE — WORKBENCH
+   ============================================================ */
+
+@media (max-width: 768px) {
+    #workbench {
+        top: 60px;
+        right: 10px;
+        transform: none;
+        width: 260px;
+    }
+}
 
 /* Sidebar utility buttons */
 .sidebar-btn {
