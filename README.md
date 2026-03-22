@@ -10,7 +10,8 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - **Sensing distance rings** — visualizes ES detection range for threat awareness
 - **Dual terrain support** — switch between line-of-sight (free space) and terrain-masked propagation models
 - **Frequency-hopping tax** — applies a configurable jamming penalty for frequency-hopping waveforms
-- **Interactive map** — 3-click placement workflow on a Leaflet map
+- **Workbench** — select multiple blue and red icons to place on the map. Link red nodes individually or link all nodes automatically. Select individual links to highlight it on the map
+- **Interactive map** — move all icons freely on a Leaflet map that automatically calculates distance
 
 ## Requirements
 
@@ -32,9 +33,13 @@ Open `http://localhost:5000` in your browser.
 
 ## Usage
 
-1. **Click once** on the map to place the Enemy Transmitter (TX)
-2. **Click again** to place the Enemy Receiver (RX)
-3. **Click a third time** to place your Jammer
+1. Select Enemy Node or Friendly Node and click on the map where you want to place them
+2. Link Enemy Nodes individually or by selecting "Link All Enemy Comms" in the Workbench
+3. Left-Click Enemy Node and select "Show Detection Ring" if desired
+3. Left-Click Friendly Icon, select "Link to Target", then select your desired Enemy Node to target
+
+- Left-Click Enemy Node: Link Enemy Comms, Toggle Detection Ring, Remove Node
+- Left-Click Friendly Node: Link to Target (then click your target to calculate EA), Remove Node
 
 The tool calculates J/S margin at the enemy RX and displays sensing rings showing ES detection threat radius. Adjust platform parameters in the sidebar and recalculate instantly.
 
@@ -54,6 +59,5 @@ Debug mode is disabled. Use on a **trusted network only** (tactical LAN, isolate
 This application was built with AI. These models are conservative estimates. Use these estimates at your own risk.
 
 ### To Do
-- Create a "workbench" to create more enemy and friendly icons
 - Offline mode
-- Center on icons feature
+- Account for elevation data in EA and ES links

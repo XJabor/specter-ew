@@ -69,11 +69,6 @@
             <label>Sensor Rx Ant Gain (dBi): <input type="number" id="friendly_rx_gain" value="0"></label>
         </div>
 
-        <div id="results-panel">
-            <h3>Effectiveness</h3>
-            <p>J/S Margin: <span id="js_margin">--</span> dB</p>
-            <p>Status: <span id="js_effect">Awaiting Map Placement...</span></p>
-        </div>
     </div>
 
     <button id="sidebar-toggle" aria-label="Toggle settings">&#9776;</button>
@@ -81,6 +76,31 @@
     <div id="mobile-results">
         <span id="mobile-margin">--</span> dB &nbsp;&bull;&nbsp; <span id="mobile-effect">Place nodes...</span>
     </div>
+    <div id="workbench">
+        <div class="workbench-title">WORKBENCH</div>
+        <div class="workbench-section">
+            <div class="workbench-section-label">PLACE NODES</div>
+            <button class="workbench-btn red-btn" id="btn-place-red">⬤ Enemy Node</button>
+            <button class="workbench-btn blue-btn" id="btn-place-blue">⬤ Friendly Node</button>
+        </div>
+        <div class="workbench-section">
+            <div class="workbench-section-label">QUICK ACTIONS</div>
+            <button class="workbench-btn" id="btn-link-all-enemy" disabled>Link All Enemy Comms</button>
+        </div>
+        <div class="workbench-section">
+            <div class="workbench-section-label">
+                LINK STATUS
+                <button id="btn-minimize-links" class="minimize-btn">▼</button>
+            </div>
+            <div id="link-statuses-body">
+                <div id="results-list">
+                    <p class="results-empty">No links defined.</p>
+                </div>
+            </div>
+        </div>
+        <div id="mode-indicator">Pan / Select</div>
+    </div>
+
     <button id="clear-nodes-btn">Clear All Nodes</button>
     <div id="map"></div>
 
