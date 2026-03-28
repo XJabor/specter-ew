@@ -421,10 +421,28 @@ function recalculateAll() {
     const done = () => { if (--pending === 0) renderResults(); };
 
     tasks.forEach(({ jLink, eLink, i, jammerDistKm, enemyDistKm }) => {
+        const payload = { ...params, enemy_dist_km: enemyDistKm, jammer_dist_km: jammerDistKm };
+
+        // Include node coordinates so the backend can perform elevation-aware LOS analysis
+        const blue = findNode('blue', jLink.blueId);
+        const rx   = findNode('red',  jLink.rxId);
+        const tx   = findNode('red',  eLink.txId);
+        if (blue && rx && tx) {
+            const bll = blue.marker.getLatLng();
+            const rll = rx.marker.getLatLng();
+            const tll = tx.marker.getLatLng();
+            payload.jammer_lat = bll.lat;
+            payload.jammer_lon = bll.lng;
+            payload.rx_lat     = rll.lat;
+            payload.rx_lon     = rll.lng;
+            payload.tx_lat     = tll.lat;
+            payload.tx_lon     = tll.lng;
+        }
+
         fetch('/calculate_ea', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...params, enemy_dist_km: enemyDistKm, jammer_dist_km: jammerDistKm })
+            body: JSON.stringify(payload)
         })
         .then(r => r.json())
         .then(data => {
@@ -466,17 +484,17 @@ window.toggleNodeES = function(id) {
 };
 
 function updateESCircles() {
+    // Remove circles for any node that is no longer active
+    redNodes.forEach(n => {
+        if (!n.esActive && n.esCircle) { map.removeLayer(n.esCircle); n.esCircle = null; }
+    });
+
     const activeESNodes = redNodes.filter(n => n.esActive);
+    if (activeESNodes.length === 0) return;
 
-    if (activeESNodes.length === 0) {
-        redNodes.forEach(n => {
-            if (n.esCircle) { map.removeLayer(n.esCircle); n.esCircle = null; }
-        });
-        return;
-    }
-
-    const esPayload = {
+    const esParams = {
         freq_mhz:         document.getElementById('freq_mhz').value,
+        enemy_terrain:    document.getElementById('enemy_terrain').value,
         jammer_terrain:   document.getElementById('jammer_terrain').value,
         enemy_tx_w:       document.getElementById('enemy_tx_w').value,
         enemy_tx_gain:    document.getElementById('enemy_tx_gain').value,
@@ -484,26 +502,38 @@ function updateESCircles() {
         friendly_rx_gain: document.getElementById('friendly_rx_gain').value
     };
 
-    fetch('/calculate_es', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(esPayload)
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status !== 'success') return;
-        const radiusMeters = data.radius_km * 1000;
-        const label = `Detection: ${data.radius_km.toFixed(2)} km`;
-        redNodes.forEach(node => {
-            if (node.esActive) {
-                if (node.esCircle) map.removeLayer(node.esCircle);
-                node.esCircle = L.circle(node.marker.getLatLng(), {
-                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
+    // Each active node gets its own terrain-aware polygon request (coordinates differ)
+    activeESNodes.forEach(node => {
+        const ll = node.marker.getLatLng();
+        const payload = { ...esParams, enemy_lat: ll.lat, enemy_lon: ll.lng };
+
+        fetch('/calculate_es_terrain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status !== 'success') return;
+            if (node.esCircle) map.removeLayer(node.esCircle);
+
+            if (data.polygon_points) {
+                // Terrain-aware detection polygon
+                const label = `Detection: ~${data.base_range_km.toFixed(1)} km (terrain)`;
+                node.esCircle = L.polygon(data.polygon_points, {
+                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
                 }).bindTooltip(label, {
                     permanent: true, direction: 'right', className: 'dist-label'
                 }).addTo(map);
             } else {
-                if (node.esCircle) { map.removeLayer(node.esCircle); node.esCircle = null; }
+                // Fallback: uniform circle when elevation API is unavailable
+                const radiusMeters = data.base_range_km * 1000;
+                const label = `Detection: ${data.base_range_km.toFixed(2)} km`;
+                node.esCircle = L.circle(ll, {
+                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
+                }).bindTooltip(label, {
+                    permanent: true, direction: 'right', className: 'dist-label'
+                }).addTo(map);
             }
         });
     });
@@ -612,7 +642,7 @@ function renderResults() {
                     && selectedLink.jammingLinkId === jLink.id
                     && selectedLink.enemyLinkId === eLink.id;
 
-                let margin = '--', effect = 'Pending...', rowClass = '';
+                let margin = '--', effect = 'Pending...', rowClass = '', losBadge = '';
                 if (result) {
                     if      (result.status === 'no-enemy-link') { effect = 'No enemy link'; rowClass = 'result-unknown'; }
                     else if (result.status === 'error')         { effect = 'Error';          rowClass = 'result-unknown'; }
@@ -621,6 +651,11 @@ function renderResults() {
                         effect = result.effect;
                         rowClass = result.margin >= 6 ? 'result-complete' : result.margin > -6 ? 'result-warbling' : 'result-none';
                         if (bestMargin === null || result.margin > bestMargin) bestMargin = result.margin;
+                        if (result.jammer_los != null) {
+                            losBadge = result.jammer_los.is_los
+                                ? '<span class="los-badge los-badge--los">LOS</span>'
+                                : `<span class="los-badge los-badge--nlos">NLOS +${result.jammer_los.diffraction_loss_db}dB</span>`;
+                        }
                     }
                 }
 
@@ -629,7 +664,7 @@ function renderResults() {
                     <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeJammingLinkById('${jLink.id}')">✕</button></td>
                     <td>↳ ${jLink.blueId}</td>
                     <td>${margin}</td>
-                    <td>${effect}</td>
+                    <td>${effect} ${losBadge}</td>
                 </tr>`;
             });
         }

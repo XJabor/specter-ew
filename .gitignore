@@ -14,3 +14,18 @@ __pycache__/
 .DS_Store
 *.swp
 *.swo
+
+# IDE
+.vscode/
+.idea/
+
+# Python build artifacts
+*.egg-info/
+dist/
+*.egg
+
+# Logs
+*.log
+
+# Stray pip output-redirect artifact
+=2.28
