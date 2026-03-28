@@ -7,8 +7,9 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 ## Features
 
 - **Jamming effectiveness (J/S margin)** — calculates jammer-to-signal ratio at the enemy receiver
-- **Sensing distance rings** — visualizes ES detection range for threat awareness
-- **Dual terrain support** — switch between line-of-sight (free space) and terrain-masked propagation models
+- **Elevation-aware propagation** — queries the Open-Elevation API to compute line-of-sight status and knife-edge diffraction loss (ITU-R P.526) for each jamming link; EA results include an LOS/NLOS badge and the diffraction penalty applied
+- **Terrain-shaped detection rings** — ES sensing range is rendered as an azimuthal polygon rather than a uniform circle, shrinking in directions blocked by terrain; falls back to a circle if the elevation API is unreachable
+- **Clutter terrain types** — manual terrain category (free space, rural, light forest, dense forest) applies a uniform clutter loss on top of the elevation-derived diffraction
 - **Frequency-hopping tax** — applies a configurable jamming penalty for frequency-hopping waveforms
 - **Workbench** — select multiple blue and red icons to place on the map. Link red nodes individually or link all nodes automatically. Select individual links to highlight it on the map
 - **Interactive map** — move all icons freely on a Leaflet map that automatically calculates distance
@@ -17,6 +18,7 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 
 - Python 3.12+
 - Flask 3.0.0
+- requests 2.28+
 
 ## Install and Setup
 
@@ -59,5 +61,4 @@ Debug mode is disabled. Use on a **trusted network only** (tactical LAN, isolate
 This application was built with AI. These models are conservative estimates. Use these estimates at your own risk.
 
 ### To Do
-- Offline mode
-- Account for elevation data in EA and ES links
+- Offline SRTM tile support — replace the Open-Elevation API with local HGT files in `static/offline_maps/` for air-gapped field deployment

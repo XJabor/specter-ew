@@ -454,6 +454,20 @@ td.uncontested { color: #666; font-style: italic; font-weight: normal; }
 
 .remove-link-btn:hover { color: #ff4444; }
 
+/* LOS / NLOS badges in the results table */
+.los-badge {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: bold;
+    margin-left: 4px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.los-badge--los  { background: #003300; color: #00cc00; }
+.los-badge--nlos { background: #330000; color: #cc3333; }
+
 /* ============================================================
    MOBILE — WORKBENCH
    ============================================================ */

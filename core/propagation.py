@@ -23,27 +23,30 @@ def get_clutter_loss(terrain_type, frequency_mhz):
         # Default to a safe/conservative estimate if terrain isn't recognized
         return 20 
 
-def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space"):
+def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
+                        diffraction_loss_db=0.0):
     """
     Calculates Path Loss using the Dual-Slope Model.
     - Uses 20 log (Free Space) for distances < 1 km.
     - Uses 40 log (Ground Plane) for distances >= 1 km.
+    diffraction_loss_db: additional knife-edge diffraction loss (dB) from
+                         elevation analysis; 0.0 when no elevation data.
     """
     if distance_km <= 0:
         return 0 # Prevent math domain errors for zero distance
-        
+
     clutter = get_clutter_loss(terrain_type, frequency_mhz)
     freq_loss = 20 * math.log10(frequency_mhz)
     constant = 32.44
-    
+
     if distance_km >= 1.0:
         # Ground Slope (40 log)
         dist_loss = 40 * math.log10(distance_km)
     else:
         # Free Space (20 log)
         dist_loss = 20 * math.log10(distance_km)
-        
-    total_path_loss = dist_loss + freq_loss + constant + clutter
+
+    total_path_loss = dist_loss + freq_loss + constant + clutter + diffraction_loss_db
     return round(total_path_loss, 2)
 
 def calculate_received_power(eirp, path_loss):
@@ -66,14 +69,17 @@ def evaluate_jamming_effect(jammer_rx_dbm, enemy_rx_dbm):
     else: # margin >= 6
         return "Complete Jamming (Jammer captures receiver)"
 
-def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain, rx_sensitivity):
+def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
+                               rx_sensitivity, diffraction_loss_db=0.0):
     """
     Calculates the maximum detection distance (ES Mode).
-    Uses the Reverse Path Loss calculation to find the distance where the 
+    Uses the Reverse Path Loss calculation to find the distance where the
     signal exactly matches the receiver's sensitivity threshold.
+    diffraction_loss_db: additional terrain-blocking loss (dB) that reduces
+                         the effective detection range; 0.0 for free-space.
     """
     # Step 1: Calculate your link budget (Max Allowable Path Loss)
-    max_loss_budget = enemy_eirp + rx_gain - rx_sensitivity
+    max_loss_budget = enemy_eirp + rx_gain - rx_sensitivity - diffraction_loss_db
     
     # Step 2: Calculate baseline loss at 1 km (Frequency + Clutter)
     clutter = get_clutter_loss(terrain_type, freq_mhz)
