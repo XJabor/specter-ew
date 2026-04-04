@@ -116,23 +116,27 @@ function placeRedNode(latlng) {
     redCounter++;
     const id = 'R' + redCounter;
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
-    marker.on('click',   function() { handleNodeClick('red', id); });
-    marker.on('dragend', recalculateAll);
-    redNodes.push({ id, marker, esActive: false, esCircle: null });
+    marker.on('click', function() { handleNodeClick('red', id); });
+    const node = { id, marker, esActive: false, esCircle: null, elevationM: null };
+    marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
+    redNodes.push(node);
     bindRedPopup(id);
     updateMGRSTooltips();
     updateLinkAllBtn();
+    fetchAndStoreElevation(node);
 }
 
 function placeBlueNode(latlng) {
     blueCounter++;
     const id = 'B' + blueCounter;
     const marker = L.marker(latlng, { icon: blueIcon, draggable: true }).addTo(map);
-    marker.on('click',   function() { handleNodeClick('blue', id); });
-    marker.on('dragend', recalculateAll);
-    blueNodes.push({ id, marker });
+    marker.on('click', function() { handleNodeClick('blue', id); });
+    const node = { id, marker, elevationM: null };
+    marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
+    blueNodes.push(node);
     bindBluePopup(id);
     updateMGRSTooltips();
+    fetchAndStoreElevation(node);
 }
 
 // ============================================================
@@ -464,10 +468,27 @@ function updateMGRSTooltips() {
     [...redNodes, ...blueNodes].forEach(function(node) {
         const latlng = node.marker.getLatLng();
         const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
-        node.marker.bindTooltip(`${node.id} — ${mgrsStr}`, {
+        const elevStr = (node.elevationM != null) ? ` ${node.elevationM}M` : '';
+        node.marker.bindTooltip(`${node.id} — ${mgrsStr}${elevStr}`, {
             permanent: true, direction: 'top', className: 'mgrs-label'
         });
     });
+}
+
+async function fetchAndStoreElevation(node) {
+    const latlng = node.marker.getLatLng();
+    try {
+        const resp = await fetch('/get_elevations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([{ lat: latlng.lat, lon: latlng.lng }])
+        });
+        const data = await resp.json();
+        node.elevationM = data.elevations[0];
+    } catch (e) {
+        node.elevationM = null;
+    }
+    updateMGRSTooltips();
 }
 
 // ============================================================
