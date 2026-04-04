@@ -1,11 +1,25 @@
 import logging
+import os
 from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
 from core.elevation import get_elevation_profile, check_line_of_sight, destination_point, get_elevation_profiles_batch
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.ERROR)
+
+@app.before_request
+def check_auth():
+    username = os.environ.get('APP_USERNAME')
+    password = os.environ.get('APP_PASSWORD')
+    if username and password:
+        auth = request.authorization
+        if not auth or auth.username != username or auth.password != password:
+            return Response(
+                'Authentication required',
+                401,
+                {'WWW-Authenticate': 'Basic realm="Specter-EW"'}
+            )
 
 @app.after_request
 def set_security_headers(response):
