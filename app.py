@@ -10,16 +10,24 @@ logging.basicConfig(level=logging.ERROR)
 
 @app.before_request
 def check_auth():
-    username = os.environ.get('APP_USERNAME')
-    password = os.environ.get('APP_PASSWORD')
-    if username and password:
-        auth = request.authorization
-        if not auth or auth.username != username or auth.password != password:
-            return Response(
-                'Authentication required',
-                401,
-                {'WWW-Authenticate': 'Basic realm="Specter-EW"'}
-            )
+    raw = os.environ.get('APP_CREDENTIALS', '').strip()
+    if not raw:
+        return
+    valid = {}
+    for pair in raw.split(','):
+        pair = pair.strip()
+        if ':' in pair:
+            u, p = pair.split(':', 1)
+            valid[u.strip()] = p.strip()
+    if not valid:
+        return
+    auth = request.authorization
+    if not auth or valid.get(auth.username) != auth.password:
+        return Response(
+            'Authentication required',
+            401,
+            {'WWW-Authenticate': 'Basic realm="Specter-EW"'}
+        )
 
 @app.after_request
 def set_security_headers(response):
