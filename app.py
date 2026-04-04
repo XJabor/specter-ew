@@ -3,7 +3,7 @@ import os
 from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
 from flask import Flask, render_template, request, jsonify, Response
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
-from core.elevation import get_elevation_profile, check_line_of_sight, destination_point, get_elevation_profiles_batch
+from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.ERROR)
@@ -223,6 +223,16 @@ def calculate_es_terrain():
     except Exception as e:
         app.logger.error("calculate_es_terrain error: %s", e)
         return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
+
+
+@app.route('/get_elevations', methods=['POST'])
+def get_elevations():
+    points = request.json
+    try:
+        elevations = get_point_elevations(points)
+        return jsonify({'elevations': elevations})
+    except Exception:
+        return jsonify({'elevations': [None] * len(points)})
 
 
 if __name__ == '__main__':

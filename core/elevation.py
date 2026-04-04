@@ -32,6 +32,16 @@ def _fetch_online(locations):
     return [r["elevation"] for r in resp.json().get("results", [])]
 
 
+def get_point_elevations(points):
+    """
+    Get elevation for a list of {lat, lon} dicts.
+    Returns a list of elevation values in metres (integers), same order as input.
+    Raises requests.RequestException if the API is unreachable.
+    """
+    locations = [{"latitude": p["lat"], "longitude": p["lon"]} for p in points]
+    return _fetch_online(locations)
+
+
 def get_elevation_profile(lat1, lon1, lat2, lon2, num_samples=20):
     """
     Sample elevations along the path from (lat1,lon1) to (lat2,lon2).
