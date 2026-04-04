@@ -6,6 +6,7 @@ from core.propagation import calculate_path_loss, calculate_received_power, eval
 from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
 logging.basicConfig(level=logging.ERROR)
 
 @app.before_request
@@ -33,6 +34,17 @@ def check_auth():
 def set_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'none'; "
+        "script-src 'self' https://unpkg.com 'unsafe-inline'; "
+        "style-src 'self' https://unpkg.com 'unsafe-inline'; "
+        "img-src 'self' https: data:; "
+        "connect-src 'self'; "
+        "font-src 'self'"
+    )
     return response
 
 @app.route('/')
@@ -80,6 +92,13 @@ def calculate_ea():
         rx_lon     = data.get('rx_lon')
         tx_lat     = data.get('tx_lat')
         tx_lon     = data.get('tx_lon')
+
+        for lat_val, label in [(jammer_lat, 'jammer_lat'), (rx_lat, 'rx_lat'), (tx_lat, 'tx_lat')]:
+            if lat_val is not None and not (-90 <= float(lat_val) <= 90):
+                return jsonify({'status': 'error', 'message': f'Invalid latitude: {label}.'})
+        for lon_val, label in [(jammer_lon, 'jammer_lon'), (rx_lon, 'rx_lon'), (tx_lon, 'tx_lon')]:
+            if lon_val is not None and not (-180 <= float(lon_val) <= 180):
+                return jsonify({'status': 'error', 'message': f'Invalid longitude: {label}.'})
 
         if all(v is not None for v in [jammer_lat, jammer_lon, rx_lat, rx_lon]):
             try:
@@ -190,6 +209,12 @@ def calculate_es_terrain():
             return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
         if enemy_tx_w <= 0:
             return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
+        if not (-90 <= enemy_lat <= 90):
+            return jsonify({'status': 'error', 'message': 'Invalid latitude: enemy_lat.'})
+        if not (-180 <= enemy_lon <= 180):
+            return jsonify({'status': 'error', 'message': 'Invalid longitude: enemy_lon.'})
+        if not (1 <= num_bearings <= 360):
+            return jsonify({'status': 'error', 'message': 'num_bearings must be between 1 and 360.'})
 
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
         enemy_eirp   = calculate_eirp(enemy_tx_dbm, enemy_tx_gain)
@@ -236,6 +261,16 @@ def calculate_es_terrain():
 @app.route('/get_elevations', methods=['POST'])
 def get_elevations():
     points = request.json
+    if not isinstance(points, list) or len(points) > 50:
+        return jsonify({'elevations': []})
+    for p in points:
+        if not isinstance(p, dict) or 'lat' not in p or 'lon' not in p:
+            return jsonify({'elevations': []})
+        try:
+            if not (-90 <= float(p['lat']) <= 90) or not (-180 <= float(p['lon']) <= 180):
+                return jsonify({'elevations': []})
+        except (TypeError, ValueError):
+            return jsonify({'elevations': []})
     try:
         elevations = get_point_elevations(points)
         return jsonify({'elevations': elevations})
