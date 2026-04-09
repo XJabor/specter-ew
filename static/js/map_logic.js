@@ -55,6 +55,12 @@ let selectedLink = null; // { type: 'enemy'|'jammer', enemyLinkId, jammingLinkId
 let redCounter  = 0;
 let blueCounter = 0;
 
+let overlapLayer        = null;   // L.polygon | L.layerGroup | null — yellow intersection overlay
+let overlapChecked      = new Set(); // node IDs selected in the overlap checklist
+let overlapVertices     = [];     // [[lat,lng],...] — all vertices of the current overlap polygon(s)
+let cornerMarkers       = [];     // L.circleMarker[] — MGRS labels at each vertex
+let cornersVisible      = false;
+
 // ============================================================
 // MODE MANAGEMENT
 // ============================================================
@@ -323,6 +329,8 @@ window.removeNode = function(color, id) {
             if (node.esCircle) map.removeLayer(node.esCircle);
         }
         redNodes = redNodes.filter(n => n.id !== id);
+        clearOverlapLayer();
+        renderOverlapControls();
         enemyLinks.filter(l => l.txId === id || l.rxId === id).forEach(l => map.removeLayer(l.line));
         enemyLinks  = enemyLinks.filter(l => l.txId !== id && l.rxId !== id);
         jammingLinks.filter(l => l.rxId === id).forEach(l => map.removeLayer(l.line));
@@ -524,6 +532,144 @@ async function fetchAndStoreElevation(node) {
 }
 
 // ============================================================
+// OVERLAP ANALYSIS
+// ============================================================
+
+function clearCornerMarkers() {
+    cornerMarkers.forEach(m => map.removeLayer(m));
+    cornerMarkers = [];
+    cornersVisible = false;
+    const btn = document.getElementById('btn-toggle-corners');
+    if (btn) { btn.style.display = 'none'; btn.textContent = 'Show MGRS Corners'; }
+}
+
+function clearOverlapLayer() {
+    if (overlapLayer) { map.removeLayer(overlapLayer); overlapLayer = null; }
+    overlapVertices = [];
+    clearCornerMarkers();
+    const clearBtn = document.getElementById('btn-clear-overlap');
+    if (clearBtn) clearBtn.style.display = 'none';
+    const statusEl = document.getElementById('overlap-status');
+    if (statusEl) statusEl.textContent = '';
+}
+
+function toggleCornerMarkers() {
+    const btn = document.getElementById('btn-toggle-corners');
+    if (cornersVisible) {
+        cornerMarkers.forEach(m => map.removeLayer(m));
+        cornerMarkers = [];
+        cornersVisible = false;
+        if (btn) btn.textContent = 'Show MGRS Corners';
+    } else {
+        cornerMarkers = overlapVertices.map(([lat, lng]) => {
+            const mgrsStr = mgrs.forward([lng, lat]);
+            return L.circleMarker([lat, lng], {
+                radius: 4, color: '#ffff00', fillColor: '#ffff00', fillOpacity: 1, weight: 1
+            }).bindTooltip(mgrsStr, {
+                permanent: true, direction: 'top', className: 'mgrs-corner-label'
+            }).addTo(map);
+        });
+        cornersVisible = true;
+        if (btn) btn.textContent = 'Hide MGRS Corners';
+    }
+}
+
+function renderOverlapControls() {
+    const checklist = document.getElementById('overlap-checklist');
+    const showBtn   = document.getElementById('btn-show-overlap');
+    if (!checklist || !showBtn) return;
+
+    const eligible = redNodes.filter(n => n.esActive && n.esPolygonPoints);
+
+    if (eligible.length === 0) {
+        checklist.innerHTML = '<p class="results-empty">No active detection rings.</p>';
+        showBtn.disabled = true;
+        return;
+    }
+
+    // Prune stale IDs no longer eligible
+    overlapChecked.forEach(id => {
+        if (!eligible.find(n => n.id === id)) overlapChecked.delete(id);
+    });
+
+    let html = '';
+    eligible.forEach(n => {
+        const checked = overlapChecked.has(n.id) ? 'checked' : '';
+        html += `<div class="overlap-node-row">
+            <input type="checkbox" id="ov-chk-${n.id}" value="${n.id}" ${checked}
+                onchange="handleOverlapCheck(this)">
+            <label for="ov-chk-${n.id}">${n.name}</label>
+        </div>`;
+    });
+    checklist.innerHTML = html;
+    showBtn.disabled = overlapChecked.size < 2;
+}
+
+window.handleOverlapCheck = function(checkbox) {
+    if (checkbox.checked) {
+        overlapChecked.add(checkbox.value);
+    } else {
+        overlapChecked.delete(checkbox.value);
+    }
+    clearOverlapLayer();
+    document.getElementById('btn-show-overlap').disabled = overlapChecked.size < 2;
+};
+
+function circleToPolygon(lat, lng, radiusKm, n = 36) {
+    const R = 6371, d = radiusKm / R;
+    const lat1 = lat * Math.PI / 180, lng1 = lng * Math.PI / 180;
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+        const b = (i * 2 * Math.PI) / n;
+        const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d) + Math.cos(lat1)*Math.sin(d)*Math.cos(b));
+        const lng2 = lng1 + Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(lat1), Math.cos(d) - Math.sin(lat1)*Math.sin(lat2));
+        pts.push([lat2 * 180/Math.PI, lng2 * 180/Math.PI]);
+    }
+    return pts;
+}
+
+function computeAndShowOverlap() {
+    clearOverlapLayer();
+    const statusEl = document.getElementById('overlap-status');
+
+    const selected = redNodes.filter(n => overlapChecked.has(n.id) && n.esPolygonPoints);
+    if (selected.length < 2) {
+        if (statusEl) statusEl.textContent = 'Select at least 2 nodes.';
+        return;
+    }
+
+    if (statusEl) statusEl.textContent = 'Calculating...';
+    fetch('/compute_overlap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ polygons: selected.map(n => n.esPolygonPoints) })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'no-overlap') {
+            if (statusEl) statusEl.textContent = 'No common coverage area found.';
+            return;
+        }
+        if (data.status !== 'success') {
+            if (statusEl) statusEl.textContent = 'Error computing overlap.';
+            return;
+        }
+        const layers = data.intersection.map(ring =>
+            L.polygon(ring, { color: '#ffff00', fillColor: '#ffff00', fillOpacity: 0.35, weight: 2 })
+        );
+        overlapLayer = L.layerGroup(layers).addTo(map);
+        // Collect all vertices across all polygons for MGRS corner display
+        overlapVertices = data.intersection.flat();
+        if (statusEl) statusEl.textContent = '';
+        const clearBtn = document.getElementById('btn-clear-overlap');
+        if (clearBtn) clearBtn.style.display = 'block';
+        const cornersBtn = document.getElementById('btn-toggle-corners');
+        if (cornersBtn) cornersBtn.style.display = 'block';
+    })
+    .catch(() => { if (statusEl) statusEl.textContent = 'Error computing overlap.'; });
+}
+
+// ============================================================
 // ES CIRCLES (DETECTION RINGS)
 // ============================================================
 
@@ -531,9 +677,11 @@ window.toggleNodeES = function(id) {
     const node = findNode('red', id);
     if (!node) return;
     node.esActive = !node.esActive;
+    if (!node.esActive) { node.esPolygonPoints = null; clearOverlapLayer(); }
     map.closePopup();
     bindRedPopup(id);
     updateESCircles();
+    renderOverlapControls();
 };
 
 function updateESCircles() {
@@ -572,6 +720,7 @@ function updateESCircles() {
 
             if (data.polygon_points) {
                 // Terrain-aware detection polygon
+                node.esPolygonPoints = data.polygon_points;
                 const label = `Detection: ~${data.base_range_km.toFixed(1)} km (terrain)`;
                 node.esCircle = L.polygon(data.polygon_points, {
                     color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
@@ -580,6 +729,7 @@ function updateESCircles() {
                 }).addTo(map);
             } else {
                 // Fallback: uniform circle when elevation API is unavailable
+                node.esPolygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
                 const radiusMeters = data.base_range_km * 1000;
                 const label = `Detection: ${data.base_range_km.toFixed(2)} km`;
                 node.esCircle = L.circle(ll, {
@@ -588,6 +738,7 @@ function updateESCircles() {
                     permanent: true, direction: 'right', className: 'dist-label'
                 }).addTo(map);
             }
+            renderOverlapControls();
         });
     });
 }
@@ -844,6 +995,10 @@ document.getElementById('btn-minimize-links').addEventListener('click', function
     this.textContent = minimized ? '▼' : '▶';
 });
 
+document.getElementById('btn-show-overlap').addEventListener('click', computeAndShowOverlap);
+document.getElementById('btn-clear-overlap').addEventListener('click', clearOverlapLayer);
+document.getElementById('btn-toggle-corners').addEventListener('click', toggleCornerMarkers);
+
 // ============================================================
 // CLEAR ALL
 // ============================================================
@@ -857,6 +1012,9 @@ document.getElementById('clear-nodes-btn').addEventListener('click', function() 
     redNodes = []; blueNodes = []; enemyLinks = []; jammingLinks = [];
     redCounter = 0; blueCounter = 0;
     selectedLink = null;
+    overlapChecked.clear();
+    clearOverlapLayer();
+    renderOverlapControls();
     renderResults();
 });
 

@@ -4,6 +4,7 @@ from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
 from flask import Flask, render_template, request, jsonify, Response
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
 from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
+from shapely.geometry import Polygon, MultiPolygon
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
@@ -256,6 +257,30 @@ def calculate_es_terrain():
     except Exception as e:
         app.logger.error("calculate_es_terrain error: %s", e)
         return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
+
+
+@app.route('/compute_overlap', methods=['POST'])
+def compute_overlap():
+    data = request.json
+    try:
+        polygon_list = data.get('polygons', [])
+        if len(polygon_list) < 2:
+            return jsonify({'status': 'error', 'message': 'Need at least 2 polygons'})
+        # polygon_list is [[[lat,lng],...], ...] — shapely Polygon expects (lng,lat)
+        shapes = [Polygon([(lng, lat) for lat, lng in pts]) for pts in polygon_list]
+        result = shapes[0]
+        for s in shapes[1:]:
+            result = result.intersection(s)
+        if result.is_empty:
+            return jsonify({'status': 'no-overlap'})
+        # Normalize to list of polygons to handle MultiPolygon results
+        polys = list(result.geoms) if isinstance(result, MultiPolygon) else [result]
+        # Convert back to [[lat,lng],...], dropping the closing duplicate point
+        intersection = [[[lat, lng] for lng, lat in p.exterior.coords[:-1]] for p in polys]
+        return jsonify({'status': 'success', 'intersection': intersection})
+    except Exception as e:
+        app.logger.error("compute_overlap error: %s", e)
+        return jsonify({'status': 'error', 'message': 'Overlap calculation error.'})
 
 
 @app.route('/get_elevations', methods=['POST'])
