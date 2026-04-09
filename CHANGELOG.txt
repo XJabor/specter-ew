@@ -1,0 +1,15 @@
+-----
+09APR26
+
+- Enemy and friendly map nodes can now be renamed via a new "Rename Node" button in each node's popup menu (max 20 characters)
+- Custom node names appear on the map coordinate labels, in popups, and in the workbench link status table
+- Added "Overlap Analysis" section to the workbench panel for identifying common detection coverage areas
+- Users can select which enemy nodes (that have active detection rings) to include in the analysis
+- Clicking "Show Common Coverage" highlights the area where ALL selected nodes can simultaneously detect in yellow
+- Overlap calculation is handled server-side using the Shapely geometry library — no browser restrictions
+- Added "Show MGRS Corners" toggle that places coordinate labels at every vertex of the overlap zone
+- MGRS corner labels are selectable and copyable for use in planning documents
+- Added shapely>=2.0 to requirements.txt as a new dependency
+- Fixed a security issue where an external map library (Turf.js) was blocked by the app's content security policy
+
+-----
