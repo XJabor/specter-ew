@@ -13,3 +13,68 @@
 - Fixed a security issue where an external map library (Turf.js) was blocked by the app's content security policy
 
 -----
+
+-----
+04APR26
+
+- Added a full Content Security Policy (CSP) header to restrict which external resources the browser can load
+- Added HSTS, Referrer-Policy, and Permissions-Policy security headers to harden internet-facing deployments
+- Added request size limits to prevent oversized payload abuse
+- Added coordinate bounds validation to all calculation endpoints to reject malformed GPS inputs
+- Added input count and structure validation to the elevation lookup endpoint
+
+-----
+
+-----
+03APR26
+
+- Added support for deploying to internet-facing platforms (Heroku/Render) via Procfile and gunicorn web server
+- Added HTTP Basic Authentication support for internet-facing deployments with multi-user support
+- Each placed node now fetches and displays its real-world elevation (in metres) alongside its MGRS coordinate
+- Elevation is re-fetched automatically when a node is dragged to a new position
+
+-----
+
+-----
+28MAR26
+
+- Added terrain and elevation awareness to both jamming (EA) and sensing (ES) calculations
+- The model now queries a real elevation API to build terrain profiles between nodes
+- Line-of-sight analysis accounts for terrain blocking and calculates diffraction loss over obstacles
+- Detection rings now reflect actual terrain — shrinking behind hills that block the signal
+- Added core/elevation.py to handle all elevation API calls and line-of-sight geometry
+- Updated the UI screenshot in the README to reflect current appearance
+
+-----
+
+-----
+22MAR26
+
+- Replaced single-node placement with a full Workbench panel supporting multiple enemy and friendly nodes
+- Added Link All Enemy Comms quick action to connect all enemy nodes in one click
+- Added a Link Status table to the workbench showing jamming margins and effects for all active links
+- Results are color-coded: green (complete jamming), orange (partial), red (no effect)
+- Added a "Center on Nodes" map button that fits all placed nodes and detection rings into view
+- Nodes can now be individually removed via their popup menu
+
+-----
+
+-----
+16MAR26
+
+- Fixed a bug where zero or negative values for transmit power and frequency were accepted without error
+- Added MGRS (military grid) coordinate labels that appear above every placed node on the map
+- Added a compact results bar at the bottom of the screen on mobile showing the best jamming margin
+- Improved the mobile layout so the map and controls display correctly on small screens
+
+-----
+
+-----
+15MAR26
+
+- Initial public release of Specter EW — a tactical Electronic Warfare planning tool
+- Supports jamming effectiveness (J/S margin) calculation between enemy and friendly nodes
+- Supports sensing/detection range calculation for enemy receivers
+- MIT License added
+
+-----
