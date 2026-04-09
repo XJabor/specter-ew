@@ -117,7 +117,7 @@ function placeRedNode(latlng) {
     const id = 'R' + redCounter;
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('red', id); });
-    const node = { id, marker, esActive: false, esCircle: null, elevationM: null };
+    const node = { id, name: id, marker, esActive: false, esCircle: null, elevationM: null };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
     redNodes.push(node);
     bindRedPopup(id);
@@ -131,7 +131,7 @@ function placeBlueNode(latlng) {
     const id = 'B' + blueCounter;
     const marker = L.marker(latlng, { icon: blueIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('blue', id); });
-    const node = { id, marker, elevationM: null };
+    const node = { id, name: id, marker, elevationM: null };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
     blueNodes.push(node);
     bindBluePopup(id);
@@ -148,9 +148,10 @@ function bindRedPopup(id) {
     if (!node) return;
     const esLabel = node.esActive ? '🚫 Hide Detection Ring' : '📡 Show Detection Ring';
     node.marker.bindPopup(
-        `<b>Enemy Node ${id}</b><br>
+        `<b>Enemy Node ${node.name}</b><br>
         <button onclick="startEnemyLink('${id}')">🔗 Link Enemy Comms</button><br>
         <button onclick="toggleNodeES('${id}')">${esLabel}</button><br>
+        <button onclick="renameNode('red','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('red','${id}')">🗑️ Remove Node</button>`
     );
 }
@@ -159,10 +160,41 @@ function bindBluePopup(id) {
     const node = findNode('blue', id);
     if (!node) return;
     node.marker.bindPopup(
-        `<b>Friendly Node ${id}</b><br>
+        `<b>Friendly Node ${node.name}</b><br>
         <button onclick="startJammingLink('${id}')">⚡ Link to Target</button><br>
+        <button onclick="renameNode('blue','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('blue','${id}')">🗑️ Remove Node</button>`
     );
+}
+
+// ============================================================
+// NODE RENAMING
+// ============================================================
+
+function renameNode(type, id) {
+    const node = findNode(type, id);
+    if (!node) return;
+    const input = window.prompt('Enter a new name (max 20 characters):', node.name);
+    if (input === null) return; // cancelled
+    const trimmed = input.trim();
+    if (trimmed.length === 0) {
+        alert('Name cannot be empty.');
+        return;
+    }
+    if (trimmed.length > 20) {
+        alert('Name must be 20 characters or fewer.');
+        return;
+    }
+    node.name = trimmed;
+    if (type === 'red') bindRedPopup(id); else bindBluePopup(id);
+    node.marker.openPopup();
+    updateMGRSTooltips();
+    renderResults();
+}
+
+function getNodeDisplayName(type, id) {
+    const node = findNode(type, id);
+    return node ? node.name : id;
 }
 
 // ============================================================
@@ -469,7 +501,7 @@ function updateMGRSTooltips() {
         const latlng = node.marker.getLatLng();
         const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
         const elevStr = (node.elevationM != null) ? ` ${node.elevationM}M` : '';
-        node.marker.bindTooltip(`${node.id} — ${mgrsStr}${elevStr}`, {
+        node.marker.bindTooltip(`${node.name} — ${mgrsStr}${elevStr}`, {
             permanent: true, direction: 'top', className: 'mgrs-label'
         });
     });
@@ -644,14 +676,14 @@ function renderResults() {
         if (assocJLinks.length === 0) {
             html += `<tr class="${enemyRowClass}" onclick="selectLink('enemy', null, '${eLink.id}')">
                 <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeEnemyLinkById('${eLink.id}')">✕</button></td>
-                <td>${eLink.txId}→${eLink.rxId}</td>
+                <td>${getNodeDisplayName('red', eLink.txId)}→${getNodeDisplayName('red', eLink.rxId)}</td>
                 <td>—</td>
                 <td class="uncontested">Uncontested</td>
             </tr>`;
         } else {
             html += `<tr class="${enemyRowClass}" onclick="selectLink('enemy', null, '${eLink.id}')">
                 <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeEnemyLinkById('${eLink.id}')">✕</button></td>
-                <td>${eLink.txId}→${eLink.rxId}</td>
+                <td>${getNodeDisplayName('red', eLink.txId)}→${getNodeDisplayName('red', eLink.rxId)}</td>
                 <td></td><td></td>
             </tr>`;
 
@@ -683,7 +715,7 @@ function renderResults() {
                 html += `<tr class="jammer-sub-row ${rowClass}${jammerSel ? ' row-selected' : ''}"
                     onclick="selectLink('jammer', '${jLink.id}', '${eLink.id}')">
                     <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeJammingLinkById('${jLink.id}')">✕</button></td>
-                    <td>↳ ${jLink.blueId}</td>
+                    <td>↳ ${getNodeDisplayName('blue', jLink.blueId)}</td>
                     <td>${margin}</td>
                     <td>${effect} ${losBadge}</td>
                 </tr>`;
@@ -700,7 +732,7 @@ function renderResults() {
             html += `<tr class="jammer-sub-row result-unknown${jammerSel ? ' row-selected' : ''}"
                 onclick="selectLink('jammer', '${jLink.id}', null)">
                 <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeJammingLinkById('${jLink.id}')">✕</button></td>
-                <td>${jLink.id}</td>
+                <td>${getNodeDisplayName('blue', jLink.id)}</td>
                 <td>—</td>
                 <td class="uncontested">No enemy link</td>
             </tr>`;
