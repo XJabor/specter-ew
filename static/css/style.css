@@ -496,3 +496,57 @@ td.uncontested { color: #666; font-style: italic; font-weight: normal; }
 .sidebar-btn:hover {
     background-color: #777;
 }
+
+/* ============================================================
+   OVERLAP ANALYSIS
+   ============================================================ */
+
+#overlap-checklist {
+    margin-bottom: 6px;
+}
+
+.overlap-node-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+}
+
+.overlap-node-row input[type="checkbox"] {
+    accent-color: #ffff00;
+    width: 13px;
+    height: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.overlap-node-row label {
+    color: #e0e0e0;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#overlap-status {
+    font-size: 11px;
+    color: #aaa;
+    font-style: italic;
+    margin-top: 4px;
+    min-height: 16px;
+}
+
+.mgrs-corner-label {
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid #ffff00;
+    border-radius: 3px;
+    color: #ffff00;
+    font-size: 10px;
+    font-family: monospace;
+    padding: 2px 4px;
+    white-space: nowrap;
+    pointer-events: auto;
+    user-select: text;
+    cursor: text;
+}
