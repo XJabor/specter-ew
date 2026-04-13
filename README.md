@@ -13,6 +13,7 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - **Frequency-hopping tax** — applies a configurable jamming penalty for frequency-hopping waveforms
 - **Workbench** — select multiple blue and red icons to place on the map. Link red nodes individually or link all nodes automatically. Select individual links to highlight it on the map
 - **Interactive map** — move all icons freely on a Leaflet map that automatically calculates distance
+- **Common coverage area** — select detection rings to determine common coverage area between them (highlighted in yellow) 
 
 ## Requirements
 
