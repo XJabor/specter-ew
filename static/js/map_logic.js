@@ -123,8 +123,10 @@ function placeRedNode(latlng) {
     const id = 'R' + redCounter;
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('red', id); });
-    const node = { id, name: id, marker, esActive: false, esCircle: null, elevationM: null };
+    const node = { id, name: id, marker, esActive: false, esCircle: null, elevationM: null,
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90 };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
+    marker.on('popupclose', function() { bindRedPopup(id); });
     redNodes.push(node);
     bindRedPopup(id);
     updateMGRSTooltips();
@@ -137,8 +139,10 @@ function placeBlueNode(latlng) {
     const id = 'B' + blueCounter;
     const marker = L.marker(latlng, { icon: blueIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('blue', id); });
-    const node = { id, name: id, marker, elevationM: null };
+    const node = { id, name: id, marker, elevationM: null,
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90 };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
+    marker.on('popupclose', function() { bindBluePopup(id); });
     blueNodes.push(node);
     bindBluePopup(id);
     updateMGRSTooltips();
@@ -149,6 +153,32 @@ function placeBlueNode(latlng) {
 // POPUP BINDING
 // ============================================================
 
+function antennaPopupSection(team, id, node) {
+    const isDir   = node.antennaType === 'directional';
+    const dirStyle = isDir ? '' : 'display:none';
+    return `<hr class="popup-divider">
+        <div class="popup-antenna-row">
+          <label class="popup-label">Antenna:
+            <select onchange="setNodeAntennaType('${team}','${id}',this.value)">
+              <option value="omni"${!isDir ? ' selected' : ''}>Omni</option>
+              <option value="directional"${isDir ? ' selected' : ''}>Directional</option>
+            </select>
+          </label>
+        </div>
+        <div id="ant-dir-${id}" class="popup-antenna-dir" style="${dirStyle}">
+          <label class="popup-label">Azimuth (° True North):
+            <input type="number" min="0" max="360" value="${node.antennaAzimuth}"
+              oninput="setNodeAntennaAzimuth('${team}','${id}',this.value)"
+              onchange="recalculateAll()">
+          </label>
+          <label class="popup-label">Beamwidth (° HPBW):
+            <input type="number" min="1" max="360" value="${node.antennaBeamwidth}"
+              oninput="setNodeAntennaBeamwidth('${team}','${id}',this.value)"
+              onchange="recalculateAll()">
+          </label>
+        </div>`;
+}
+
 function bindRedPopup(id) {
     const node = findNode('red', id);
     if (!node) return;
@@ -158,7 +188,8 @@ function bindRedPopup(id) {
         <button onclick="startEnemyLink('${id}')">🔗 Link Enemy Comms</button><br>
         <button onclick="toggleNodeES('${id}')">${esLabel}</button><br>
         <button onclick="renameNode('red','${id}')">✏️ Rename Node</button><br>
-        <button onclick="removeNode('red','${id}')">🗑️ Remove Node</button>`
+        <button onclick="removeNode('red','${id}')">🗑️ Remove Node</button>` +
+        antennaPopupSection('red', id, node)
     );
 }
 
@@ -169,7 +200,8 @@ function bindBluePopup(id) {
         `<b>Friendly Node ${node.name}</b><br>
         <button onclick="startJammingLink('${id}')">⚡ Link to Target</button><br>
         <button onclick="renameNode('blue','${id}')">✏️ Rename Node</button><br>
-        <button onclick="removeNode('blue','${id}')">🗑️ Remove Node</button>`
+        <button onclick="removeNode('blue','${id}')">🗑️ Remove Node</button>` +
+        antennaPopupSection('blue', id, node)
     );
 }
 
@@ -197,6 +229,34 @@ function renameNode(type, id) {
     updateMGRSTooltips();
     renderResults();
 }
+
+// ============================================================
+// ANTENNA CONFIGURATION
+// ============================================================
+
+window.setNodeAntennaType = function(team, id, value) {
+    const node = findNode(team, id);
+    if (!node) return;
+    node.antennaType = value;
+    // Rebind popup so the directional sub-section shows/hides correctly
+    if (team === 'red') bindRedPopup(id); else bindBluePopup(id);
+    node.marker.openPopup();
+    recalculateAll();
+};
+
+window.setNodeAntennaAzimuth = function(team, id, value) {
+    const node = findNode(team, id);
+    if (!node) return;
+    node.antennaAzimuth = ((parseFloat(value) || 0) % 360 + 360) % 360;
+    // recalculateAll is triggered by onchange on the input (fires on blur/enter)
+};
+
+window.setNodeAntennaBeamwidth = function(team, id, value) {
+    const node = findNode(team, id);
+    if (!node) return;
+    node.antennaBeamwidth = Math.max(1, Math.min(360, parseFloat(value) || 90));
+    // recalculateAll is triggered by onchange on the input (fires on blur/enter)
+};
 
 function getNodeDisplayName(type, id) {
     const node = findNode(type, id);
@@ -468,6 +528,7 @@ function recalculateAll() {
         const payload = { ...params, enemy_dist_km: enemyDistKm, jammer_dist_km: jammerDistKm };
 
         // Include node coordinates so the backend can perform elevation-aware LOS analysis
+        // and bearing-based directional antenna gain calculations
         const blue = findNode('blue', jLink.blueId);
         const rx   = findNode('red',  jLink.rxId);
         const tx   = findNode('red',  eLink.txId);
@@ -481,6 +542,17 @@ function recalculateAll() {
             payload.rx_lon     = rll.lng;
             payload.tx_lat     = tll.lat;
             payload.tx_lon     = tll.lng;
+
+            // Per-node antenna parameters
+            payload.tx_antenna_type      = tx.antennaType;
+            payload.tx_azimuth_deg       = tx.antennaAzimuth;
+            payload.tx_beamwidth_deg     = tx.antennaBeamwidth;
+            payload.rx_antenna_type      = rx.antennaType;
+            payload.rx_azimuth_deg       = rx.antennaAzimuth;
+            payload.rx_beamwidth_deg     = rx.antennaBeamwidth;
+            payload.jammer_antenna_type  = blue.antennaType;
+            payload.jammer_azimuth_deg   = blue.antennaAzimuth;
+            payload.jammer_beamwidth_deg = blue.antennaBeamwidth;
         }
 
         fetch('/calculate_ea', {
@@ -706,7 +778,14 @@ function updateESCircles() {
     // Each active node gets its own terrain-aware polygon request (coordinates differ)
     activeESNodes.forEach(node => {
         const ll = node.marker.getLatLng();
-        const payload = { ...esParams, enemy_lat: ll.lat, enemy_lon: ll.lng };
+        const payload = {
+            ...esParams,
+            enemy_lat:       ll.lat,
+            enemy_lon:       ll.lng,
+            tx_antenna_type:  node.antennaType,
+            tx_azimuth_deg:   node.antennaAzimuth,
+            tx_beamwidth_deg: node.antennaBeamwidth,
+        };
 
         fetch('/calculate_es_terrain', {
             method: 'POST',

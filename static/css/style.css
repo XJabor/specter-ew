@@ -550,3 +550,40 @@ td.uncontested { color: #666; font-style: italic; font-weight: normal; }
     user-select: text;
     cursor: text;
 }
+
+/* ============================================================
+   POPUP ANTENNA CONTROLS
+   Leaflet popups have a white background, so inputs use dark-on-white styling.
+   ============================================================ */
+
+.popup-divider {
+    border: none;
+    border-top: 1px solid #ccc;
+    margin: 6px 0 4px;
+}
+
+.popup-antenna-row,
+.popup-antenna-dir {
+    margin-top: 3px;
+}
+
+.popup-label {
+    display: block;
+    font-size: 12px;
+    color: #222;
+    margin-bottom: 4px;
+}
+
+.popup-label select,
+.popup-label input[type="number"] {
+    display: block;
+    width: 100%;
+    padding: 3px 4px;
+    margin-top: 2px;
+    font-size: 12px;
+    box-sizing: border-box;
+    background-color: #fff;
+    color: #222;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+}
