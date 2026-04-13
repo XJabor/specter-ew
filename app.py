@@ -4,6 +4,7 @@ from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
 from flask import Flask, render_template, request, jsonify, Response
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
 from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
+from core.antenna import bearing_deg, directional_gain_db
 from shapely.geometry import Polygon, MultiPolygon
 
 app = Flask(__name__)
@@ -87,6 +88,17 @@ def calculate_ea():
         jammer_los = None
         enemy_los = None
 
+        # Per-node antenna parameters (all default to omni if absent)
+        tx_antenna_type      = data.get('tx_antenna_type', 'omni')
+        tx_azimuth_deg       = float(data.get('tx_azimuth_deg', 0))
+        tx_beamwidth_deg     = float(data.get('tx_beamwidth_deg', 90))
+        rx_antenna_type      = data.get('rx_antenna_type', 'omni')
+        rx_azimuth_deg       = float(data.get('rx_azimuth_deg', 0))
+        rx_beamwidth_deg     = float(data.get('rx_beamwidth_deg', 90))
+        jammer_antenna_type  = data.get('jammer_antenna_type', 'omni')
+        jammer_azimuth_deg   = float(data.get('jammer_azimuth_deg', 0))
+        jammer_beamwidth_deg = float(data.get('jammer_beamwidth_deg', 90))
+
         jammer_lat = data.get('jammer_lat')
         jammer_lon = data.get('jammer_lon')
         rx_lat     = data.get('rx_lat')
@@ -124,15 +136,51 @@ def calculate_ea():
         jammer_diff_db = jammer_los['diffraction_loss_db'] if jammer_los else 0.0
         enemy_diff_db  = enemy_los['diffraction_loss_db']  if enemy_los  else 0.0
 
+        # Resolve effective antenna gains.
+        # When all node coordinates are available, directional nodes apply bearing-based
+        # Gaussian gain. Without coordinates we fall back to flat peak gains (omni behaviour).
+        all_coords = all(v is not None for v in [tx_lat, tx_lon, rx_lat, rx_lon, jammer_lat, jammer_lon])
+        if all_coords:
+            tx_lat_f, tx_lon_f     = float(tx_lat),     float(tx_lon)
+            rx_lat_f, rx_lon_f     = float(rx_lat),     float(rx_lon)
+            jammer_lat_f, jammer_lon_f = float(jammer_lat), float(jammer_lon)
+
+            if tx_antenna_type == 'directional':
+                b = bearing_deg(tx_lat_f, tx_lon_f, rx_lat_f, rx_lon_f)
+                eff_enemy_tx_gain = directional_gain_db(enemy_tx_gain, tx_azimuth_deg, b, tx_beamwidth_deg)
+            else:
+                eff_enemy_tx_gain = enemy_tx_gain
+
+            if rx_antenna_type == 'directional':
+                b_to_tx     = bearing_deg(rx_lat_f, rx_lon_f, tx_lat_f, tx_lon_f)
+                b_to_jammer = bearing_deg(rx_lat_f, rx_lon_f, jammer_lat_f, jammer_lon_f)
+                eff_enemy_rx_gain_signal = directional_gain_db(enemy_rx_gain, rx_azimuth_deg, b_to_tx,     rx_beamwidth_deg)
+                eff_enemy_rx_gain_jammer = directional_gain_db(enemy_rx_gain, rx_azimuth_deg, b_to_jammer, rx_beamwidth_deg)
+            else:
+                eff_enemy_rx_gain_signal = enemy_rx_gain
+                eff_enemy_rx_gain_jammer = enemy_rx_gain
+
+            if jammer_antenna_type == 'directional':
+                b = bearing_deg(jammer_lat_f, jammer_lon_f, rx_lat_f, rx_lon_f)
+                eff_jammer_tx_gain = directional_gain_db(jammer_tx_gain, jammer_azimuth_deg, b, jammer_beamwidth_deg)
+            else:
+                eff_jammer_tx_gain = jammer_tx_gain
+        else:
+            # No coordinates: treat all antennas as omni regardless of type setting
+            eff_enemy_tx_gain        = enemy_tx_gain
+            eff_enemy_rx_gain_signal = enemy_rx_gain
+            eff_enemy_rx_gain_jammer = enemy_rx_gain
+            eff_jammer_tx_gain       = jammer_tx_gain
+
         # Enemy Math
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
-        enemy_eirp = calculate_eirp(enemy_tx_dbm, enemy_tx_gain)
+        enemy_eirp = calculate_eirp(enemy_tx_dbm, eff_enemy_tx_gain)
         enemy_path_loss = calculate_path_loss(enemy_dist_km, freq_mhz, enemy_terrain, enemy_diff_db)
-        enemy_rx_signal = calculate_received_power(enemy_eirp, enemy_path_loss) + enemy_rx_gain
+        enemy_rx_signal = calculate_received_power(enemy_eirp, enemy_path_loss) + eff_enemy_rx_gain_signal
 
         # Jammer Math
         jammer_tx_dbm = watts_to_dbm(jammer_tx_w)
-        jammer_eirp_raw = calculate_eirp(jammer_tx_dbm, jammer_tx_gain)
+        jammer_eirp_raw = calculate_eirp(jammer_tx_dbm, eff_jammer_tx_gain)
 
         if apply_fh:
             jammer_eirp_taxed = apply_hopping_tax(jammer_eirp_raw, jammer_bw_khz, enemy_bw_khz)
@@ -140,7 +188,7 @@ def calculate_ea():
             jammer_eirp_taxed = jammer_eirp_raw
 
         jammer_path_loss = calculate_path_loss(jammer_dist_km, freq_mhz, jammer_terrain, jammer_diff_db)
-        jammer_rx_signal = calculate_received_power(jammer_eirp_taxed, jammer_path_loss) + enemy_rx_gain
+        jammer_rx_signal = calculate_received_power(jammer_eirp_taxed, jammer_path_loss) + eff_enemy_rx_gain_jammer
 
         effect_text = evaluate_jamming_effect(jammer_rx_signal, enemy_rx_signal)
         margin = round(jammer_rx_signal - enemy_rx_signal, 2)
@@ -196,15 +244,20 @@ def calculate_es_terrain():
     """
     data = request.json
     try:
-        freq_mhz      = float(data.get('freq_mhz', 150))
+        freq_mhz       = float(data.get('freq_mhz', 150))
         sensor_terrain = data.get('enemy_terrain', 'free space')
-        enemy_tx_w    = float(data.get('enemy_tx_w', 5))
-        enemy_tx_gain = float(data.get('enemy_tx_gain', 0))
+        enemy_tx_w     = float(data.get('enemy_tx_w', 5))
+        enemy_tx_gain  = float(data.get('enemy_tx_gain', 0))
         rx_sensitivity = float(data.get('rx_sensitivity', -90))
         rx_gain        = float(data.get('friendly_rx_gain', 0))
         enemy_lat      = float(data['enemy_lat'])
         enemy_lon      = float(data['enemy_lon'])
         num_bearings   = int(data.get('num_bearings', 36))
+
+        # Per-node TX antenna parameters
+        tx_antenna_type  = data.get('tx_antenna_type', 'omni')
+        tx_azimuth_deg   = float(data.get('tx_azimuth_deg', 0))
+        tx_beamwidth_deg = float(data.get('tx_beamwidth_deg', 90))
 
         if freq_mhz <= 0:
             return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
@@ -218,14 +271,22 @@ def calculate_es_terrain():
             return jsonify({'status': 'error', 'message': 'num_bearings must be between 1 and 360.'})
 
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
-        enemy_eirp   = calculate_eirp(enemy_tx_dbm, enemy_tx_gain)
 
-        # Free-space baseline range (no terrain correction)
+        def eirp_at_bearing(b):
+            """Returns EIRP (dBm) toward bearing b, accounting for directional TX pattern."""
+            if tx_antenna_type == 'directional':
+                gain = directional_gain_db(enemy_tx_gain, tx_azimuth_deg, b, tx_beamwidth_deg)
+            else:
+                gain = enemy_tx_gain
+            return calculate_eirp(enemy_tx_dbm, gain)
+
+        # On-boresight (peak) range used for the tooltip label and initial path endpoints
+        peak_eirp     = eirp_at_bearing(tx_azimuth_deg if tx_antenna_type == 'directional' else 0)
         base_range_km = calculate_sensing_distance(
-            enemy_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity
+            peak_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity
         )
 
-        # Build one endpoint per bearing at the baseline range
+        # Build one endpoint per bearing at the peak baseline range
         bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
         paths = []
         for bearing in bearings:
@@ -237,10 +298,11 @@ def calculate_es_terrain():
             profiles = get_elevation_profiles_batch(paths, num_samples=12)
             polygon_points = []
             for bearing, profile in zip(bearings, profiles):
+                eirp = eirp_at_bearing(bearing)
                 los = check_line_of_sight(profile, freq_mhz)
                 diff_db = los['diffraction_loss_db']
                 range_km = calculate_sensing_distance(
-                    enemy_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity, diff_db
+                    eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity, diff_db
                 )
                 # Enforce a minimum so the polygon always closes cleanly
                 range_km = max(range_km, 0.05)

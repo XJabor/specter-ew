@@ -1,4 +1,18 @@
 -----
+13APR26
+
+- Added per-node directional antenna support — each node can be set to omni or directional via its popup
+- Directional nodes accept a boresight azimuth (degrees True North) and a beam width (half-power beamwidth)
+- Gain falls off using a Gaussian beam pattern with a -20 dB floor outside the main beam
+- Jamming calculations now account for whether the jammer falls inside or outside the enemy receiver's beam
+- Enemy sensing (detection ring) shape now reflects the TX antenna direction — sector-shaped instead of circular for directional nodes
+- Fixed a bug where typing an azimuth value in a node popup would reset to 0 before the value was saved
+- Updated the README to reflect all features added since initial release
+- Smoothed the dual-slope path loss model transition between free-space and ground-plane regions (0.5–2 km blend zone)
+
+-----
+
+-----
 09APR26
 
 - Enemy and friendly map nodes can now be renamed via a new "Rename Node" button in each node's popup menu (max 20 characters)
