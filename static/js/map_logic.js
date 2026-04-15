@@ -124,7 +124,7 @@ function placeRedNode(latlng) {
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('red', id); });
     const node = { id, name: id, marker, esActive: false, esCircle: null, elevationM: null,
-                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90 };
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 0 };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
     marker.on('popupclose', function() { bindRedPopup(id); });
     redNodes.push(node);
@@ -140,7 +140,7 @@ function placeBlueNode(latlng) {
     const marker = L.marker(latlng, { icon: blueIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('blue', id); });
     const node = { id, name: id, marker, elevationM: null,
-                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90 };
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 0 };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
     marker.on('popupclose', function() { bindBluePopup(id); });
     blueNodes.push(node);
@@ -176,7 +176,13 @@ function antennaPopupSection(team, id, node) {
               oninput="setNodeAntennaBeamwidth('${team}','${id}',this.value)"
               onchange="recalculateAll()">
           </label>
-        </div>`;
+        </div>
+        <label class="popup-label">Height AGL (m):
+          <input type="number" min="0" max="500" value="${node.antennaHeightAgl}"
+            oninput="setNodeAntennaHeight('${team}','${id}',this.value)"
+            onchange="recalculateAll()">
+        </label>
+        <div class="popup-note">Affects LOS/diffraction only<br>path loss uses ground-level model</div>`;
 }
 
 function bindRedPopup(id) {
@@ -255,6 +261,13 @@ window.setNodeAntennaBeamwidth = function(team, id, value) {
     const node = findNode(team, id);
     if (!node) return;
     node.antennaBeamwidth = Math.max(1, Math.min(360, parseFloat(value) || 90));
+    // recalculateAll is triggered by onchange on the input (fires on blur/enter)
+};
+
+window.setNodeAntennaHeight = function(team, id, value) {
+    const node = findNode(team, id);
+    if (!node) return;
+    node.antennaHeightAgl = Math.max(0, parseFloat(value) || 0);
     // recalculateAll is triggered by onchange on the input (fires on blur/enter)
 };
 
@@ -553,6 +566,9 @@ function recalculateAll() {
             payload.jammer_antenna_type  = blue.antennaType;
             payload.jammer_azimuth_deg   = blue.antennaAzimuth;
             payload.jammer_beamwidth_deg = blue.antennaBeamwidth;
+            payload.tx_antenna_height_m     = tx.antennaHeightAgl;
+            payload.rx_antenna_height_m     = rx.antennaHeightAgl;
+            payload.jammer_antenna_height_m = blue.antennaHeightAgl;
         }
 
         fetch('/calculate_ea', {
@@ -780,11 +796,12 @@ function updateESCircles() {
         const ll = node.marker.getLatLng();
         const payload = {
             ...esParams,
-            enemy_lat:       ll.lat,
-            enemy_lon:       ll.lng,
-            tx_antenna_type:  node.antennaType,
-            tx_azimuth_deg:   node.antennaAzimuth,
-            tx_beamwidth_deg: node.antennaBeamwidth,
+            enemy_lat:          ll.lat,
+            enemy_lon:          ll.lng,
+            tx_antenna_type:    node.antennaType,
+            tx_azimuth_deg:     node.antennaAzimuth,
+            tx_beamwidth_deg:   node.antennaBeamwidth,
+            tx_antenna_height_m: node.antennaHeightAgl,
         };
 
         fetch('/calculate_es_terrain', {

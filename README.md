@@ -10,6 +10,7 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - **Elevation-aware propagation** — queries the Open-Elevation API to compute line-of-sight status and knife-edge diffraction loss (ITU-R P.526) for each jamming link; EA results include an LOS/NLOS badge and the diffraction penalty applied
 - **Terrain-shaped detection rings** — ES sensing range is rendered as an azimuthal polygon rather than a uniform circle, shrinking in directions blocked by terrain; falls back to a circle if the elevation API is unreachable
 - **Directional antenna support** — each node can be configured as omni or directional via its popup; enter boresight azimuth (True North) and half-power beamwidth. Effective gain is computed per bearing using a Gaussian beam model with a −20 dB sidelobe floor, affecting both J/S margin and the shape of detection rings
+- **Antenna height AGL** — each node has a configurable height above ground level (meters). Height is applied to the LOS/diffraction calculation so a mast-mounted antenna can correctly clear terrain obstacles that a ground-level node would not; path loss is still computed with a ground-level assumption
 - **Clutter terrain types** — manual terrain category (free space, rural, light forest, dense forest) applies a frequency-dependent clutter loss on top of the elevation-derived diffraction
 - **Frequency-hopping tax** — applies a configurable jamming penalty for frequency-hopping waveforms
 - **Per-node naming and MGRS labels** — nodes can be renamed; permanent MGRS grid labels and elevation readouts are displayed above each marker on the map
@@ -46,6 +47,7 @@ Open `http://localhost:5000` in your browser.
 Additional controls available from any node popup:
 - **Rename Node** — set a custom label (shown in MGRS tooltips and the results table)
 - **Antenna** — switch between Omni and Directional; if Directional, enter the boresight azimuth (° True North) and beamwidth (° HPBW)
+- **Height AGL** — set the antenna height above ground level in meters (affects LOS/diffraction only)
 
 Adjust platform parameters in the left sidebar and all links recalculate instantly.
 

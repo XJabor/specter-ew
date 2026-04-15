@@ -21,15 +21,20 @@ There are no build steps, test suites, or linters configured.
 
 ## Architecture
 
-**Backend** (`app.py` + `core/`): Stateless Flask REST API with two calculation endpoints:
+**Backend** (`app.py` + `core/`): Stateless Flask REST API with five endpoints:
 - `POST /calculate_ea` — Electronic Attack: computes J/S margin (jamming effectiveness)
-- `POST /calculate_es` — Electronic Support: computes sensing/detection range
+- `POST /calculate_es` — Electronic Support: computes omni sensing/detection range
+- `POST /calculate_es_terrain` — ES with terrain-aware detection polygon (per-bearing diffraction)
+- `POST /compute_overlap` — Common area overlap between multiple ES detection rings
+- `POST /get_elevations` — Elevation profile fetch for LOS/diffraction calculations
 
 **Core physics** (`core/`):
 - `link_budget.py` — EIRP, watts-to-dBm, frequency-hopping tax
-- `propagation.py` — Dual-slope path loss model (20 log for <1km, 40 log for >1km), clutter/terrain loss, received power, jamming evaluation, and sensing distance
+- `propagation.py` — Dual-slope path loss model (smooth 20→40 log blend across 0.5–2.0 km transition), clutter/terrain loss, received power, jamming evaluation, and sensing distance
+- `elevation.py` — Elevation profile fetching, LOS checking, knife-edge diffraction (ITU-R)
+- `antenna.py` — Directional antenna gain pattern, bearing calculations
 
-**Frontend** (`static/js/map_logic.js`, ~900 lines, vanilla JS):
+**Frontend** (`static/js/map_logic.js`, ~1,200 lines, vanilla JS):
 - Leaflet.js map with OpenStreetMap and Esri Satellite tile layers
 - Interactive placement of red (enemy) and blue (friendly) nodes
 - Link creation between nodes triggers RF calculations via API calls
@@ -44,4 +49,7 @@ There are no build steps, test suites, or linters configured.
 - **No database**: all state is client-side (Leaflet map markers/layers); the backend is purely stateless calculation.
 - **Frequency-hopping tax**: applies a configurable dB penalty when hopping waveforms are selected.
 - **Clutter loss**: terrain type (urban, suburban, open) adds attenuation on top of path loss.
+- **Directional antenna support**: nodes can be configured with azimuth and beamwidth; gain is reduced for off-boresight links using a Gaussian pattern approximation.
+- **Antenna height AGL**: per-node height (metres) adjusts the effective endpoint elevation in the LOS/diffraction calculation only. Path loss is still computed with a ground-level assumption by design.
+- **Common area detection overlay**: computes the geographic overlap between multiple ES detection rings to identify jointly-observable areas.
 - **Security headers** are set in `app.py` but there is no authentication — deploy only on trusted/air-gapped networks.

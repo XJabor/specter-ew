@@ -185,7 +185,7 @@ def _knife_edge_loss_db(nu):
     return max(0.0, -20.0 * math.log10(val))
 
 
-def check_line_of_sight(profile, freq_mhz):
+def check_line_of_sight(profile, freq_mhz, tx_height_agl_m=0.0, rx_height_agl_m=0.0):
     """
     Determine geometric LOS with Earth curvature correction and estimate
     knife-edge diffraction loss for the worst obstruction.
@@ -194,6 +194,8 @@ def check_line_of_sight(profile, freq_mhz):
         profile: list of {lat, lon, elevation_m, distance_km} from
                  get_elevation_profile()
         freq_mhz: link frequency in MHz
+        tx_height_agl_m: transmitter antenna height above ground level (metres)
+        rx_height_agl_m: receiver antenna height above ground level (metres)
 
     Returns:
         {
@@ -209,8 +211,8 @@ def check_line_of_sight(profile, freq_mhz):
     if len(profile) < 2:
         return clear
 
-    h1 = profile[0]["elevation_m"]
-    h2 = profile[-1]["elevation_m"]
+    h1 = profile[0]["elevation_m"]  + tx_height_agl_m
+    h2 = profile[-1]["elevation_m"] + rx_height_agl_m
     D  = profile[-1]["distance_km"]
 
     if D <= 0:

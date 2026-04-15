@@ -98,6 +98,9 @@ def calculate_ea():
         jammer_antenna_type  = data.get('jammer_antenna_type', 'omni')
         jammer_azimuth_deg   = float(data.get('jammer_azimuth_deg', 0))
         jammer_beamwidth_deg = float(data.get('jammer_beamwidth_deg', 90))
+        tx_antenna_height_m     = float(data.get('tx_antenna_height_m', 0))
+        rx_antenna_height_m     = float(data.get('rx_antenna_height_m', 0))
+        jammer_antenna_height_m = float(data.get('jammer_antenna_height_m', 0))
 
         jammer_lat = data.get('jammer_lat')
         jammer_lon = data.get('jammer_lon')
@@ -119,7 +122,7 @@ def calculate_ea():
                     float(jammer_lat), float(jammer_lon),
                     float(rx_lat), float(rx_lon)
                 )
-                jammer_los = check_line_of_sight(profile, freq_mhz)
+                jammer_los = check_line_of_sight(profile, freq_mhz, jammer_antenna_height_m, rx_antenna_height_m)
             except Exception:
                 pass  # fall back to no elevation data
 
@@ -129,7 +132,7 @@ def calculate_ea():
                     float(tx_lat), float(tx_lon),
                     float(rx_lat), float(rx_lon)
                 )
-                enemy_los = check_line_of_sight(profile, freq_mhz)
+                enemy_los = check_line_of_sight(profile, freq_mhz, tx_antenna_height_m, rx_antenna_height_m)
             except Exception:
                 pass
 
@@ -258,6 +261,7 @@ def calculate_es_terrain():
         tx_antenna_type  = data.get('tx_antenna_type', 'omni')
         tx_azimuth_deg   = float(data.get('tx_azimuth_deg', 0))
         tx_beamwidth_deg = float(data.get('tx_beamwidth_deg', 90))
+        tx_antenna_height_m = float(data.get('tx_antenna_height_m', 0))
 
         if freq_mhz <= 0:
             return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
@@ -299,7 +303,7 @@ def calculate_es_terrain():
             polygon_points = []
             for bearing, profile in zip(bearings, profiles):
                 eirp = eirp_at_bearing(bearing)
-                los = check_line_of_sight(profile, freq_mhz)
+                los = check_line_of_sight(profile, freq_mhz, tx_antenna_height_m, 0.0)
                 diff_db = los['diffraction_loss_db']
                 range_km = calculate_sensing_distance(
                     eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity, diff_db
