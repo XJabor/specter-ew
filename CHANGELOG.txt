@@ -1,4 +1,16 @@
 -----
+14APR26
+
+- Added per-node antenna height above ground level (AGL) — set in meters via each node's popup; raises the effective endpoint height in the line-of-sight calculation so mast-mounted antennas can clear terrain obstacles
+- Added configurable capture effect thresholds — operators can now adjust the J/S margin (signal strength difference) boundaries for No Effect, Warbling, and Complete Jamming to match analog or digital target receivers
+- Link line colors and workbench row colors now update instantly when thresholds are changed
+- Added input validation to prevent the Complete Jamming threshold from being set lower than the No Effect threshold
+- Added a range sanity warning in the workbench when any jamming link or detection ring exceeds 50 km, flagging that Earth curvature is not accounted for at those distances
+- Fixed a pre-existing bug where J/S margins between -6 and -5 dB were incorrectly reported as Complete Jamming instead of Warbling
+
+-----
+
+-----
 13APR26
 
 - Added per-node directional antenna support — each node can be set to omni or directional via its popup

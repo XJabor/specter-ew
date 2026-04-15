@@ -69,6 +69,15 @@
             <label>Sensor Rx Ant Gain (dBi): <input type="number" id="friendly_rx_gain" value="0"></label>
         </div>
 
+        <div class="control-group" style="border-left: 4px solid #aaaaaa;">
+            <h3>Capture Effect Thresholds (dB)</h3>
+            <label>No Effect below: <input type="number" id="lower_threshold" value="-6" step="0.5"></label>
+            <label>Complete Jamming above: <input type="number" id="upper_threshold" value="6" step="0.5"></label>
+            <div id="threshold-error" style="display:none; color:#ff4444; font-size:12px; margin-top:4px;">
+                ⚠ "Complete Jamming" threshold must be greater than "No Effect" threshold.
+            </div>
+        </div>
+
     </div>
 
     <button id="sidebar-toggle" aria-label="Toggle settings">&#9776;</button>
@@ -93,6 +102,9 @@
                 <button id="btn-minimize-links" class="minimize-btn">▼</button>
             </div>
             <div id="link-statuses-body">
+                <div id="distance-warning" style="display:none; background:#7a4400; color:#ffcc88; font-size:12px; padding:6px 8px; border-radius:3px; margin-bottom:6px;">
+                    ⚠ One or more links exceed 50 km. Earth curvature is not modelled — results may be unreliable at this range.
+                </div>
                 <div id="results-list">
                     <p class="results-empty">No links defined.</p>
                 </div>

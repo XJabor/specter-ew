@@ -78,19 +78,22 @@ def calculate_received_power(eirp, path_loss):
     """
     return round(eirp - path_loss, 2)
 
-def evaluate_jamming_effect(jammer_rx_dbm, enemy_rx_dbm):
+def evaluate_jamming_effect(jammer_rx_dbm, enemy_rx_dbm, lower_threshold=-6.0, upper_threshold=6.0):
     """
     Compares the received jamming power to the received enemy signal.
     Returns the operational effect based on the Capture Effect cliffs.
+
+    lower_threshold: margin (dB) at or below which the enemy signal captures the receiver
+    upper_threshold: margin (dB) at or above which the jammer captures the receiver
     """
     margin = jammer_rx_dbm - enemy_rx_dbm
-    
-    if margin <= -6:
+
+    if margin <= lower_threshold:
         return "No Effect (Enemy signal captures receiver)"
-    elif -5 <= margin <= 5:
-        return "Warbling / Popcorn (Contested Zone)"
-    else: # margin >= 6
+    elif margin >= upper_threshold:
         return "Complete Jamming (Jammer captures receiver)"
+    else:
+        return "Warbling / Popcorn (Contested Zone)"
 
 def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
                                rx_sensitivity, diffraction_loss_db=0.0):
