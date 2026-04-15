@@ -26,7 +26,7 @@ def _fetch_online(locations):
     resp = requests.post(
         OPEN_ELEVATION_URL,
         json={"locations": locations},
-        timeout=10
+        timeout=30
     )
     resp.raise_for_status()
     return [r["elevation"] for r in resp.json().get("results", [])]
