@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPECTER - Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .login-container {
+            width: 100%; height: 100vh;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .login-box {
+            background-color: #2d2d2d;
+            padding: 30px; border-radius: 6px;
+            border: 1px solid #555; width: 300px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.8);
+        }
+        .error { color: #ff4444; font-size: 14px; margin-bottom: 10px; }
+        button {
+            width: 100%; padding: 10px; margin-top: 15px;
+            background-color: #2a7abf; color: white;
+            border: 1px solid #1a5a9f; border-radius: 4px;
+            font-weight: bold; cursor: pointer;
+        }
+        button:hover { background-color: #1a5a9f; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h2 style="text-align: center; border-bottom: none;">SPECTER EW</h2>
+            {% if error %}
+                <div class="error">{{ error }}</div>
+            {% endif %}
+            <form method="POST" action="{{ url_for('login') }}">
+                <label>Username
+                    <input type="text" name="username" required autofocus>
+                </label>
+                <label>Password
+                    <input type="password" name="password" required>
+                </label>
+                <button type="submit">Access Node</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
