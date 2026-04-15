@@ -17,8 +17,14 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
-# FLASK_SECRET_KEY must be set persistently in production (e.g. systemd EnvironmentFile).
-# If unset, a random key is generated per-process — any restart invalidates active sessions.
+# If authentication is enabled, a stable secret key is required. Without it, each Gunicorn
+# worker generates its own random key, so sessions signed by one worker are rejected by
+# another — causing random logouts under multi-worker deployments.
+if os.environ.get('APP_CREDENTIALS') and not os.environ.get('FLASK_SECRET_KEY'):
+    raise RuntimeError(
+        "FLASK_SECRET_KEY must be set when APP_CREDENTIALS is configured. "
+        "Generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
 
 # Set SPECTER_HTTPS=true when the app is served over TLS (e.g. Digital Ocean + nginx/Caddy).
@@ -34,9 +40,10 @@ limiter = Limiter(app=app, key_func=get_remote_address, default_limits=[])
 
 @app.before_request
 def check_auth():
-    # 1. Allow local machine bypass
-    host = request.host.split(':')[0]
-    if host in ('localhost', '127.0.0.1'):
+    # 1. Allow local machine bypass — check the actual connection IP, not the Host header.
+    # The Host header is client-controlled and can be spoofed to bypass auth.
+    # ProxyFix(x_for=1) ensures request.remote_addr reflects the real client IP.
+    if request.remote_addr in ('127.0.0.1', '::1'):
         return
 
     # 2. Always allow access to the login page and static assets (CSS/JS/images)

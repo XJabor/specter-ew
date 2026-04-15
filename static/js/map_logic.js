@@ -61,6 +61,10 @@ let overlapVertices     = [];     // [[lat,lng],...] — all vertices of the cur
 let cornerMarkers       = [];     // L.circleMarker[] — MGRS labels at each vertex
 let cornersVisible      = false;
 
+// ES terrain ring request management
+let _esDebounceTimer       = null;       // debounce handle for scheduleESUpdate()
+const _esAbortControllers  = {};         // nodeId → AbortController for in-flight terrain requests
+
 // ============================================================
 // MODE MANAGEMENT
 // ============================================================
@@ -229,7 +233,11 @@ function renameNode(type, id) {
         alert('Name must be 20 characters or fewer.');
         return;
     }
-    node.name = trimmed;
+    node.name = trimmed
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
     if (type === 'red') bindRedPopup(id); else bindBluePopup(id);
     node.marker.openPopup();
     updateMGRSTooltips();
@@ -523,7 +531,7 @@ function recalculateAll() {
     });
 
     updateMGRSTooltips();
-    updateESCircles();
+    scheduleESUpdate();
     updateLinkAllBtn();
 
     if (jammingLinks.length === 0) {
@@ -806,7 +814,14 @@ window.toggleNodeES = function(id) {
     renderOverlapControls();
 };
 
-function updateESCircles() {
+// Debounced entry point — called from recalculateAll() to avoid rapid-fire API requests
+// when the user is dragging nodes or changing parameters quickly.
+function scheduleESUpdate() {
+    clearTimeout(_esDebounceTimer);
+    _esDebounceTimer = setTimeout(updateESCircles, 300);
+}
+
+async function updateESCircles() {
     // Remove circles for any node that is no longer active
     redNodes.forEach(n => {
         if (!n.esActive && n.esCircle) { map.removeLayer(n.esCircle); n.esCircle = null; }
@@ -814,6 +829,14 @@ function updateESCircles() {
 
     const activeESNodes = redNodes.filter(n => n.esActive);
     if (activeESNodes.length === 0) return;
+
+    // Cancel any in-flight requests and issue fresh controllers before starting the loop.
+    // This ensures a new updateESCircles() call (e.g. from a second drag) aborts stale
+    // fetches rather than letting an old position's result overwrite the current ring.
+    activeESNodes.forEach(node => {
+        if (_esAbortControllers[node.id]) _esAbortControllers[node.id].abort();
+        _esAbortControllers[node.id] = new AbortController();
+    });
 
     const esParams = {
         freq_mhz:         document.getElementById('freq_mhz').value,
@@ -825,27 +848,30 @@ function updateESCircles() {
         friendly_rx_gain: document.getElementById('friendly_rx_gain').value
     };
 
-    // Each active node gets its own terrain-aware polygon request (coordinates differ)
-    activeESNodes.forEach(node => {
+    // Process nodes sequentially — firing all requests in parallel would exceed the
+    // Open-Topo-Data public API rate limit (1 req/sec) when multiple nodes are active.
+    for (const node of activeESNodes) {
         const ll = node.marker.getLatLng();
         const payload = {
             ...esParams,
-            enemy_lat:          ll.lat,
-            enemy_lon:          ll.lng,
-            tx_antenna_type:    node.antennaType,
-            tx_azimuth_deg:     node.antennaAzimuth,
-            tx_beamwidth_deg:   node.antennaBeamwidth,
+            enemy_lat:           ll.lat,
+            enemy_lon:           ll.lng,
+            tx_antenna_type:     node.antennaType,
+            tx_azimuth_deg:      node.antennaAzimuth,
+            tx_beamwidth_deg:    node.antennaBeamwidth,
             tx_antenna_height_m: node.antennaHeightAgl,
         };
 
-        fetch('/calculate_es_terrain', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (data.status !== 'success') return;
+        try {
+            const r = await fetch('/calculate_es_terrain', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: _esAbortControllers[node.id].signal
+            });
+            const data = await r.json();
+            if (data.status !== 'success') continue;
+
             node.esRangeKm = data.base_range_km;
             if (node.esCircle) map.removeLayer(node.esCircle);
 
@@ -869,10 +895,14 @@ function updateESCircles() {
                     permanent: true, direction: 'right', className: 'dist-label'
                 }).addTo(map);
             }
-            renderOverlapControls();
-            updateDistanceWarning();
-        });
-    });
+        } catch (e) {
+            if (e.name !== 'AbortError') { /* network error — leave existing ring in place */ }
+        }
+    }
+
+    // Run once after all nodes are processed rather than after each individual node.
+    renderOverlapControls();
+    updateDistanceWarning();
 }
 
 // ============================================================
