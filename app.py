@@ -317,7 +317,7 @@ def calculate_es_terrain():
         rx_gain        = float(data.get('friendly_rx_gain', 0))
         enemy_lat      = float(data['enemy_lat'])
         enemy_lon      = float(data['enemy_lon'])
-        num_bearings   = int(data.get('num_bearings', 36))
+        num_bearings   = int(data.get('num_bearings', 36))  # 36 × 12 = 432 points, 5 API requests
 
         # Per-node TX antenna parameters
         tx_antenna_type  = data.get('tx_antenna_type', 'omni')
@@ -361,7 +361,7 @@ def calculate_es_terrain():
 
         polygon_points = None
         try:
-            profiles = get_elevation_profiles_batch(paths, num_samples=12)
+            profiles = get_elevation_profiles_batch(paths, num_samples=11)
             polygon_points = []
             for bearing, profile in zip(bearings, profiles):
                 eirp = eirp_at_bearing(bearing)
