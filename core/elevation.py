@@ -1,7 +1,11 @@
 import math
+import time
 import requests
 
-OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup"
+ELEVATION_API_URL = "https://api.opentopodata.org/v1/srtm30m"
+_BATCH_SIZE = 100        # public API hard limit: 100 locations per request
+_RATE_LIMIT_DELAY = 1.1  # seconds between requests; public API limit is 1 req/sec
+
 EARTH_EFFECTIVE_RADIUS_KM = 8500  # 4/3 Earth model for standard atmosphere
 
 # Module-level cache keyed by rounded coordinates to avoid redundant API calls
@@ -20,16 +24,53 @@ def _haversine(lat1, lon1, lat2, lon2):
 
 
 def _fetch_online(locations):
-    """POST a list of {latitude, longitude} dicts to Open-Elevation.
-    Returns elevation values (metres) in the same order.
-    Raises requests.RequestException on failure."""
-    resp = requests.post(
-        OPEN_ELEVATION_URL,
-        json={"locations": locations},
-        timeout=30
-    )
-    resp.raise_for_status()
-    return [r["elevation"] for r in resp.json().get("results", [])]
+    """POST a list of {latitude, longitude} dicts to Open-Topo-Data in batches.
+
+    Splits requests into chunks of at most _BATCH_SIZE to stay within the
+    public API's per-request location limit, sleeping _RATE_LIMIT_DELAY seconds
+    between chunks to respect the 1 req/sec rate limit.
+
+    Returns elevation values (metres) in the same order as the input.
+    Raises requests.RequestException on network failure, or ValueError if the
+    API returns an error status or an unexpected number of results.
+    """
+    all_elevations = []
+    last_request_start = None
+
+    for i in range(0, len(locations), _BATCH_SIZE):
+        # Sleep only the remaining time needed since the last request started,
+        # so that request latency counts toward the rate-limit window.
+        if last_request_start is not None:
+            elapsed = time.time() - last_request_start
+            if elapsed < _RATE_LIMIT_DELAY:
+                time.sleep(_RATE_LIMIT_DELAY - elapsed)
+
+        last_request_start = time.time()
+        chunk = locations[i:i + _BATCH_SIZE]
+        loc_string = "|".join(
+            f"{loc['latitude']},{loc['longitude']}" for loc in chunk
+        )
+
+        resp = requests.post(
+            ELEVATION_API_URL,
+            json={"locations": loc_string},
+            timeout=30
+        )
+        resp.raise_for_status()
+
+        body = resp.json()
+        if body.get("status") != "OK":
+            raise ValueError(f"Elevation API error: {body.get('error', 'unknown status')}")
+
+        results = body.get("results", [])
+        if len(results) != len(chunk):
+            raise ValueError(
+                f"Elevation API returned {len(results)} results for {len(chunk)} locations"
+            )
+
+        all_elevations.extend(r["elevation"] for r in results)
+
+    return all_elevations
 
 
 def get_point_elevations(points):

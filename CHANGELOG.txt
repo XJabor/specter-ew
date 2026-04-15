@@ -1,6 +1,14 @@
 -----
 14APR26
 
+- Added a login page with session-based authentication; credentials are set via the APP_CREDENTIALS environment variable (format: user:pass)
+- Fixed a critical bug where the session cookie flag prevented login from working on plain-HTTP local network deployments
+- Added CSRF (cross-site request forgery) protection to the login form and rate limiting (10 attempts/minute) to block brute-force attacks
+- Added a logout button at the bottom of the sidebar
+- Switched the terrain elevation API from Open-Elevation (unreliable, ~10–16s) to Open-Topo-Data (reliable, ~4s); detection rings now consistently return terrain-shaped polygons instead of falling back to plain circles
+- Optimised the elevation batch request logic so API response time counts against the rate-limit window, reducing unnecessary waiting between requests
+- Tuned terrain ring to 36 bearings × 11 elevation samples (396 points, 4 API requests) — full visual precision with minimal propagation accuracy trade-off
+- Updated README with full authentication setup instructions and honest notes on terrain ring timing
 - Added per-node antenna height above ground level (AGL) — set in meters via each node's popup; raises the effective endpoint height in the line-of-sight calculation so mast-mounted antennas can clear terrain obstacles
 - Added configurable capture effect thresholds — operators can now adjust the J/S margin (signal strength difference) boundaries for No Effect, Warbling, and Complete Jamming to match analog or digital target receivers
 - Link line colors and workbench row colors now update instantly when thresholds are changed

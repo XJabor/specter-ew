@@ -7,8 +7,8 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 ## Features
 
 - **Jamming effectiveness (J/S margin)** — calculates jammer-to-signal ratio at the enemy receiver
-- **Elevation-aware propagation** — queries the Open-Elevation API to compute line-of-sight status and knife-edge diffraction loss (ITU-R P.526) for each jamming link; EA results include an LOS/NLOS badge and the diffraction penalty applied
-- **Terrain-shaped detection rings** — ES sensing range is rendered as an azimuthal polygon rather than a uniform circle, shrinking in directions blocked by terrain; falls back to a circle if the elevation API is unreachable
+- **Elevation-aware propagation** — queries the Open-Topo-Data API (SRTM 30m) to compute line-of-sight status and knife-edge diffraction loss (ITU-R P.526) for each jamming link; EA results include an LOS/NLOS badge and the diffraction penalty applied
+- **Terrain-shaped detection rings** — ES sensing range is rendered as an azimuthal polygon rather than a uniform circle, shrinking in directions blocked by terrain; falls back to a circle if the elevation API is unreachable. Initial render takes ~4 seconds (36 bearings × 11 elevation samples, 4 API requests); subsequent renders of the same area are instant from cache
 - **Directional antenna support** — each node can be configured as omni or directional via its popup; enter boresight azimuth (True North) and half-power beamwidth. Effective gain is computed per bearing using a Gaussian beam model with a −20 dB sidelobe floor, affecting both J/S margin and the shape of detection rings
 - **Antenna height AGL** — each node has a configurable height above ground level (meters). Height is applied to the LOS/diffraction calculation so a mast-mounted antenna can correctly clear terrain obstacles that a ground-level node would not; path loss is still computed with a ground-level assumption
 - **Configurable capture effect thresholds** — the J/S margin boundaries for No Effect, Warbling, and Complete Jamming are adjustable in the sidebar to match the target receiver type (analog vs. digital); link colors and workbench row colors update instantly when thresholds change
@@ -25,6 +25,8 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - Flask 3.0.0
 - requests 2.28+
 - shapely 2.0+
+- flask-wtf 1.2+
+- flask-limiter 3.5+
 
 ## Install and Setup
 
@@ -65,9 +67,22 @@ Debug mode is disabled. Use on a **trusted network only** (tactical LAN, isolate
 
 ### Authentication
 
-Password protection is supported for deployments outside a trusted network. Setup details are not documented here — contact the project maintainer for configuration guidance.
+Password protection is configured via environment variables. Set these before starting the server:
 
-> **Security note:** Password protection must be paired with HTTPS to be effective. Always place the server behind a TLS-terminating reverse proxy (e.g. nginx) for any internet-facing deployment.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `APP_CREDENTIALS` | Optional | Enables login. Format: `user:pass` or `user1:pass1,user2:pass2` for multiple accounts. If unset, the app is open to anyone who can reach it. |
+| `FLASK_SECRET_KEY` | Recommended | Signs session cookies. Generate a strong random value: `python3 -c "import secrets; print(secrets.token_hex(32))"`. If unset, a random key is generated each restart — every restart logs everyone out. |
+| `SPECTER_HTTPS` | HTTPS only | Set to `true` when serving over TLS (e.g. behind nginx or on a PaaS like Digital Ocean App Platform). Enables the `Secure` flag on session cookies. **Do not set on plain-HTTP deployments** — browsers will silently drop the session cookie, causing an infinite login redirect. |
+
+Example (Linux/macOS):
+```bash
+export APP_CREDENTIALS="alice:correcthorsebatterystaple,bob:hunter2"
+export FLASK_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+python3 app.py
+```
+
+> **Security note:** Password protection must be paired with HTTPS to be meaningful. Credentials set in `APP_CREDENTIALS` are transmitted in plaintext over HTTP. Always place the server behind a TLS-terminating reverse proxy (e.g. nginx, Caddy) or use a PaaS with managed TLS for any internet-facing deployment.
 
 ### Disclaimer
 This application was built with AI assistance. The propagation models are conservative estimates. Use results at your own risk.
