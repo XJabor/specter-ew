@@ -1,36 +1,46 @@
 import logging
 import os
+import secrets 
 from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
 from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
 from core.antenna import bearing_deg, directional_gain_db
 from shapely.geometry import Polygon, MultiPolygon
 
 app = Flask(__name__)
+# Tell Flask it is behind one proxy
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
-logging.basicConfig(level=logging.ERROR)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY')
+if not app.secret_key:
+    app.secret_key = secrets.token_hex(32)
+
+# Enforce secure cookies in production
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 @app.before_request
 def check_auth():
+    # 1. Allow local machine bypass
+    if request.host.startswith('localhost:') or request.host.startswith('127.0.0.1:'):
+        return
+
+    # 2. Always allow access to the login page and static assets (CSS/JS/images)
+    if request.endpoint in ['login', 'static']:
+        return
+
+    # 3. If no credentials are set in the environment, leave the app open
     raw = os.environ.get('APP_CREDENTIALS', '').strip()
     if not raw:
         return
-    valid = {}
-    for pair in raw.split(','):
-        pair = pair.strip()
-        if ':' in pair:
-            u, p = pair.split(':', 1)
-            valid[u.strip()] = p.strip()
-    if not valid:
-        return
-    auth = request.authorization
-    if not auth or valid.get(auth.username) != auth.password:
-        return Response(
-            'Authentication required',
-            401,
-            {'WWW-Authenticate': 'Basic realm="Specter-EW"'}
-        )
+
+    # 4. Check if the user has a valid session
+    if not session.get('authenticated'):
+        return redirect(url_for('login'))
 
 @app.after_request
 def set_security_headers(response):
@@ -53,6 +63,30 @@ def set_security_headers(response):
 def index():
     # This serves your HTML page when you open the browser
     return render_template('index.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        # Parse the existing environment variable
+        raw = os.environ.get('APP_CREDENTIALS', '').strip()
+        valid_users = {}
+        if raw:
+            for pair in raw.split(','):
+                if ':' in pair:
+                    u, p = pair.split(':', 1)
+                    valid_users[u.strip()] = p.strip()
+        
+        if valid_users.get(username) == password:
+            session['authenticated'] = True
+            return redirect(url_for('index'))
+        else:
+            error = "Invalid credentials"
+            
+    return render_template('login.html', error=error)
 
 @app.route('/calculate_ea', methods=['POST'])
 def calculate_ea():
