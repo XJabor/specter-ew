@@ -1,8 +1,11 @@
 import logging
 import os
-import secrets 
+import secrets
 from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
 from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
+from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
 from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
@@ -14,19 +17,26 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
-app.secret_key = os.environ.get('FLASK_SECRET_KEY')
-if not app.secret_key:
-    app.secret_key = secrets.token_hex(32)
+# FLASK_SECRET_KEY must be set persistently in production (e.g. systemd EnvironmentFile).
+# If unset, a random key is generated per-process — any restart invalidates active sessions.
+app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
 
-# Enforce secure cookies in production
-app.config['SESSION_COOKIE_SECURE'] = True
+# Set SPECTER_HTTPS=true when the app is served over TLS (e.g. Digital Ocean + nginx/Caddy).
+# Leave unset for plain-HTTP LAN deployments — Secure cookies are silently dropped by browsers
+# over HTTP and will cause an infinite login redirect loop.
+_https = os.environ.get('SPECTER_HTTPS', '').lower() == 'true'
+app.config['SESSION_COOKIE_SECURE'] = _https
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+csrf = CSRFProtect(app)
+limiter = Limiter(app=app, key_func=get_remote_address, default_limits=[])
 
 @app.before_request
 def check_auth():
     # 1. Allow local machine bypass
-    if request.host.startswith('localhost:') or request.host.startswith('127.0.0.1:'):
+    host = request.host.split(':')[0]
+    if host in ('localhost', '127.0.0.1'):
         return
 
     # 2. Always allow access to the login page and static assets (CSS/JS/images)
@@ -65,29 +75,41 @@ def index():
     return render_template('index.html')
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
 def login():
     error = None
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
-        # Parse the existing environment variable
-        raw = os.environ.get('APP_CREDENTIALS', '').strip()
-        valid_users = {}
-        if raw:
-            for pair in raw.split(','):
-                if ':' in pair:
-                    u, p = pair.split(':', 1)
-                    valid_users[u.strip()] = p.strip()
-        
-        if valid_users.get(username) == password:
-            session['authenticated'] = True
-            return redirect(url_for('index'))
-        else:
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+
+        if not username or not password:
             error = "Invalid credentials"
-            
+        else:
+            # Parse APP_CREDENTIALS env var: "user:pass,user2:pass2"
+            raw = os.environ.get('APP_CREDENTIALS', '').strip()
+            valid_users = {}
+            if raw:
+                for pair in raw.split(','):
+                    if ':' in pair:
+                        u, p = pair.split(':', 1)
+                        valid_users[u.strip()] = p.strip()
+
+            if valid_users.get(username) == password:
+                session.clear()
+                session['authenticated'] = True
+                return redirect(url_for('index'))
+            else:
+                error = "Invalid credentials"
+
     return render_template('login.html', error=error)
 
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+@csrf.exempt
 @app.route('/calculate_ea', methods=['POST'])
 def calculate_ea():
     data = request.json
@@ -247,6 +269,7 @@ def calculate_ea():
         app.logger.error("calculate_ea error: %s", e)
         return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
 
+@csrf.exempt
 @app.route('/calculate_es', methods=['POST'])
 def calculate_es():
     data = request.json
@@ -275,6 +298,7 @@ def calculate_es():
         app.logger.error("calculate_es error: %s", e)
         return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
 
+@csrf.exempt
 @app.route('/calculate_es_terrain', methods=['POST'])
 def calculate_es_terrain():
     """
@@ -350,8 +374,9 @@ def calculate_es_terrain():
                 range_km = max(range_km, 0.05)
                 pt_lat, pt_lon = destination_point(enemy_lat, enemy_lon, bearing, range_km)
                 polygon_points.append([pt_lat, pt_lon])
-        except Exception:
-            polygon_points = None  # elevation unavailable; caller falls back to circle
+        except Exception as e:
+            app.logger.warning("calculate_es_terrain: elevation API failed, falling back to circle: %s", e)
+            polygon_points = None
 
         return jsonify({
             'status': 'success',
@@ -363,6 +388,7 @@ def calculate_es_terrain():
         return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
 
 
+@csrf.exempt
 @app.route('/compute_overlap', methods=['POST'])
 def compute_overlap():
     data = request.json
@@ -387,6 +413,7 @@ def compute_overlap():
         return jsonify({'status': 'error', 'message': 'Overlap calculation error.'})
 
 
+@csrf.exempt
 @app.route('/get_elevations', methods=['POST'])
 def get_elevations():
     points = request.json

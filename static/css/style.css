@@ -100,6 +100,21 @@ input, select {
 }
 
 /* Floating Clear Button */
+#logout-btn {
+    display: block;
+    margin-top: 15px;
+    padding: 10px 0 4px;
+    color: #aaa;
+    font-size: 12px;
+    text-decoration: none;
+    text-align: center;
+    border-top: 1px solid #444;
+}
+
+#logout-btn:hover {
+    color: #fff;
+}
+
 #clear-nodes-btn {
     position: absolute;
     bottom: 30px;
