@@ -101,6 +101,10 @@ def calculate_ea():
         tx_antenna_height_m     = float(data.get('tx_antenna_height_m', 0))
         rx_antenna_height_m     = float(data.get('rx_antenna_height_m', 0))
         jammer_antenna_height_m = float(data.get('jammer_antenna_height_m', 0))
+        lower_threshold = float(data.get('lower_threshold', -6.0))
+        upper_threshold = float(data.get('upper_threshold',  6.0))
+        if upper_threshold <= lower_threshold:
+            return jsonify({'status': 'error', 'message': '"Complete Jamming" threshold must be greater than "No Effect" threshold.'})
 
         jammer_lat = data.get('jammer_lat')
         jammer_lon = data.get('jammer_lon')
@@ -193,7 +197,7 @@ def calculate_ea():
         jammer_path_loss = calculate_path_loss(jammer_dist_km, freq_mhz, jammer_terrain, jammer_diff_db)
         jammer_rx_signal = calculate_received_power(jammer_eirp_taxed, jammer_path_loss) + eff_enemy_rx_gain_jammer
 
-        effect_text = evaluate_jamming_effect(jammer_rx_signal, enemy_rx_signal)
+        effect_text = evaluate_jamming_effect(jammer_rx_signal, enemy_rx_signal, lower_threshold, upper_threshold)
         margin = round(jammer_rx_signal - enemy_rx_signal, 2)
 
         return jsonify({

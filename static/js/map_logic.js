@@ -461,9 +461,11 @@ function getParams() {
         enemy_rx_gain:   document.getElementById('enemy_rx_gain').value,
         apply_fh:        document.getElementById('fh_toggle').checked,
         enemy_bw_khz:    document.getElementById('enemy_bw_khz').value,
-        jammer_tx_w:     document.getElementById('jammer_tx_w').value,
-        jammer_tx_gain:  document.getElementById('jammer_tx_gain').value,
-        jammer_bw_khz:   document.getElementById('jammer_bw_khz').value,
+        jammer_tx_w:      document.getElementById('jammer_tx_w').value,
+        jammer_tx_gain:   document.getElementById('jammer_tx_gain').value,
+        jammer_bw_khz:    document.getElementById('jammer_bw_khz').value,
+        lower_threshold:  document.getElementById('lower_threshold').value,
+        upper_threshold:  document.getElementById('upper_threshold').value,
     };
 }
 
@@ -477,10 +479,39 @@ function jammingLineColor(results) {
     const margins = (results || []).filter(r => r?.status === 'success').map(r => r.margin);
     if (margins.length === 0) return '#555';
     const best = Math.max(...margins);
-    return best >= 6 ? '#00ee00' : best > -6 ? '#ff9900' : '#ff3333';
+    const upper = parseFloat(document.getElementById('upper_threshold').value) || 6;
+    const lower = parseFloat(document.getElementById('lower_threshold').value) || -6;
+    return best >= upper ? '#00ee00' : best > lower ? '#ff9900' : '#ff3333';
+}
+
+function thresholdsValid() {
+    const upper = parseFloat(document.getElementById('upper_threshold').value);
+    const lower = parseFloat(document.getElementById('lower_threshold').value);
+    const invalid = isNaN(upper) || isNaN(lower) || upper <= lower;
+    document.getElementById('threshold-error').style.display = invalid ? 'block' : 'none';
+    document.getElementById('upper_threshold').style.borderColor = invalid ? '#ff4444' : '';
+    document.getElementById('lower_threshold').style.borderColor = invalid ? '#ff4444' : '';
+    return !invalid;
+}
+
+function updateDistanceWarning() {
+    const jammingOver = jammingLinks.some(jLink => {
+        const blue = findNode('blue', jLink.blueId);
+        const rx   = findNode('red',  jLink.rxId);
+        if (!blue || !rx) return false;
+        if (blue.marker.getLatLng().distanceTo(rx.marker.getLatLng()) / 1000 > 50) return true;
+        return enemyLinks.some(eLink => {
+            if (eLink.rxId !== jLink.rxId) return false;
+            const tx = findNode('red', eLink.txId);
+            return tx && tx.marker.getLatLng().distanceTo(rx.marker.getLatLng()) / 1000 > 50;
+        });
+    });
+    const esOver = redNodes.some(n => n.esActive && n.esRangeKm != null && n.esRangeKm > 50);
+    document.getElementById('distance-warning').style.display = (jammingOver || esOver) ? 'block' : 'none';
 }
 
 function recalculateAll() {
+    if (!thresholdsValid()) return;
     // Refresh enemy link line positions and distance labels
     enemyLinks.forEach(link => {
         const tx = findNode('red', link.txId);
@@ -496,6 +527,7 @@ function recalculateAll() {
     updateLinkAllBtn();
 
     if (jammingLinks.length === 0) {
+        document.getElementById('distance-warning').style.display = 'none';
         renderResults();
         return;
     }
@@ -533,6 +565,8 @@ function recalculateAll() {
         renderResults();
         return;
     }
+
+    updateDistanceWarning();
 
     let pending = tasks.length;
     const done = () => { if (--pending === 0) renderResults(); };
@@ -765,7 +799,7 @@ window.toggleNodeES = function(id) {
     const node = findNode('red', id);
     if (!node) return;
     node.esActive = !node.esActive;
-    if (!node.esActive) { node.esPolygonPoints = null; clearOverlapLayer(); }
+    if (!node.esActive) { node.esPolygonPoints = null; node.esRangeKm = null; clearOverlapLayer(); }
     map.closePopup();
     bindRedPopup(id);
     updateESCircles();
@@ -812,6 +846,7 @@ function updateESCircles() {
         .then(r => r.json())
         .then(data => {
             if (data.status !== 'success') return;
+            node.esRangeKm = data.base_range_km;
             if (node.esCircle) map.removeLayer(node.esCircle);
 
             if (data.polygon_points) {
@@ -835,6 +870,7 @@ function updateESCircles() {
                 }).addTo(map);
             }
             renderOverlapControls();
+            updateDistanceWarning();
         });
     });
 }
@@ -949,7 +985,9 @@ function renderResults() {
                     else if (result.status === 'success') {
                         margin = result.margin + ' dB';
                         effect = result.effect;
-                        rowClass = result.margin >= 6 ? 'result-complete' : result.margin > -6 ? 'result-warbling' : 'result-none';
+                        const upper = parseFloat(document.getElementById('upper_threshold').value) || 6;
+                        const lower = parseFloat(document.getElementById('lower_threshold').value) || -6;
+                        rowClass = result.margin >= upper ? 'result-complete' : result.margin > lower ? 'result-warbling' : 'result-none';
                         if (bestMargin === null || result.margin > bestMargin) bestMargin = result.margin;
                         if (result.jammer_los != null) {
                             losBadge = result.jammer_los.is_los
