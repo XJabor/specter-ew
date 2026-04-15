@@ -587,3 +587,11 @@ td.uncontested { color: #666; font-style: italic; font-weight: normal; }
     border: 1px solid #aaa;
     border-radius: 3px;
 }
+
+.popup-note {
+    font-size: 10px;
+    color: #888;
+    font-style: italic;
+    margin-top: 2px;
+    margin-bottom: 4px;
+}
