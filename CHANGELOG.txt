@@ -1,4 +1,15 @@
 -----
+15APR26
+
+- Added KML export to the Workbench — downloads the current map as a .kml file compatible with Google Earth, ATAK, and other mapping tools
+- Exported KML includes enemy and friendly node markers, enemy comms lines, jamming lines, detection ring polygons, and overlap zones
+- Jamming lines are exported in their current color (green, orange, or red) based on the calculated signal margin
+- A second export button ("Export KML (w/ Labels)") includes text labels showing distances on all links and detection range on each ring
+- Updated README to document the new KML export feature
+
+-----
+
+-----
 14APR26
 
 - Added a login page with session-based authentication; credentials are set via the APP_CREDENTIALS environment variable (format: user:pass)

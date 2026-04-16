@@ -1310,3 +1310,217 @@ document.getElementById('btn_search').addEventListener('click', function() {
 document.getElementById('loc_search').addEventListener('keypress', function(e) {
     if (e.key === 'Enter') document.getElementById('btn_search').click();
 });
+
+// ============================================================
+// KML EXPORT
+// ============================================================
+
+function escapeXml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+// Convert CSS #rrggbb to KML aabbggrr.
+// alpha: 0.0–1.0 float (default 1.0 = fully opaque)
+function cssToKmlColor(hex, alpha) {
+    const a = (alpha === undefined)
+        ? 'ff'
+        : Math.round(alpha * 255).toString(16).padStart(2, '0');
+    const r = hex.slice(1, 3);
+    const g = hex.slice(3, 5);
+    const b = hex.slice(5, 7);
+    return a + b + g + r;
+}
+
+function exportKML(includeLabels) {
+
+    const lines = [];
+    lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+    lines.push('<kml xmlns="http://www.opengis.net/kml/2.2">');
+    lines.push('<Document>');
+    lines.push('  <name>Specter-EW Export</name>');
+
+    // --- Styles ---
+    // Node icons: use a neutral white circle icon tinted by <color>
+    const iconHref = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png';
+    lines.push(`  <Style id="redNode"><IconStyle><color>${cssToKmlColor('#ff2222')}</color><scale>1.2</scale><Icon><href>${iconHref}</href></Icon></IconStyle></Style>`);
+    lines.push(`  <Style id="blueNode"><IconStyle><color>${cssToKmlColor('#3399ff')}</color><scale>1.2</scale><Icon><href>${iconHref}</href></Icon></IconStyle></Style>`);
+
+    // Enemy comms link (red solid)
+    lines.push(`  <Style id="enemyLink"><LineStyle><color>${cssToKmlColor('#ff0000')}</color><width>2</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>`);
+
+    // Jamming link styles (one per possible color)
+    for (const [name, hex] of [['green','#00ee00'],['orange','#ff9900'],['red','#ff3333'],['gray','#555555']]) {
+        lines.push(`  <Style id="jamLink-${name}"><LineStyle><color>${cssToKmlColor(hex)}</color><width>3</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>`);
+    }
+
+    // Label-only placemark (hidden icon, white text)
+    lines.push('  <Style id="linkLabel"><IconStyle><scale>0</scale></IconStyle><LabelStyle><color>ffffffff</color><scale>0.75</scale></LabelStyle></Style>');
+
+    // ES detection ring (red outline, 10% red fill)
+    lines.push(`  <Style id="esPoly"><LineStyle><color>${cssToKmlColor('#ff3333')}</color><width>1</width></LineStyle><PolyStyle><color>${cssToKmlColor('#ff3333', 0.10)}</color></PolyStyle></Style>`);
+
+    // Overlap polygon (yellow outline, 35% yellow fill)
+    lines.push(`  <Style id="overlapPoly"><LineStyle><color>${cssToKmlColor('#ffff00')}</color><width>2</width></LineStyle><PolyStyle><color>${cssToKmlColor('#ffff00', 0.35)}</color></PolyStyle></Style>`);
+
+    // --- Enemy Nodes ---
+    lines.push('  <Folder><name>Enemy Nodes (Red)</name>');
+    for (const node of redNodes) {
+        const ll = node.marker.getLatLng();
+        lines.push('    <Placemark>');
+        lines.push(`      <name>${escapeXml(node.name)}</name>`);
+        lines.push('      <styleUrl>#redNode</styleUrl>');
+        lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
+        lines.push('    </Placemark>');
+    }
+    lines.push('  </Folder>');
+
+    // --- Friendly Nodes ---
+    lines.push('  <Folder><name>Friendly Nodes (Blue)</name>');
+    for (const node of blueNodes) {
+        const ll = node.marker.getLatLng();
+        lines.push('    <Placemark>');
+        lines.push(`      <name>${escapeXml(node.name)}</name>`);
+        lines.push('      <styleUrl>#blueNode</styleUrl>');
+        lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
+        lines.push('    </Placemark>');
+    }
+    lines.push('  </Folder>');
+
+    // --- Enemy Comms Links ---
+    lines.push('  <Folder><name>Enemy Comms Links</name>');
+    for (const link of enemyLinks) {
+        const tx = findNode('red', link.txId);
+        const rx = findNode('red', link.rxId);
+        if (!tx || !rx) continue;
+        const p1 = tx.marker.getLatLng();
+        const p2 = rx.marker.getLatLng();
+        lines.push('    <Placemark>');
+        lines.push(`      <name>${escapeXml(link.id)}</name>`);
+        lines.push('      <styleUrl>#enemyLink</styleUrl>');
+        lines.push('      <LineString><tessellate>1</tessellate>');
+        lines.push(`        <coordinates>${p1.lng},${p1.lat},0 ${p2.lng},${p2.lat},0</coordinates>`);
+        lines.push('      </LineString>');
+        lines.push('    </Placemark>');
+        if (includeLabels) {
+            const dist = (p1.distanceTo(p2) / 1000).toFixed(2);
+            const midLat = (p1.lat + p2.lat) / 2;
+            const midLng = (p1.lng + p2.lng) / 2;
+            lines.push('    <Placemark>');
+            lines.push(`      <name>${dist} km</name>`);
+            lines.push('      <styleUrl>#linkLabel</styleUrl>');
+            lines.push(`      <Point><coordinates>${midLng},${midLat},0</coordinates></Point>`);
+            lines.push('    </Placemark>');
+        }
+    }
+    lines.push('  </Folder>');
+
+    // --- Jamming Links ---
+    lines.push('  <Folder><name>Jamming Links</name>');
+    for (const link of jammingLinks) {
+        const blue = findNode('blue', link.blueId);
+        const rx   = findNode('red',  link.rxId);
+        if (!blue || !rx) continue;
+        const p1 = blue.marker.getLatLng();
+        const p2 = rx.marker.getLatLng();
+
+        const cssColor = jammingLineColor(link.results);
+        const colorName = cssColor === '#00ee00' ? 'green'
+                        : cssColor === '#ff9900' ? 'orange'
+                        : cssColor === '#ff3333' ? 'red'
+                        : 'gray';
+
+        const margins = (link.results || []).filter(r => r?.status === 'success').map(r => r.margin);
+        const marginText = margins.length > 0 ? ` (${Math.max(...margins).toFixed(1)} dB)` : '';
+
+        lines.push('    <Placemark>');
+        lines.push(`      <name>${escapeXml(link.id + marginText)}</name>`);
+        lines.push(`      <styleUrl>#jamLink-${colorName}</styleUrl>`);
+        lines.push('      <LineString><tessellate>1</tessellate>');
+        lines.push(`        <coordinates>${p1.lng},${p1.lat},0 ${p2.lng},${p2.lat},0</coordinates>`);
+        lines.push('      </LineString>');
+        lines.push('    </Placemark>');
+        if (includeLabels) {
+            const dist = (p1.distanceTo(p2) / 1000).toFixed(2);
+            const midLat = (p1.lat + p2.lat) / 2;
+            const midLng = (p1.lng + p2.lng) / 2;
+            const labelText = marginText ? `${dist} km${marginText}` : `${dist} km`;
+            lines.push('    <Placemark>');
+            lines.push(`      <name>${escapeXml(labelText)}</name>`);
+            lines.push('      <styleUrl>#linkLabel</styleUrl>');
+            lines.push(`      <Point><coordinates>${midLng},${midLat},0</coordinates></Point>`);
+            lines.push('    </Placemark>');
+        }
+    }
+    lines.push('  </Folder>');
+
+    // --- ES Detection Rings ---
+    lines.push('  <Folder><name>ES Detection Rings</name>');
+    for (const node of redNodes) {
+        if (!node.esActive || !node.esPolygonPoints || node.esPolygonPoints.length < 3) continue;
+        // esPolygonPoints is [[lat,lng],...]; KML needs lng,lat,alt; close the ring
+        const pts = [...node.esPolygonPoints, node.esPolygonPoints[0]];
+        const coordStr = pts.map(pt => `${pt[1]},${pt[0]},0`).join(' ');
+        lines.push('    <Placemark>');
+        lines.push(`      <name>${escapeXml(node.name)} Detection</name>`);
+        lines.push('      <styleUrl>#esPoly</styleUrl>');
+        lines.push('      <Polygon><tessellate>1</tessellate>');
+        lines.push('        <outerBoundaryIs><LinearRing>');
+        lines.push(`          <coordinates>${coordStr}</coordinates>`);
+        lines.push('        </LinearRing></outerBoundaryIs>');
+        lines.push('      </Polygon>');
+        lines.push('    </Placemark>');
+        if (includeLabels && node.esRangeKm != null) {
+            const ll = node.marker.getLatLng();
+            lines.push('    <Placemark>');
+            lines.push(`      <name>Detection: ~${node.esRangeKm.toFixed(1)} km</name>`);
+            lines.push('      <styleUrl>#linkLabel</styleUrl>');
+            lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
+            lines.push('    </Placemark>');
+        }
+    }
+    lines.push('  </Folder>');
+
+    // --- Overlap Zones ---
+    if (overlapLayer) {
+        const overlapLayers = overlapLayer.getLayers();
+        if (overlapLayers.length > 0) {
+            lines.push('  <Folder><name>Detection Overlap</name>');
+            let idx = 1;
+            for (const layer of overlapLayers) {
+                const raw = layer.getLatLngs();
+                // L.polygon.getLatLngs() returns [[L.LatLng,...]] for simple polygons
+                const ring = Array.isArray(raw[0]) ? raw[0] : raw;
+                const pts  = [...ring, ring[0]];
+                const coordStr = pts.map(ll => `${ll.lng},${ll.lat},0`).join(' ');
+                lines.push('    <Placemark>');
+                lines.push(`      <name>Overlap Zone ${idx++}</name>`);
+                lines.push('      <styleUrl>#overlapPoly</styleUrl>');
+                lines.push('      <Polygon><tessellate>1</tessellate>');
+                lines.push('        <outerBoundaryIs><LinearRing>');
+                lines.push(`          <coordinates>${coordStr}</coordinates>`);
+                lines.push('        </LinearRing></outerBoundaryIs>');
+                lines.push('      </Polygon>');
+                lines.push('    </Placemark>');
+            }
+            lines.push('  </Folder>');
+        }
+    }
+
+    lines.push('</Document>');
+    lines.push('</kml>');
+
+    const kmlString = lines.join('\n');
+    const blob = new Blob([kmlString], { type: 'application/vnd.google-earth.kml+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'specter-export.kml';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+}
