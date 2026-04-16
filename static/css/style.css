@@ -261,6 +261,22 @@ input, select {
         bottom: 70px;
     }
 
+    /* Sidebar close button — top-right corner of the open sidebar */
+    #sidebar-close {
+        display: block;
+        position: absolute;
+        top: 10px;
+        right: 12px;
+        background: none;
+        border: none;
+        color: #aaa;
+        font-size: 20px;
+        cursor: pointer;
+        line-height: 1;
+        z-index: 1;
+    }
+    #sidebar-close:hover { color: #fff; }
+
 }
 /* ===================== END MOBILE ===================== */
 
@@ -320,6 +336,10 @@ input, select {
 }
 
 .minimize-btn:hover { color: #fff; }
+
+/* Hidden on desktop; shown only in the mobile media query */
+#sidebar-close          { display: none; }
+#workbench-collapse-btn { display: none; }
 
 #link-statuses-body {
     max-height: 260px;
@@ -493,6 +513,26 @@ td.uncontested { color: #666; font-style: italic; font-weight: normal; }
         right: 10px;
         transform: none;
         width: 260px;
+    }
+
+    /* Workbench collapse toggle — shown only on mobile */
+    #workbench-collapse-btn {
+        display: inline-block;
+        font-size: 11px;
+    }
+
+    /* Flex title row so the arrow sits on the right */
+    .workbench-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    /* Collapsed state: hide everything below the title bar */
+    #workbench.collapsed .workbench-section,
+    #workbench.collapsed #mode-indicator,
+    #workbench.collapsed #logout-btn {
+        display: none;
     }
 }
 
