@@ -1,4 +1,14 @@
 -----
+16APR26
+
+- Added a collapse button (▼/▶) to the Workbench panel on phones and tablets — tap it to shrink the panel down to just its title bar, freeing up map space
+- Tap the arrow again to expand the Workbench back to full size
+- Added a close button (✕) inside the settings sidebar on phones and tablets — tap it to dismiss the panel without reaching back to the hamburger menu in the corner
+- Both buttons are hidden on desktop where the layout has more room; no change to the desktop experience
+
+-----
+
+-----
 15APR26
 
 - Added KML export to the Workbench — downloads the current map as a .kml file compatible with Google Earth, ATAK, and other mapping tools
