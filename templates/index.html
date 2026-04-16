@@ -11,6 +11,7 @@
 <body>
     <div id="sidebar">
         <h3>SPECTER EW Planning Tool</h3>
+        <button id="sidebar-close" aria-label="Close settings">&#10005;</button>
         <div class="control-group" style="border-left: 4px solid #ffffff;">
             <h3>Jump to Location</h3>
             <input type="text" id="loc_search" placeholder="e.g. 39.36, -94.91 OR 15SUD49887308">
@@ -86,7 +87,7 @@
         <span id="mobile-margin">--</span> dB &nbsp;&bull;&nbsp; <span id="mobile-effect">Place nodes...</span>
     </div>
     <div id="workbench">
-        <div class="workbench-title">WORKBENCH</div>
+        <div class="workbench-title">WORKBENCH <button id="workbench-collapse-btn" class="minimize-btn" aria-label="Minimize workbench">&#9660;</button></div>
         <div class="workbench-section">
             <div class="workbench-section-label">PLACE NODES</div>
             <button class="workbench-btn red-btn" id="btn-place-red">⬤ Enemy Node</button>

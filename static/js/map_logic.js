@@ -1242,6 +1242,17 @@ sidebarOverlay.addEventListener('click', function() {
     sidebarOverlay.classList.remove('visible');
 });
 
+document.getElementById('sidebar-close').addEventListener('click', function() {
+    sidebar.classList.remove('open');
+    sidebarOverlay.classList.remove('visible');
+});
+
+document.getElementById('workbench-collapse-btn').addEventListener('click', function() {
+    const wb = document.getElementById('workbench');
+    wb.classList.toggle('collapsed');
+    this.textContent = wb.classList.contains('collapsed') ? '\u25b6' : '\u25bc';
+});
+
 // ============================================================
 // FH TOGGLE
 // ============================================================
