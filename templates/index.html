@@ -120,6 +120,11 @@
             <button class="workbench-btn" id="btn-clear-overlap" style="display:none; border-left:3px solid #ffff00; color:#ffff00;">Clear Overlap</button>
             <div id="overlap-status"></div>
         </div>
+        <div class="workbench-section">
+            <div class="workbench-section-label">EXPORT</div>
+            <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportKML(false)" title="Export nodes, links, and detection rings to KML">Export KML</button>
+            <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportKML(true)" title="Export with distance and range labels">Export KML (w/ Labels)</button>
+        </div>
         <div id="mode-indicator">Pan / Select</div>
         <a href="{{ url_for('logout') }}" id="logout-btn">Logout</a>
     </div>
