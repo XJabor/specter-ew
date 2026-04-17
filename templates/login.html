@@ -318,7 +318,7 @@
     (function () {
         var raw = document.getElementById('err-data').textContent.trim();
         // Only show if Flask rendered it (non-empty and doesn't contain raw template syntax)
-        if (raw && raw.indexOf('{{') === -1) {
+        if (raw && raw.indexOf('{' + '{') === -1) {
             var box = document.getElementById('err-display');
             box.textContent = '\u25BA ' + raw;
             box.style.display = 'block';
