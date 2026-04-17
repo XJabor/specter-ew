@@ -9,7 +9,8 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - **Jamming effectiveness (J/S margin)** — calculates jammer-to-signal ratio at the enemy receiver
 - **Elevation-aware propagation** — queries the Open-Topo-Data API (SRTM 30m) to compute line-of-sight status and knife-edge diffraction loss (ITU-R P.526) for each jamming link; EA results include an LOS/NLOS badge and the diffraction penalty applied
 - **Terrain-shaped detection rings** — ES sensing range is rendered as an azimuthal polygon rather than a uniform circle, shrinking in directions blocked by terrain; falls back to a circle if the elevation API is unreachable. Initial render takes ~4 seconds (36 bearings × 11 elevation samples, 4 API requests); subsequent renders of the same area are instant from cache
-- **Directional antenna support** — each node can be configured as omni or directional via its popup; enter boresight azimuth (True North) and half-power beamwidth. Effective gain is computed per bearing using a Gaussian beam model with a −20 dB sidelobe floor, affecting both J/S margin and the shape of detection rings
+- **Jammer footprint** — toggle "Show Jammer Footprint" on any friendly node to display a terrain-shaped cyan polygon showing the jammer's effective coverage area per bearing, using the same reference sensitivity as ES detection rings. Directional antennas produce the expected teardrop lobe; omni antennas produce a roughly circular footprint. Falls back to a uniform circle if the elevation API is unreachable
+- **Directional antenna support** — each node can be configured as omni or directional via its popup; enter boresight azimuth (True North) and half-power beamwidth. Effective gain is computed per bearing using a Gaussian beam model with a −20 dB sidelobe floor, affecting J/S margin, the shape of detection rings, and the shape of jammer footprints
 - **Antenna height AGL** — each node has a configurable height above ground level (meters). Height is applied to the LOS/diffraction calculation so a mast-mounted antenna can correctly clear terrain obstacles that a ground-level node would not; path loss is still computed with a ground-level assumption
 - **Configurable capture effect thresholds** — the J/S margin boundaries for No Effect, Warbling, and Complete Jamming are adjustable in the sidebar to match the target receiver type (analog vs. digital); link colors and workbench row colors update instantly when thresholds change
 - **Range sanity warning** — a warning appears in the workbench when any jamming link or detection ring exceeds 50 km, flagging that Earth curvature is not modeled at those ranges
@@ -47,7 +48,8 @@ Open `http://localhost:5000` in your browser.
 1. Select **Enemy Node** or **Friendly Node** and click the map to place them
 2. Link enemy nodes individually or select **Link All Enemy Comms** in the Workbench
 3. Left-click an enemy node and select **Show Detection Ring** if desired
-4. Left-click a friendly node, select **Link to Target**, then click the enemy node to target
+4. Left-click a friendly node and select **Show Jammer Footprint** to visualize its coverage area (optional)
+5. Left-click a friendly node, select **Link to Target**, then click the enemy node to target
 
 Additional controls available from any node popup:
 - **Rename Node** — set a custom label (shown in MGRS tooltips and the results table)

@@ -396,6 +396,92 @@ def calculate_es_terrain():
 
 
 @csrf.exempt
+@app.route('/calculate_jammer_footprint', methods=['POST'])
+def calculate_jammer_footprint():
+    """
+    Terrain-aware jammer power footprint.  Returns polygon_points — one lat/lng per
+    azimuth bearing — shaped by terrain diffraction and the jammer's directional antenna
+    pattern.  The boundary represents the range at which the jammer's received signal
+    equals rx_sensitivity dBm (same reference used by ES rings).  Falls back to null
+    polygon_points when the elevation API is unavailable.
+    """
+    data = request.json
+    try:
+        freq_mhz            = float(data.get('freq_mhz', 150))
+        jammer_terrain      = data.get('jammer_terrain', 'free space')
+        jammer_tx_w         = float(data.get('jammer_tx_w', 5))
+        jammer_tx_gain      = float(data.get('jammer_tx_gain', 0))
+        rx_sensitivity      = float(data.get('rx_sensitivity', -90))
+        rx_gain             = float(data.get('friendly_rx_gain', 0))
+        jammer_lat          = float(data['jammer_lat'])
+        jammer_lon          = float(data['jammer_lon'])
+        num_bearings        = int(data.get('num_bearings', 36))
+
+        jammer_antenna_type  = data.get('jammer_antenna_type', 'omni')
+        jammer_azimuth_deg   = float(data.get('jammer_azimuth_deg', 0))
+        jammer_beamwidth_deg = float(data.get('jammer_beamwidth_deg', 90))
+        jammer_antenna_height_m = float(data.get('jammer_antenna_height_m', 0))
+
+        if freq_mhz <= 0:
+            return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
+        if jammer_tx_w <= 0:
+            return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
+        if not (-90 <= jammer_lat <= 90):
+            return jsonify({'status': 'error', 'message': 'Invalid latitude: jammer_lat.'})
+        if not (-180 <= jammer_lon <= 180):
+            return jsonify({'status': 'error', 'message': 'Invalid longitude: jammer_lon.'})
+        if not (1 <= num_bearings <= 360):
+            return jsonify({'status': 'error', 'message': 'num_bearings must be between 1 and 360.'})
+
+        jammer_tx_dbm = watts_to_dbm(jammer_tx_w)
+
+        def eirp_at_bearing(b):
+            if jammer_antenna_type == 'directional':
+                gain = directional_gain_db(jammer_tx_gain, jammer_azimuth_deg, b, jammer_beamwidth_deg)
+            else:
+                gain = jammer_tx_gain
+            return calculate_eirp(jammer_tx_dbm, gain)
+
+        peak_eirp     = eirp_at_bearing(jammer_azimuth_deg if jammer_antenna_type == 'directional' else 0)
+        base_range_km = calculate_sensing_distance(
+            peak_eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity
+        )
+
+        bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
+        paths = []
+        for bearing in bearings:
+            end_lat, end_lon = destination_point(jammer_lat, jammer_lon, bearing, base_range_km)
+            paths.append((jammer_lat, jammer_lon, end_lat, end_lon))
+
+        polygon_points = None
+        try:
+            profiles = get_elevation_profiles_batch(paths, num_samples=11)
+            polygon_points = []
+            for bearing, profile in zip(bearings, profiles):
+                eirp = eirp_at_bearing(bearing)
+                los = check_line_of_sight(profile, freq_mhz, jammer_antenna_height_m, 0.0)
+                diff_db = los['diffraction_loss_db']
+                range_km = calculate_sensing_distance(
+                    eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity, diff_db
+                )
+                range_km = max(range_km, 0.05)
+                pt_lat, pt_lon = destination_point(jammer_lat, jammer_lon, bearing, range_km)
+                polygon_points.append([pt_lat, pt_lon])
+        except Exception as e:
+            app.logger.warning("calculate_jammer_footprint: elevation API failed, falling back to circle: %s", e)
+            polygon_points = None
+
+        return jsonify({
+            'status': 'success',
+            'base_range_km': base_range_km,
+            'polygon_points': polygon_points,
+        })
+    except Exception as e:
+        app.logger.error("calculate_jammer_footprint error: %s", e)
+        return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
+
+
+@csrf.exempt
 @app.route('/compute_overlap', methods=['POST'])
 def compute_overlap():
     data = request.json

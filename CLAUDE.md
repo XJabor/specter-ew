@@ -34,10 +34,11 @@ There are no build steps, test suites, or linters configured.
 
 ## Architecture
 
-**Backend** (`app.py` + `core/`): Stateless Flask REST API with seven endpoints (plus auth routes):
+**Backend** (`app.py` + `core/`): Stateless Flask REST API with eight endpoints (plus auth routes):
 - `POST /calculate_ea` — Electronic Attack: computes J/S margin (jamming effectiveness)
 - `POST /calculate_es` — Electronic Support: computes omni sensing/detection range
 - `POST /calculate_es_terrain` — ES with terrain-aware detection polygon (per-bearing diffraction)
+- `POST /calculate_jammer_footprint` — EA jammer coverage polygon (per-bearing, terrain-aware); uses jammer EIRP and the global rx_sensitivity as the reference threshold
 - `POST /compute_overlap` — Common area overlap between multiple ES detection rings
 - `POST /get_elevations` — Elevation profile fetch for LOS/diffraction calculations
 - `GET/POST /login` — Login page (session-based auth)
@@ -49,12 +50,13 @@ There are no build steps, test suites, or linters configured.
 - `elevation.py` — Elevation profile fetching, LOS checking, knife-edge diffraction (ITU-R)
 - `antenna.py` — Directional antenna gain pattern, bearing calculations
 
-**Frontend** (`static/js/map_logic.js`, ~1,200 lines, vanilla JS):
+**Frontend** (`static/js/map_logic.js`, ~1,300 lines, vanilla JS):
 - Leaflet.js map with OpenStreetMap and Esri Satellite tile layers
 - Interactive placement of red (enemy) and blue (friendly) nodes
 - Link creation between nodes triggers RF calculations via API calls
 - Workbench panel for managing multiple nodes simultaneously
 - MGRS coordinate display for all placed icons
+- Jammer footprint toggle on blue nodes: terrain-shaped cyan polygon showing per-bearing jammer coverage
 
 **Template** (`templates/index.html`): Single-page app; all JS/CSS loaded from `static/`.
 
@@ -67,4 +69,5 @@ There are no build steps, test suites, or linters configured.
 - **Directional antenna support**: nodes can be configured with azimuth and beamwidth; gain is reduced for off-boresight links using a Gaussian pattern approximation.
 - **Antenna height AGL**: per-node height (metres) adjusts the effective endpoint elevation in the LOS/diffraction calculation only. Path loss is still computed with a ground-level assumption by design.
 - **Common area detection overlay**: computes the geographic overlap between multiple ES detection rings to identify jointly-observable areas.
+- **Jammer footprint**: per-bearing coverage polygon for blue nodes, driven by jammer EIRP and terrain diffraction. Uses the same `calculate_sensing_distance` / `get_elevation_profiles_batch` pattern as ES terrain rings. Reference threshold is the global `rx_sensitivity` parameter. Rendered in cyan (`#00bcd4`) to distinguish from red ES rings.
 - **Authentication**: session-based login via `APP_CREDENTIALS` env var. CSRF protection (Flask-WTF) on the login form. Login attempts are rate-limited to 10/minute per IP (Flask-Limiter). API endpoints (`/calculate_*`, etc.) are same-origin `fetch()` calls and are not subject to CSRF. Security headers are set on all responses.
