@@ -65,6 +65,10 @@ let cornersVisible      = false;
 let _esDebounceTimer       = null;       // debounce handle for scheduleESUpdate()
 const _esAbortControllers  = {};         // nodeId → AbortController for in-flight terrain requests
 
+// Jammer footprint request management
+let _fpDebounceTimer       = null;
+const _fpAbortControllers  = {};
+
 // ============================================================
 // MODE MANAGEMENT
 // ============================================================
@@ -144,8 +148,9 @@ function placeBlueNode(latlng) {
     const marker = L.marker(latlng, { icon: blueIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('blue', id); });
     const node = { id, name: id, marker, elevationM: null,
-                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 0 };
-    marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 0,
+                   footprintActive: false, footprintCircle: null, footprintPolygonPoints: null };
+    marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); scheduleFootprintUpdate(); });
     marker.on('popupclose', function() { bindBluePopup(id); });
     blueNodes.push(node);
     bindBluePopup(id);
@@ -206,9 +211,11 @@ function bindRedPopup(id) {
 function bindBluePopup(id) {
     const node = findNode('blue', id);
     if (!node) return;
+    const fpLabel = node.footprintActive ? '🚫 Hide Jammer Footprint' : '📡 Show Jammer Footprint';
     node.marker.bindPopup(
         `<b>Friendly Node ${node.name}</b><br>
         <button onclick="startJammingLink('${id}')">⚡ Link to Target</button><br>
+        <button onclick="toggleNodeFootprint('${id}')">${fpLabel}</button><br>
         <button onclick="renameNode('blue','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('blue','${id}')">🗑️ Remove Node</button>` +
         antennaPopupSection('blue', id, node)
@@ -418,7 +425,10 @@ window.removeNode = function(color, id) {
         jammingLinks = jammingLinks.filter(l => l.rxId !== id);
     } else {
         const node = findNode('blue', id);
-        if (node) map.removeLayer(node.marker);
+        if (node) {
+            map.removeLayer(node.marker);
+            if (node.footprintCircle) map.removeLayer(node.footprintCircle);
+        }
         blueNodes = blueNodes.filter(n => n.id !== id);
         jammingLinks.filter(l => l.blueId === id).forEach(l => map.removeLayer(l.line));
         jammingLinks = jammingLinks.filter(l => l.blueId !== id);
@@ -532,6 +542,7 @@ function recalculateAll() {
 
     updateMGRSTooltips();
     scheduleESUpdate();
+    scheduleFootprintUpdate();
     updateLinkAllBtn();
 
     if (jammingLinks.length === 0) {
@@ -906,6 +917,99 @@ async function updateESCircles() {
 }
 
 // ============================================================
+// JAMMER FOOTPRINT
+// ============================================================
+
+window.toggleNodeFootprint = function(id) {
+    const node = findNode('blue', id);
+    if (!node) return;
+    node.footprintActive = !node.footprintActive;
+    if (!node.footprintActive && node.footprintCircle) {
+        map.removeLayer(node.footprintCircle);
+        node.footprintCircle = null;
+        node.footprintPolygonPoints = null;
+    }
+    map.closePopup();
+    bindBluePopup(id);
+    if (node.footprintActive) scheduleFootprintUpdate();
+};
+
+function scheduleFootprintUpdate() {
+    clearTimeout(_fpDebounceTimer);
+    _fpDebounceTimer = setTimeout(updateJammerFootprints, 300);
+}
+
+async function updateJammerFootprints() {
+    blueNodes.forEach(n => {
+        if (!n.footprintActive && n.footprintCircle) { map.removeLayer(n.footprintCircle); n.footprintCircle = null; }
+    });
+
+    const activeNodes = blueNodes.filter(n => n.footprintActive);
+    if (activeNodes.length === 0) return;
+
+    activeNodes.forEach(node => {
+        if (_fpAbortControllers[node.id]) _fpAbortControllers[node.id].abort();
+        _fpAbortControllers[node.id] = new AbortController();
+    });
+
+    const fpParams = {
+        freq_mhz:         document.getElementById('freq_mhz').value,
+        jammer_terrain:   document.getElementById('jammer_terrain').value,
+        jammer_tx_w:      document.getElementById('jammer_tx_w').value,
+        jammer_tx_gain:   document.getElementById('jammer_tx_gain').value,
+        rx_sensitivity:   document.getElementById('rx_sensitivity').value,
+        friendly_rx_gain: document.getElementById('friendly_rx_gain').value,
+    };
+
+    for (const node of activeNodes) {
+        const ll = node.marker.getLatLng();
+        const payload = {
+            ...fpParams,
+            jammer_lat:            ll.lat,
+            jammer_lon:            ll.lng,
+            jammer_antenna_type:   node.antennaType,
+            jammer_azimuth_deg:    node.antennaAzimuth,
+            jammer_beamwidth_deg:  node.antennaBeamwidth,
+            jammer_antenna_height_m: node.antennaHeightAgl,
+        };
+
+        try {
+            const r = await fetch('/calculate_jammer_footprint', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: _fpAbortControllers[node.id].signal
+            });
+            const data = await r.json();
+            if (data.status !== 'success') continue;
+
+            if (node.footprintCircle) map.removeLayer(node.footprintCircle);
+
+            if (data.polygon_points) {
+                node.footprintPolygonPoints = data.polygon_points;
+                const label = `Jammer Coverage: ~${data.base_range_km.toFixed(1)} km (terrain)`;
+                node.footprintCircle = L.polygon(data.polygon_points, {
+                    color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12, weight: 1
+                }).bindTooltip(label, {
+                    permanent: true, direction: 'right', className: 'dist-label'
+                }).addTo(map);
+            } else {
+                node.footprintPolygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
+                const radiusMeters = data.base_range_km * 1000;
+                const label = `Jammer Coverage: ${data.base_range_km.toFixed(2)} km`;
+                node.footprintCircle = L.circle(ll, {
+                    color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12, radius: radiusMeters
+                }).bindTooltip(label, {
+                    permanent: true, direction: 'right', className: 'dist-label'
+                }).addTo(map);
+            }
+        } catch (e) {
+            if (e.name !== 'AbortError') { /* network error — leave existing footprint in place */ }
+        }
+    }
+}
+
+// ============================================================
 // MAP HIGHLIGHT / DIM
 // ============================================================
 
@@ -1170,7 +1274,7 @@ document.getElementById('btn-toggle-corners').addEventListener('click', toggleCo
 document.getElementById('clear-nodes-btn').addEventListener('click', function() {
     setMode(null);
     redNodes.forEach(n => { map.removeLayer(n.marker); if (n.esCircle) map.removeLayer(n.esCircle); });
-    blueNodes.forEach(n => map.removeLayer(n.marker));
+    blueNodes.forEach(n => { map.removeLayer(n.marker); if (n.footprintCircle) map.removeLayer(n.footprintCircle); });
     enemyLinks.forEach(l => map.removeLayer(l.line));
     jammingLinks.forEach(l => map.removeLayer(l.line));
     redNodes = []; blueNodes = []; enemyLinks = []; jammingLinks = [];
