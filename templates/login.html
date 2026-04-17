@@ -4,46 +4,327 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPECTER - Login</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+
     <style>
-        .login-container {
-            width: 100%; height: 100vh;
-            display: flex; justify-content: center; align-items: center;
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body, html {
+            height: 100%;
+            background: #080808;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
         }
+
+        /* ---------- Canvas / overlays ---------- */
+        #ghost-canvas {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* CRT scanlines */
+        .crt-scanlines {
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.18) 2px,
+                rgba(0, 0, 0, 0.18) 4px
+            );
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* Screen vignette */
+        .crt-vignette {
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.75) 100%);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* Subtle screen flicker */
+        @keyframes flicker {
+            0%   { opacity: 1; }
+            92%  { opacity: 1; }
+            93%  { opacity: 0.92; }
+            94%  { opacity: 1; }
+            99%  { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+        .crt-scanlines { animation: flicker 8s infinite; }
+
+        /* ---------- Layout ---------- */
+        .login-page {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 0;
+        }
+
+        /* ---------- ASCII banner ---------- */
+        .ascii-banner {
+            color: #00ff41;
+            font-size: 9px;
+            line-height: 1.65;
+            text-align: center;
+            white-space: pre;
+            letter-spacing: 0;
+            margin-bottom: 22px;
+            text-shadow: 0 0 8px #00ff41, 0 0 22px rgba(0,255,65,0.4);
+            user-select: none;
+        }
+
+        @keyframes bannerPulse {
+            0%, 100% { text-shadow: 0 0 8px #00ff41, 0 0 22px rgba(0,255,65,0.4); }
+            50%       { text-shadow: 0 0 14px #00ff41, 0 0 36px rgba(0,255,65,0.6); }
+        }
+        .ascii-banner { animation: bannerPulse 3.5s ease-in-out infinite; }
+
+        /* ---------- Login box ---------- */
         .login-box {
-            background-color: #2d2d2d;
-            padding: 30px; border-radius: 6px;
-            border: 1px solid #555; width: 300px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.8);
+            position: relative;
+            background: rgba(6, 16, 6, 0.94);
+            border: 2px solid #00ff41;
+            padding: 28px 30px 24px;
+            width: 340px;
+            box-shadow:
+                0 0 20px rgba(0,255,65,0.2),
+                inset 0 0 20px rgba(0,255,65,0.03);
         }
-        .error { color: #ff4444; font-size: 14px; margin-bottom: 10px; }
-        button {
-            width: 100%; padding: 10px; margin-top: 15px;
-            background-color: #2a7abf; color: white;
-            border: 1px solid #1a5a9f; border-radius: 4px;
-            font-weight: bold; cursor: pointer;
+
+        /* Inner frame inset */
+        .login-box::before {
+            content: '';
+            position: absolute;
+            inset: 4px;
+            border: 1px solid rgba(0,255,65,0.15);
+            pointer-events: none;
         }
-        button:hover { background-color: #1a5a9f; }
+
+        /* Amber corner accents */
+        .corner {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+        }
+        .corner-tl { top: -2px;    left: -2px;  border-top:    2px solid #ff9900; border-left:   2px solid #ff9900; }
+        .corner-tr { top: -2px;    right: -2px; border-top:    2px solid #ff9900; border-right:  2px solid #ff9900; }
+        .corner-bl { bottom: -2px; left: -2px;  border-bottom: 2px solid #ff9900; border-left:   2px solid #ff9900; }
+        .corner-br { bottom: -2px; right: -2px; border-bottom: 2px solid #ff9900; border-right:  2px solid #ff9900; }
+
+        /* ---------- Box header ---------- */
+        .box-title {
+            color: #ff9900;
+            font-size: 11px;
+            letter-spacing: 2px;
+            text-align: center;
+            margin-bottom: 20px;
+            text-shadow: 0 0 8px rgba(255,153,0,0.6);
+        }
+
+        /* ---------- Error ---------- */
+        .error-msg {
+            color: #ff3333;
+            font-size: 10px;
+            margin-bottom: 14px;
+            text-align: center;
+            text-shadow: 0 0 6px rgba(255,51,51,0.5);
+            letter-spacing: 1px;
+        }
+
+        /* ---------- Form fields ---------- */
+        .field-label {
+            display: block;
+            color: #00ff41;
+            font-size: 10px;
+            letter-spacing: 1px;
+            margin-bottom: 14px;
+        }
+
+        .field-label input {
+            display: block;
+            width: 100%;
+            margin-top: 6px;
+            padding: 8px 7px;
+            background: #060e06;
+            border: 1px solid rgba(0,255,65,0.5);
+            color: #00ff41;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 11px;
+            outline: none;
+            caret-color: #00ff41;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+
+        .field-label input::placeholder {
+            color: rgba(0,255,65,0.25);
+        }
+
+        .field-label input:focus {
+            border-color: #00ff41;
+            box-shadow: 0 0 8px rgba(0,255,65,0.35);
+        }
+
+        /* ---------- Submit button ---------- */
+        .submit-btn {
+            display: block;
+            width: 100%;
+            margin-top: 18px;
+            padding: 11px 0;
+            background: #001400;
+            border: 2px solid #00ff41;
+            color: #00ff41;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 10px;
+            letter-spacing: 3px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .submit-btn:hover {
+            background: #002800;
+            box-shadow: 0 0 14px rgba(0,255,65,0.45);
+        }
+
+        .submit-btn:active {
+            background: #003c00;
+        }
+
+        /* ---------- Dot divider ---------- */
+        .dot-row {
+            color: rgba(0,255,65,0.3);
+            font-size: 11px;
+            text-align: center;
+            margin-top: 14px;
+            letter-spacing: 4px;
+            user-select: none;
+        }
+
+        /* ---------- Ghost blink ---------- */
+        @keyframes ghostBlink {
+            0%, 90%, 100% { opacity: 1; }
+            95%            { opacity: 0.5; }
+        }
+
+        /* ---------- ASCII ghost background ---------- */
+        .specter-ghost {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Courier New', Courier, monospace;
+            font-size: clamp(22px, 5.5vh, 68px);
+            line-height: 1.05;
+            letter-spacing: 0;
+            color: #00ff41;
+            opacity: 0.07;
+            text-shadow: 0 0 30px #00ff41, 0 0 60px rgba(0,255,65,0.3);
+            pointer-events: none;
+            user-select: none;
+            white-space: pre;
+            z-index: 0;
+            animation: ghostFloat 11s ease-in-out infinite,
+                       ghostBreathe 4.5s ease-in-out infinite;
+        }
+
+        @keyframes ghostFloat {
+            0%, 100% { transform: translate(-50%, -50%); }
+            50%       { transform: translate(-50%, calc(-50% - 22px)); }
+        }
+
+        @keyframes ghostBreathe {
+            0%, 100% { opacity: 0.065; }
+            50%       { opacity: 0.095; }
+        }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 400px) {
+            .ascii-banner { font-size: 7px; }
+            .login-box   { width: 90vw; }
+        }
     </style>
 </head>
 <body>
-    <div class="login-container">
+    <!-- ASCII ghost background watermark -->
+    <pre class="specter-ghost" aria-hidden="true">
+     ▄▄████▄▄
+   ▄██████████▄
+  ████████████████
+  ████  ████  ████
+  ████████████████
+  ████████████████
+  ████████████████
+   ▀████████████▀
+     ▀██████▀
+      ▀▀  ▀▀
+    </pre>
+    <div class="crt-scanlines"></div>
+    <div class="crt-vignette"></div>
+
+    <div class="login-page">
+
+        <!-- ASCII banner -->
+        <div class="ascii-banner"> ███████╗██████╗ ███████╗ ██████╗████████╗███████╗██████╗
+ ██╔════╝██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔════╝██╔══██╗
+ ███████╗██████╔╝█████╗  ██║        ██║   █████╗  ██████╔╝
+ ╚════██║██╔═══╝ ██╔══╝  ██║        ██║   ██╔══╝  ██╔══██╗
+ ███████║██║     ███████╗╚██████╗   ██║   ███████╗██║  ██║
+ ╚══════╝╚═╝     ╚══════╝ ╚═════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝</div>
+
         <div class="login-box">
-            <h2 style="text-align: center; border-bottom: none;">SPECTER EW</h2>
-            {% if error %}
-                <div class="error">{{ error }}</div>
-            {% endif %}
+            <div class="corner corner-tl"></div>
+            <div class="corner corner-tr"></div>
+            <div class="corner corner-bl"></div>
+            <div class="corner corner-br"></div>
+
+            <div class="box-title">// AN EW PLANNING TOOL //</div>
+
+            <!-- Error message: set by Flask, shown only if non-empty and rendered -->
+            <div class="error-msg" id="err-display" style="display:none"></div>
+            <span id="err-data" style="display:none">{{ error | default('') }}</span>
+
             <form method="POST" action="{{ url_for('login') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <label>Username
-                    <input type="text" name="username" required autofocus maxlength="50">
+
+                <label class="field-label">USER_ID
+                    <input type="text" name="username" required autofocus maxlength="50" placeholder="ENTER IDENTITY...">
                 </label>
-                <label>Password
-                    <input type="password" name="password" required maxlength="128">
+
+                <label class="field-label">PASSKEY
+                    <input type="password" name="password" required maxlength="128" placeholder="ENTER KEY...">
                 </label>
-                <button type="submit">Access Specter EW</button>
+
+                <button type="submit" class="submit-btn">[ AUTHENTICATE ]</button>
             </form>
+
+            <div class="dot-row">· · · · · · · · · · ·</div>
         </div>
+
     </div>
+
+    <script>
+    (function () {
+        var raw = document.getElementById('err-data').textContent.trim();
+        // Only show if Flask rendered it (non-empty and doesn't contain raw template syntax)
+        if (raw && raw.indexOf('{{') === -1) {
+            var box = document.getElementById('err-display');
+            box.textContent = '\u25BA ' + raw;
+            box.style.display = 'block';
+        }
+    })();
+    </script>
+
 </body>
 </html>
