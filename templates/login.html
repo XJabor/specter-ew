@@ -293,7 +293,7 @@
 
             <!-- Error message: set by Flask, shown only if non-empty and rendered -->
             <div class="error-msg" id="err-display" style="display:none"></div>
-            <span id="err-data" style="display:none">{{ error | default('') }}</span>
+            <span id="err-data" style="display:none">{{ error or '' }}</span>
 
             <form method="POST" action="{{ url_for('login') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

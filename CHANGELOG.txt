@@ -1,4 +1,15 @@
 -----
+18APR26
+
+- Fixed a bug on the login page where the word "None" appeared underneath "AN EW PLANNING TOOL" on every page load
+- The fix was a one-word change in how the page handles an empty error message — it now correctly shows nothing when there is no error
+- Renamed the "Environment" section in the settings sidebar to "Radio Information"
+- Added colored left-side border bars to the "Radio Information" and "Enable Frequency Hopping" tabs, matching the visual style of the other tabs
+- "Radio Information" uses a dark green bar; "Enable Frequency Hopping" uses an amber/yellow bar matching its existing label color
+
+-----
+
+-----
 16APR26
 
 - Added "Show Jammer Footprint" button to friendly (blue) node popups
