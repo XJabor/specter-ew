@@ -40,20 +40,28 @@ const blueIcon = new L.Icon({
     iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34]
 });
 
+const blackIcon = new L.Icon({
+    iconUrl: '/static/img/marker-icon-black.png',
+    shadowUrl: '/static/img/marker-shadow.png',
+    iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34]
+});
+
 // ============================================================
 // DATA STRUCTURES
 // ============================================================
 
 let redNodes    = [];   // { id, marker, esActive, esCircle }
 let blueNodes   = [];   // { id, marker }
+let blackNodes  = [];   // { id, name, marker } — reference-only markers
 let enemyLinks  = [];   // { id, txId, rxId, line }
 let jammingLinks = [];  // { id, blueId, rxId, line, result }
 
-let activeMode = null;   // null | 'place-red' | 'place-blue' | 'link-enemy' | 'link-jammer'
+let activeMode = null;   // null | 'place-red' | 'place-blue' | 'place-black' | 'link-enemy' | 'link-jammer'
 let linkSource = null;   // { color, id } — holds first node during two-step link creation
 let selectedLink = null; // { type: 'enemy'|'jammer', enemyLinkId, jammingLinkId }
-let redCounter  = 0;
-let blueCounter = 0;
+let redCounter   = 0;
+let blueCounter  = 0;
+let blackCounter = 0;
 
 let overlapLayer        = null;   // L.polygon | L.layerGroup | null — yellow intersection overlay
 let overlapChecked      = new Set(); // node IDs selected in the overlap checklist
@@ -74,16 +82,18 @@ const _fpAbortControllers  = {};
 // ============================================================
 
 const modeBtnIds = {
-    'place-red':  'btn-place-red',
-    'place-blue': 'btn-place-blue',
+    'place-red':   'btn-place-red',
+    'place-blue':  'btn-place-blue',
+    'place-black': 'btn-place-black',
 };
 
 const modeLabels = {
-    null:          'Pan / Select',
-    'place-red':   'Click map to place Enemy Node — ESC to cancel',
-    'place-blue':  'Click map to place Friendly Node — ESC to cancel',
-    'link-enemy':  'Click the TX Enemy Node — ESC to cancel',
-    'link-jammer': 'Click the target Enemy Node — ESC to cancel'
+    null:           'Pan / Select',
+    'place-red':    'Click map to place Enemy Node — ESC to cancel',
+    'place-blue':   'Click map to place Friendly Node — ESC to cancel',
+    'place-black':  'Click map to place Marker — ESC to cancel',
+    'link-enemy':   'Click the TX Enemy Node — ESC to cancel',
+    'link-jammer':  'Click the target Enemy Node — ESC to cancel'
 };
 
 function setMode(newMode) {
@@ -97,7 +107,7 @@ function setMode(newMode) {
     Object.values(modeBtnIds).forEach(id => document.getElementById(id).classList.remove('active'));
     if (newMode && modeBtnIds[newMode]) document.getElementById(modeBtnIds[newMode]).classList.add('active');
 
-    map.getContainer().style.cursor = (newMode === 'place-red' || newMode === 'place-blue') ? 'crosshair' : '';
+    map.getContainer().style.cursor = (newMode === 'place-red' || newMode === 'place-blue' || newMode === 'place-black') ? 'crosshair' : '';
     document.getElementById('mode-indicator').textContent = modeLabels[newMode] ?? 'Pan / Select';
 }
 
@@ -110,9 +120,9 @@ document.addEventListener('keydown', function(e) {
 // ============================================================
 
 function findNode(color, id) {
-    return color === 'red'
-        ? redNodes.find(n => n.id === id)
-        : blueNodes.find(n => n.id === id);
+    if (color === 'red')   return redNodes.find(n => n.id === id);
+    if (color === 'blue')  return blueNodes.find(n => n.id === id);
+    if (color === 'black') return blackNodes.find(n => n.id === id);
 }
 
 function highlightNode(color, id, on) {
@@ -156,6 +166,18 @@ function placeBlueNode(latlng) {
     bindBluePopup(id);
     updateMGRSTooltips();
     fetchAndStoreElevation(node);
+}
+
+function placeBlackNode(latlng) {
+    blackCounter++;
+    const id = 'M' + blackCounter;
+    const marker = L.marker(latlng, { icon: blackIcon, draggable: true }).addTo(map);
+    const node = { id, name: id, marker };
+    marker.on('dragend', function() { updateMGRSTooltips(); });
+    marker.on('popupclose', function() { bindBlackPopup(id); });
+    blackNodes.push(node);
+    bindBlackPopup(id);
+    updateMGRSTooltips();
 }
 
 // ============================================================
@@ -204,7 +226,9 @@ function bindRedPopup(id) {
         <button onclick="toggleNodeES('${id}')">${esLabel}</button><br>
         <button onclick="renameNode('red','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('red','${id}')">🗑️ Remove Node</button>` +
-        antennaPopupSection('red', id, node)
+        mgrsInputSection('red', id, node) +
+        antennaPopupSection('red', id, node),
+        { minWidth: 180 }
     );
 }
 
@@ -218,7 +242,21 @@ function bindBluePopup(id) {
         <button onclick="toggleNodeFootprint('${id}')">${fpLabel}</button><br>
         <button onclick="renameNode('blue','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('blue','${id}')">🗑️ Remove Node</button>` +
-        antennaPopupSection('blue', id, node)
+        mgrsInputSection('blue', id, node) +
+        antennaPopupSection('blue', id, node),
+        { minWidth: 180 }
+    );
+}
+
+function bindBlackPopup(id) {
+    const node = findNode('black', id);
+    if (!node) return;
+    node.marker.bindPopup(
+        `<b>Marker ${node.name}</b><br>
+        <button onclick="renameNode('black','${id}')">✏️ Rename</button><br>
+        <button onclick="removeNode('black','${id}')">🗑️ Remove</button>` +
+        mgrsInputSection('black', id, node),
+        { minWidth: 180 }
     );
 }
 
@@ -245,7 +283,9 @@ function renameNode(type, id) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
-    if (type === 'red') bindRedPopup(id); else bindBluePopup(id);
+    if (type === 'red') bindRedPopup(id);
+    else if (type === 'blue') bindBluePopup(id);
+    else bindBlackPopup(id);
     node.marker.openPopup();
     updateMGRSTooltips();
     renderResults();
@@ -289,6 +329,46 @@ window.setNodeAntennaHeight = function(team, id, value) {
 function getNodeDisplayName(type, id) {
     const node = findNode(type, id);
     return node ? node.name : id;
+}
+
+window.moveNodeToMGRS = function(type, id, value) {
+    if (!value || !value.trim()) return;
+    try {
+        const [lng, lat] = mgrs.toPoint(value.trim().toUpperCase());
+        const node = findNode(type, id);
+        if (!node) return;
+        node.marker.setLatLng([lat, lng]);
+        map.panTo([lat, lng]);
+        updateMGRSTooltips();
+        if (type === 'red') {
+            fetchAndStoreElevation(node);
+            recalculateAll();
+        } else if (type === 'blue') {
+            fetchAndStoreElevation(node);
+            recalculateAll();
+            scheduleFootprintUpdate();
+        }
+        node.marker.closePopup();
+        if (type === 'red') bindRedPopup(id);
+        else if (type === 'blue') bindBluePopup(id);
+        else bindBlackPopup(id);
+    } catch (e) {
+        alert('Invalid MGRS grid string. Example: 18SUJ2345678901');
+    }
+};
+
+function mgrsInputSection(type, id, node) {
+    const currentMGRS = mgrs.forward([node.marker.getLatLng().lng, node.marker.getLatLng().lat]);
+    return `<hr class="popup-divider">
+        <label class="popup-label">MGRS:
+          <div class="popup-mgrs-row">
+            <input type="text" id="mgrs-in-${id}" class="popup-mgrs-input" value="${currentMGRS}"
+              onclick="this.select()"
+              onkeydown="if(event.key==='Enter') moveNodeToMGRS('${type}','${id}',this.value)">
+            <button class="popup-mgrs-go"
+              onclick="moveNodeToMGRS('${type}','${id}',document.getElementById('mgrs-in-${id}').value)">Go</button>
+          </div>
+        </label>`;
 }
 
 // ============================================================
@@ -423,7 +503,7 @@ window.removeNode = function(color, id) {
         enemyLinks  = enemyLinks.filter(l => l.txId !== id && l.rxId !== id);
         jammingLinks.filter(l => l.rxId === id).forEach(l => map.removeLayer(l.line));
         jammingLinks = jammingLinks.filter(l => l.rxId !== id);
-    } else {
+    } else if (color === 'blue') {
         const node = findNode('blue', id);
         if (node) {
             map.removeLayer(node.marker);
@@ -432,6 +512,11 @@ window.removeNode = function(color, id) {
         blueNodes = blueNodes.filter(n => n.id !== id);
         jammingLinks.filter(l => l.blueId === id).forEach(l => map.removeLayer(l.line));
         jammingLinks = jammingLinks.filter(l => l.blueId !== id);
+    } else if (color === 'black') {
+        const node = findNode('black', id);
+        if (node) map.removeLayer(node.marker);
+        blackNodes = blackNodes.filter(n => n.id !== id);
+        return;
     }
     recalculateAll();
 };
@@ -651,6 +736,13 @@ function updateMGRSTooltips() {
         const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
         const elevStr = (node.elevationM != null) ? ` ${node.elevationM}M` : '';
         node.marker.bindTooltip(`${node.name} — ${mgrsStr}${elevStr}`, {
+            permanent: true, direction: 'top', className: 'mgrs-label'
+        });
+    });
+    blackNodes.forEach(function(node) {
+        const latlng = node.marker.getLatLng();
+        const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
+        node.marker.bindTooltip(`${node.name} — ${mgrsStr}`, {
             permanent: true, direction: 'top', className: 'mgrs-label'
         });
     });
@@ -1178,8 +1270,9 @@ function renderResults() {
 // ============================================================
 
 map.on('click', function(e) {
-    if      (activeMode === 'place-red')  placeRedNode(e.latlng);
-    else if (activeMode === 'place-blue') placeBlueNode(e.latlng);
+    if      (activeMode === 'place-red')   placeRedNode(e.latlng);
+    else if (activeMode === 'place-blue')  placeBlueNode(e.latlng);
+    else if (activeMode === 'place-black') placeBlackNode(e.latlng);
 });
 
 // ============================================================
@@ -1248,8 +1341,9 @@ function unlinkAllEnemyComms() {
 // WORKBENCH BUTTON EVENTS
 // ============================================================
 
-document.getElementById('btn-place-red').addEventListener('click',  () => setMode('place-red'));
-document.getElementById('btn-place-blue').addEventListener('click', () => setMode('place-blue'));
+document.getElementById('btn-place-red').addEventListener('click',   () => setMode('place-red'));
+document.getElementById('btn-place-blue').addEventListener('click',  () => setMode('place-blue'));
+document.getElementById('btn-place-black').addEventListener('click', () => setMode('place-black'));
 
 document.getElementById('btn-link-all-enemy').addEventListener('click', function() {
     if (allCommsLinked()) unlinkAllEnemyComms();
@@ -1275,10 +1369,11 @@ document.getElementById('clear-nodes-btn').addEventListener('click', function() 
     setMode(null);
     redNodes.forEach(n => { map.removeLayer(n.marker); if (n.esCircle) map.removeLayer(n.esCircle); });
     blueNodes.forEach(n => { map.removeLayer(n.marker); if (n.footprintCircle) map.removeLayer(n.footprintCircle); });
+    blackNodes.forEach(n => { map.removeLayer(n.marker); });
     enemyLinks.forEach(l => map.removeLayer(l.line));
     jammingLinks.forEach(l => map.removeLayer(l.line));
-    redNodes = []; blueNodes = []; enemyLinks = []; jammingLinks = [];
-    redCounter = 0; blueCounter = 0;
+    redNodes = []; blueNodes = []; blackNodes = []; enemyLinks = []; jammingLinks = [];
+    redCounter = 0; blueCounter = 0; blackCounter = 0;
     selectedLink = null;
     overlapChecked.clear();
     clearOverlapLayer();
@@ -1297,7 +1392,7 @@ const CenterControl = L.Control.extend({
         btn.innerText = 'Center on Nodes';
         L.DomEvent.disableClickPropagation(btn);
         L.DomEvent.on(btn, 'click', function() {
-            const allNodes = [...redNodes, ...blueNodes];
+            const allNodes = [...redNodes, ...blueNodes, ...blackNodes];
             if (allNodes.length === 0) return;
             const circles = redNodes.filter(n => n.esCircle).map(n => n.esCircle);
             const bounds = L.latLngBounds([]);

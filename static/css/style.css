@@ -375,6 +375,8 @@ input, select {
 
 .workbench-btn.red-btn { border-left: 3px solid #ff4444; }
 .workbench-btn.blue-btn { border-left: 3px solid #44aaff; }
+.workbench-btn.black-btn { border-left: 3px solid #888888; }
+.workbench-btn.black-btn.active { background-color: #222; border-color: #aaa; }
 .workbench-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .workbench-btn.unlink-btn { border-left: 3px solid #ff4444; color: #ff9999; }
 
@@ -650,3 +652,36 @@ td.uncontested { color: #666; font-style: italic; font-weight: normal; }
     margin-top: 2px;
     margin-bottom: 4px;
 }
+
+.popup-mgrs-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+}
+
+.popup-mgrs-input {
+    flex: 1;
+    padding: 3px 4px;
+    font-size: 11px;
+    font-family: monospace;
+    background-color: #fff;
+    color: #222;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+.popup-mgrs-go {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: #e8e8e8;
+    color: #222;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.popup-mgrs-go:hover { background: #d0d0d0; }
