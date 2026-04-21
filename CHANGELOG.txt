@@ -1,4 +1,18 @@
 -----
+20APR26
+
+- Added a black "Marker" icon type to the Workbench — purely a reference point with no RF calculations or links
+- Marker icons show a permanent MGRS coordinate label above them on the map, just like red and blue icons
+- All three icon types (red enemy, blue friendly, black marker) now have an inline MGRS grid input in their popup
+- Type a grid reference and press Enter (or the Go button) to instantly jump that icon to the typed location
+- Moving a red or blue icon via MGRS input automatically recalculates all linked jamming and detection results
+- Added SEO meta description and Open Graph tags to the login page for better search engine visibility
+- Added a visible description of Specter EW and a GitHub link below the login box for first-time visitors
+- Updated README and internal documentation to reflect the new Marker icon and MGRS input features
+
+-----
+
+-----
 18APR26
 
 - Fixed a bug on the login page where the word "None" appeared underneath "AN EW PLANNING TOOL" on every page load

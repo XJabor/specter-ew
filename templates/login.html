@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Specter EW — a browser-based tactical Electronic Warfare planning tool for EA/ES mission analysis. Calculates J/S margin, terrain-aware sensing ranges, and jammer coverage footprints. Supports directional antennas, frequency-hopping waveforms, and MGRS coordinate display.">
+    <meta property="og:title" content="Specter EW">
+    <meta property="og:description" content="Tactical Electronic Warfare planning tool for EA/ES mission analysis. Calculates J/S margin, terrain-aware detection rings, and jammer footprints.">
+    <meta property="og:type" content="website">
     <title>SPECTER - Login</title>
 
     <style>
@@ -249,6 +253,25 @@
             50%       { opacity: 0.095; }
         }
 
+        /* ---------- Page footer ---------- */
+        .page-footer {
+            margin-top: 18px;
+            text-align: center;
+            color: rgba(0,255,65,0.75);
+            font-size: 10px;
+            letter-spacing: 1px;
+            line-height: 1.8;
+            max-width: 340px;
+        }
+        .page-footer a {
+            color: rgba(0,255,65,0.85);
+            text-decoration: none;
+        }
+        .page-footer a:hover {
+            color: #00ff41;
+            text-shadow: 0 0 8px rgba(0,255,65,0.5);
+        }
+
         /* ---------- Responsive ---------- */
         @media (max-width: 400px) {
             .ascii-banner { font-size: 7px; }
@@ -310,6 +333,11 @@
             </form>
 
             <div class="dot-row">· · · · · · · · · · ·</div>
+        </div>
+
+        <div class="page-footer">
+            <p>Specter EW is a browser-based tactical Electronic Warfare planning tool designed for EA/ES mission analysis. Place enemy and friendly nodes on a live map to calculate jamming effectiveness (J/S margin), terrain-aware sensing ranges, and jammer coverage footprints. Supports directional antennas, frequency-hopping waveforms, clutter terrain types, and MGRS coordinate display. Built for use on a tactical LAN or hosted instance.</p>
+            <a href="https://github.com/XJabor/specter-ew" target="_blank" rel="noopener">[ github.com/XJabor/specter-ew ]</a>
         </div>
 
     </div>

@@ -50,12 +50,13 @@ There are no build steps, test suites, or linters configured.
 - `elevation.py` — Elevation profile fetching, LOS checking, knife-edge diffraction (ITU-R)
 - `antenna.py` — Directional antenna gain pattern, bearing calculations
 
-**Frontend** (`static/js/map_logic.js`, ~1,300 lines, vanilla JS):
+**Frontend** (`static/js/map_logic.js`, ~1,400 lines, vanilla JS):
 - Leaflet.js map with OpenStreetMap and Esri Satellite tile layers
-- Interactive placement of red (enemy) and blue (friendly) nodes
-- Link creation between nodes triggers RF calculations via API calls
+- Interactive placement of red (enemy), blue (friendly), and black (marker) nodes
+- Black marker nodes are reference-only — no RF calculations, no links, no elevation fetch
+- Link creation between red/blue nodes triggers RF calculations via API calls
 - Workbench panel for managing multiple nodes simultaneously
-- MGRS coordinate display for all placed icons
+- Permanent MGRS grid labels above all icons; inline MGRS input in every popup lets the user type a grid string and jump the icon to that location
 - Jammer footprint toggle on blue nodes: terrain-shaped cyan polygon showing per-bearing jammer coverage
 
 **Template** (`templates/index.html`): Single-page app; all JS/CSS loaded from `static/`.
@@ -70,4 +71,6 @@ There are no build steps, test suites, or linters configured.
 - **Antenna height AGL**: per-node height (metres) adjusts the effective endpoint elevation in the LOS/diffraction calculation only. Path loss is still computed with a ground-level assumption by design.
 - **Common area detection overlay**: computes the geographic overlap between multiple ES detection rings to identify jointly-observable areas.
 - **Jammer footprint**: per-bearing coverage polygon for blue nodes, driven by jammer EIRP and terrain diffraction. Uses the same `calculate_sensing_distance` / `get_elevation_profiles_batch` pattern as ES terrain rings. Reference threshold is the global `rx_sensitivity` parameter. Rendered in cyan (`#00bcd4`) to distinguish from red ES rings.
+- **Black marker nodes**: reference-only annotation icons (`blackNodes[]`, IDs prefixed `M`). No elevation fetch, no RF links, no calculations. Managed by `placeBlackNode()`, `bindBlackPopup()`, and the `'place-black'` mode. Included in `updateMGRSTooltips()` and the Clear All / Center on Nodes controls.
+- **Inline MGRS input**: all three icon types include an MGRS text field in their popup (`mgrsInputSection()`), pre-filled with the current grid. Enter or the Go button calls `window.moveNodeToMGRS(type, id, value)`, which validates via `mgrs.toPoint()`, repositions the marker, pans the map, and triggers recalculation for red/blue nodes.
 - **Authentication**: session-based login via `APP_CREDENTIALS` env var. CSRF protection (Flask-WTF) on the login form. Login attempts are rate-limited to 10/minute per IP (Flask-Limiter). API endpoints (`/calculate_*`, etc.) are same-origin `fetch()` calls and are not subject to CSRF. Security headers are set on all responses.
