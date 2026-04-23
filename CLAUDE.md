@@ -46,8 +46,8 @@ There are no build steps, test suites, or linters configured.
 
 **Core physics** (`core/`):
 - `link_budget.py` — EIRP, watts-to-dBm, frequency-hopping tax
-- `propagation.py` — Dual-slope path loss model (smooth 20→40 log blend across 0.5–2.0 km transition), clutter/terrain loss, received power, jamming evaluation, and sensing distance
-- `elevation.py` — Elevation profile fetching, LOS checking, knife-edge diffraction (ITU-R)
+- `propagation.py` — Multi-band hybrid path loss model (Egli, COST-231 Hata, Two-Ray, SHF/FSPL+foliage), received power, jamming evaluation, and sensing distance
+- `elevation.py` — Elevation profile fetching, LOS checking, Deygout multiple knife-edge diffraction (ITU-R P.526)
 - `antenna.py` — Directional antenna gain pattern, bearing calculations
 
 **Frontend** (`static/js/map_logic.js`, ~1,400 lines, vanilla JS):
@@ -63,12 +63,19 @@ There are no build steps, test suites, or linters configured.
 
 ## Key Design Decisions
 
-- **Dual-slope propagation model**: path loss switches from free-space (20 log distance) to terrain-masked (40 log distance) at 1 km. This conservative estimate is intentional.
+- **Multi-band hybrid propagation model**: path loss is routed by frequency and TX antenna height. `_cost231_valid()` gates COST-231 Hata / Two-Ray (freq ≥ 150 MHz AND tx_height ≥ 30 m). Routing table:
+  - `freq > 2000 MHz` → SHF: FSPL + ITU-R P.833 foliage/clutter absorption; strict 1× radio horizon cap (no over-horizon propagation at SHF)
+  - LOS + COST-231 valid → **Two-Ray Ground Reflection** (40 dB/decade)
+  - NLOS + COST-231 valid → **COST-231 Hata** with urban/suburban/rural terrain correction
+  - All others (VHF/UHF tactical) → **Egli (1957)** empirical model (SI constant 47.39); 3× radio horizon cap preserves VHF ground-wave range while preventing extrapolation
+  - Free space / aerial terrain → **FSPL**
+  - `calculate_sensing_distance()` is the exact closed-form (or binary-search for SHF clutter) inverse of `calculate_path_loss()` for each branch
+- **Deygout multiple knife-edge diffraction**: `_deygout_loss_db()` in `elevation.py` recursively finds the dominant obstacle, computes ITU-R P.526 knife-edge loss, and recurses on the two sub-paths; the sum is added to NLOS path loss for all non-SHF frequencies.
 - **No database**: all state is client-side (Leaflet map markers/layers); the backend is purely stateless calculation.
 - **Frequency-hopping tax**: applies a configurable dB penalty when hopping waveforms are selected.
-- **Clutter loss**: terrain type (urban, suburban, open) adds attenuation on top of path loss.
+- **Terrain type as model selector**: terrain type (free space, rural, suburban, urban/dense) drives both the propagation model branch (COST-231 urban/suburban/rural correction; SHF foliage coefficient) and the clutter penalty magnitude.
 - **Directional antenna support**: nodes can be configured with azimuth and beamwidth; gain is reduced for off-boresight links using a Gaussian pattern approximation.
-- **Antenna height AGL**: per-node height (metres) adjusts the effective endpoint elevation in the LOS/diffraction calculation only. Path loss is still computed with a ground-level assumption by design.
+- **Antenna height AGL**: per-node height (metres) adjusts the LOS/diffraction endpoint elevation AND gates the propagation model — tx_height ≥ 30 m is required to route to COST-231 Hata / Two-Ray. Default is 1.0 m (minimum accepted). Radio horizon caps in both Egli and SHF branches use the actual AGL heights.
 - **Common area detection overlay**: computes the geographic overlap between multiple ES detection rings to identify jointly-observable areas.
 - **Jammer footprint**: per-bearing coverage polygon for blue nodes, driven by jammer EIRP and terrain diffraction. Uses the same `calculate_sensing_distance` / `get_elevation_profiles_batch` pattern as ES terrain rings. Reference threshold is the global `rx_sensitivity` parameter. Rendered in cyan (`#00bcd4`) to distinguish from red ES rings.
 - **Black marker nodes**: reference-only annotation icons (`blackNodes[]`, IDs prefixed `M`). No elevation fetch, no RF links, no calculations. Managed by `placeBlackNode()`, `bindBlackPopup()`, and the `'place-black'` mode. Included in `updateMGRSTooltips()` and the Clear All / Center on Nodes controls.

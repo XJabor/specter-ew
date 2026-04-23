@@ -226,6 +226,65 @@ def _knife_edge_loss_db(nu):
     return max(0.0, -20.0 * math.log10(val))
 
 
+def _deygout_loss_db(profile, freq_mhz, h_tx_abs, h_rx_abs):
+    """
+    Deygout multiple knife-edge diffraction loss (dB).
+
+    Recursively finds the dominant obstacle (highest Fresnel-Kirchhoff ν),
+    computes its knife-edge loss, then recurses on the two sub-paths either
+    side of that peak and sums all contributions.
+
+    profile    : list of {distance_km, elevation_m} ordered TX→RX
+    freq_mhz   : link frequency in MHz
+    h_tx_abs   : absolute height of TX endpoint (terrain elevation + AGL) in metres
+    h_rx_abs   : absolute height of RX endpoint in metres
+    """
+    if len(profile) < 3:
+        return 0.0
+
+    d0 = profile[0]["distance_km"]
+    D = profile[-1]["distance_km"] - d0
+    if D <= 0:
+        return 0.0
+
+    wavelength_m = 3e8 / (freq_mhz * 1e6)
+
+    best_nu = -float("inf")
+    best_idx = -1
+
+    for i in range(1, len(profile) - 1):
+        d1 = profile[i]["distance_km"] - d0
+        d2 = profile[-1]["distance_km"] - profile[i]["distance_km"]
+        if d1 <= 0 or d2 <= 0:
+            continue
+
+        bulge_m = (d1 * d2 / (2.0 * EARTH_EFFECTIVE_RADIUS_KM)) * 1000.0
+        los_h = h_tx_abs + (h_rx_abs - h_tx_abs) * (d1 / D)
+        obstruction = (profile[i]["elevation_m"] + bulge_m) - los_h
+
+        d1_m = d1 * 1000.0
+        d2_m = d2 * 1000.0
+        denom = wavelength_m * d1_m * d2_m
+        if denom <= 0:
+            continue
+        nu = obstruction * math.sqrt(2.0 * (d1_m + d2_m) / denom)
+
+        if nu > best_nu:
+            best_nu = nu
+            best_idx = i
+
+    if best_idx < 0 or best_nu <= -0.78:
+        return 0.0
+
+    main_loss = _knife_edge_loss_db(best_nu)
+    h_main = profile[best_idx]["elevation_m"]
+
+    left_loss  = _deygout_loss_db(profile[:best_idx + 1], freq_mhz, h_tx_abs, h_main)
+    right_loss = _deygout_loss_db(profile[best_idx:],     freq_mhz, h_main,   h_rx_abs)
+
+    return main_loss + left_loss + right_loss
+
+
 def check_line_of_sight(profile, freq_mhz, tx_height_agl_m=0.0, rx_height_agl_m=0.0):
     """
     Determine geometric LOS with Earth curvature correction and estimate
@@ -288,14 +347,7 @@ def check_line_of_sight(profile, freq_mhz, tx_height_agl_m=0.0, rx_height_agl_m=
     diffraction_db = 0.0
 
     if not is_los:
-        d2_worst  = D - worst_d1
-        d1_m      = worst_d1 * 1000.0
-        d2_m      = d2_worst * 1000.0
-        wavelength = 3e8 / (freq_mhz * 1e6)
-        denom = wavelength * d1_m * d2_m
-        if denom > 0:
-            nu = max_obstruction * math.sqrt(2.0 * (d1_m + d2_m) / denom)
-            diffraction_db = _knife_edge_loss_db(nu)
+        diffraction_db = _deygout_loss_db(profile, freq_mhz, h1, h2)
 
     return {
         "is_los":                  is_los,

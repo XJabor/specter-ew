@@ -1,4 +1,19 @@
 -----
+22APR26
+
+- Replaced the old simplified path loss formula with a four-model routing stack based on frequency and antenna height
+- VHF/UHF ground forces (e.g. 80 MHz radios, short antennas): now uses the Egli (1957) empirical model, which correctly gives longer range at lower frequencies
+- Elevated UHF stations (150–2000 MHz, antenna ≥ 30 m): NLOS paths use COST-231 Hata (accounts for terrain type); confirmed LOS paths use Two-Ray Ground Reflection
+- SHF/drone/Wi-Fi links (>2 GHz): uses free-space path loss plus an ITU-R foliage penalty for suburban/urban terrain
+- Each model now applies a radio horizon cap — Egli uses 3× horizon to preserve VHF ground-wave range; SHF uses strict 1× (no over-horizon bending at those frequencies)
+- Diffraction over terrain obstacles now uses the Deygout method, which sums losses from multiple peaks instead of only the tallest one
+- Antenna height now also controls which propagation model is selected (tx height ≥ 30 m required for COST-231/Two-Ray)
+- Default antenna height changed to 1.0 m (typical dismounted soldier with a short whip antenna)
+- Updated README and internal documentation to reflect the new propagation engine
+
+-----
+
+-----
 20APR26
 
 - Added a black "Marker" icon type to the Workbench — purely a reference point with no RF calculations or links

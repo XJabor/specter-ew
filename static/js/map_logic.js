@@ -142,7 +142,7 @@ function placeRedNode(latlng) {
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('red', id); });
     const node = { id, name: id, marker, esActive: false, esCircle: null, elevationM: null,
-                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 0 };
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0 };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
     marker.on('popupclose', function() { bindRedPopup(id); });
     redNodes.push(node);
@@ -158,7 +158,7 @@ function placeBlueNode(latlng) {
     const marker = L.marker(latlng, { icon: blueIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('blue', id); });
     const node = { id, name: id, marker, elevationM: null,
-                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 0,
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0,
                    footprintActive: false, footprintCircle: null, footprintPolygonPoints: null };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); scheduleFootprintUpdate(); });
     marker.on('popupclose', function() { bindBluePopup(id); });
@@ -209,11 +209,11 @@ function antennaPopupSection(team, id, node) {
           </label>
         </div>
         <label class="popup-label">Height AGL (m):
-          <input type="number" min="0" max="500" value="${node.antennaHeightAgl}"
+          <input type="number" min="1" max="500" step="0.5" value="${node.antennaHeightAgl}"
             oninput="setNodeAntennaHeight('${team}','${id}',this.value)"
             onchange="recalculateAll()">
         </label>
-        <div class="popup-note">Affects LOS/diffraction only<br>path loss uses ground-level model</div>`;
+        <div class="popup-note">Affects LOS/diffraction and path loss model</div>`;
 }
 
 function bindRedPopup(id) {
@@ -322,7 +322,7 @@ window.setNodeAntennaBeamwidth = function(team, id, value) {
 window.setNodeAntennaHeight = function(team, id, value) {
     const node = findNode(team, id);
     if (!node) return;
-    node.antennaHeightAgl = Math.max(0, parseFloat(value) || 0);
+    node.antennaHeightAgl = Math.max(1.0, parseFloat(value) || 1.0);
     // recalculateAll is triggered by onchange on the input (fires on blur/enter)
 };
 
