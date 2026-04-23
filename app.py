@@ -245,7 +245,11 @@ def calculate_ea():
         # Enemy Math
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
         enemy_eirp = calculate_eirp(enemy_tx_dbm, eff_enemy_tx_gain)
-        enemy_path_loss = calculate_path_loss(enemy_dist_km, freq_mhz, enemy_terrain, enemy_diff_db)
+        enemy_path_loss = calculate_path_loss(
+            enemy_dist_km, freq_mhz, enemy_terrain, enemy_diff_db,
+            tx_antenna_height_m, rx_antenna_height_m,
+            enemy_los['is_los'] if enemy_los else False
+        )
         enemy_rx_signal = calculate_received_power(enemy_eirp, enemy_path_loss) + eff_enemy_rx_gain_signal
 
         # Jammer Math
@@ -257,7 +261,11 @@ def calculate_ea():
         else:
             jammer_eirp_taxed = jammer_eirp_raw
 
-        jammer_path_loss = calculate_path_loss(jammer_dist_km, freq_mhz, jammer_terrain, jammer_diff_db)
+        jammer_path_loss = calculate_path_loss(
+            jammer_dist_km, freq_mhz, jammer_terrain, jammer_diff_db,
+            jammer_antenna_height_m, rx_antenna_height_m,
+            jammer_los['is_los'] if jammer_los else False
+        )
         jammer_rx_signal = calculate_received_power(jammer_eirp_taxed, jammer_path_loss) + eff_enemy_rx_gain_jammer
 
         effect_text = evaluate_jamming_effect(jammer_rx_signal, enemy_rx_signal, lower_threshold, upper_threshold)
@@ -353,17 +361,28 @@ def calculate_es_terrain():
                 gain = enemy_tx_gain
             return calculate_eirp(enemy_tx_dbm, gain)
 
-        # On-boresight (peak) range used for the tooltip label and initial path endpoints
+        # On-boresight (peak) range used for the tooltip label and initial path endpoints.
+        # LOS (Two-Ray) is used for the label — it matches what flat terrain will actually show.
+        # Profile endpoints use the larger of LOS and NLOS so elevation data always extends
+        # to the furthest possible detection distance regardless of actual terrain.
         peak_eirp     = eirp_at_bearing(tx_azimuth_deg if tx_antenna_type == 'directional' else 0)
         base_range_km = calculate_sensing_distance(
-            peak_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity
+            peak_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity,
+            tx_height_m=tx_antenna_height_m, is_los=True
+        )
+        proj_range_km = max(
+            base_range_km,
+            calculate_sensing_distance(
+                peak_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity,
+                tx_height_m=tx_antenna_height_m, is_los=False
+            )
         )
 
-        # Build one endpoint per bearing at the peak baseline range
+        # Build one endpoint per bearing at the projection range
         bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
         paths = []
         for bearing in bearings:
-            end_lat, end_lon = destination_point(enemy_lat, enemy_lon, bearing, base_range_km)
+            end_lat, end_lon = destination_point(enemy_lat, enemy_lon, bearing, proj_range_km)
             paths.append((enemy_lat, enemy_lon, end_lat, end_lon))
 
         polygon_points = None
@@ -375,7 +394,8 @@ def calculate_es_terrain():
                 los = check_line_of_sight(profile, freq_mhz, tx_antenna_height_m, 0.0)
                 diff_db = los['diffraction_loss_db']
                 range_km = calculate_sensing_distance(
-                    eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity, diff_db
+                    eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity, diff_db,
+                    tx_height_m=tx_antenna_height_m, is_los=los['is_los']
                 )
                 # Enforce a minimum so the polygon always closes cleanly
                 range_km = max(range_km, 0.05)
@@ -444,13 +464,21 @@ def calculate_jammer_footprint():
 
         peak_eirp     = eirp_at_bearing(jammer_azimuth_deg if jammer_antenna_type == 'directional' else 0)
         base_range_km = calculate_sensing_distance(
-            peak_eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity
+            peak_eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity,
+            tx_height_m=jammer_antenna_height_m, is_los=True
+        )
+        proj_range_km = max(
+            base_range_km,
+            calculate_sensing_distance(
+                peak_eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity,
+                tx_height_m=jammer_antenna_height_m, is_los=False
+            )
         )
 
         bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
         paths = []
         for bearing in bearings:
-            end_lat, end_lon = destination_point(jammer_lat, jammer_lon, bearing, base_range_km)
+            end_lat, end_lon = destination_point(jammer_lat, jammer_lon, bearing, proj_range_km)
             paths.append((jammer_lat, jammer_lon, end_lat, end_lon))
 
         polygon_points = None
@@ -462,7 +490,8 @@ def calculate_jammer_footprint():
                 los = check_line_of_sight(profile, freq_mhz, jammer_antenna_height_m, 0.0)
                 diff_db = los['diffraction_loss_db']
                 range_km = calculate_sensing_distance(
-                    eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity, diff_db
+                    eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity, diff_db,
+                    tx_height_m=jammer_antenna_height_m, is_los=los['is_los']
                 )
                 range_km = max(range_km, 0.05)
                 pt_lat, pt_lon = destination_point(jammer_lat, jammer_lon, bearing, range_km)
