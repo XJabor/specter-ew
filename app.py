@@ -38,6 +38,65 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 csrf = CSRFProtect(app)
 limiter = Limiter(app=app, key_func=get_remote_address, default_limits=[])
 
+def _walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m):
+    """
+    Find the detection/sensing range by walking the elevation profile outward.
+
+    For each sample at distance d_i, evaluates path loss using only the
+    sub-profile from TX to that point.  Returns the interpolated distance
+    where cumulative path loss first exceeds the link budget.
+
+    Deygout diffraction is only applied when terrain physically rises above the
+    straight TX-to-sample line of sight (i.e. a genuine terrain obstacle).
+    Earth bulge alone does not trigger Deygout because empirical models like
+    Egli already capture Earth-curvature effects in their measured rolloff; adding
+    Deygout on top would double-count Earth curvature and shrink flat-terrain
+    rings by ~10× relative to the simple sensing-distance calculation.
+    """
+    max_loss = eirp + rx_gain - rx_sensitivity
+    prev_d   = 0.0
+    prev_pl  = 0.0
+
+    for i in range(1, len(profile)):
+        d_i = profile[i]['distance_km']
+        if d_i <= 0:
+            continue
+        sub = profile[:i + 1]
+
+        # Check whether any terrain sample (ignoring Earth bulge) rises above
+        # the straight geometric LOS line.  If not, Earth curvature is the only
+        # "obstacle" and the empirical model already handles it.
+        h_tx = sub[0]['elevation_m'] + tx_height_m
+        h_rx = sub[-1]['elevation_m']   # notional ground-level receiver
+        terrain_blocked = any(
+            pt['elevation_m'] > h_tx + (h_rx - h_tx) * (pt['distance_km'] / d_i) + 1.0
+            for pt in sub[1:-1]
+            if 0 < pt['distance_km'] < d_i
+        )
+
+        if terrain_blocked:
+            los    = check_line_of_sight(sub, freq_mhz, tx_height_m, 0.0)
+            diff_db  = los['diffraction_loss_db']
+            is_los   = los['is_los']
+        else:
+            diff_db = 0.0
+            is_los  = True  # let the empirical model handle Earth curvature
+
+        pl_i = calculate_path_loss(
+            d_i, freq_mhz, terrain, diff_db, tx_height_m, 0.0, is_los
+        )
+        if pl_i > max_loss:
+            if prev_d <= 0:
+                return max(0.05, d_i / 2.0)
+            frac = (max_loss - prev_pl) / max(pl_i - prev_pl, 1e-9)
+            frac = max(0.0, min(1.0, frac))
+            return prev_d + frac * (d_i - prev_d)
+        prev_pl = pl_i
+        prev_d  = d_i
+
+    return profile[-1]['distance_km']
+
+
 @app.before_request
 def check_auth():
     # 1. Allow local machine bypass — check the actual connection IP, not the Host header.
@@ -391,13 +450,10 @@ def calculate_es_terrain():
             polygon_points = []
             for bearing, profile in zip(bearings, profiles):
                 eirp = eirp_at_bearing(bearing)
-                los = check_line_of_sight(profile, freq_mhz, tx_antenna_height_m, 0.0)
-                diff_db = los['diffraction_loss_db']
-                range_km = calculate_sensing_distance(
-                    eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity, diff_db,
-                    tx_height_m=tx_antenna_height_m, is_los=los['is_los']
+                range_km = _walk_profile_to_range(
+                    profile, freq_mhz, sensor_terrain,
+                    eirp, rx_gain, rx_sensitivity, tx_antenna_height_m
                 )
-                # Enforce a minimum so the polygon always closes cleanly
                 range_km = max(range_km, 0.05)
                 pt_lat, pt_lon = destination_point(enemy_lat, enemy_lon, bearing, range_km)
                 polygon_points.append([pt_lat, pt_lon])
@@ -487,11 +543,9 @@ def calculate_jammer_footprint():
             polygon_points = []
             for bearing, profile in zip(bearings, profiles):
                 eirp = eirp_at_bearing(bearing)
-                los = check_line_of_sight(profile, freq_mhz, jammer_antenna_height_m, 0.0)
-                diff_db = los['diffraction_loss_db']
-                range_km = calculate_sensing_distance(
-                    eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity, diff_db,
-                    tx_height_m=jammer_antenna_height_m, is_los=los['is_los']
+                range_km = _walk_profile_to_range(
+                    profile, freq_mhz, jammer_terrain,
+                    eirp, rx_gain, rx_sensitivity, jammer_antenna_height_m
                 )
                 range_km = max(range_km, 0.05)
                 pt_lat, pt_lon = destination_point(jammer_lat, jammer_lon, bearing, range_km)
