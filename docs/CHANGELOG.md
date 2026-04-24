@@ -1,4 +1,17 @@
 -----
+24APR26
+
+- Fixed a physics bug where the VHF/UHF signal model (Egli) produced a flat "dead zone" — signals at 30 km and 500 km were incorrectly calculated as identical strength; the model now correctly increases signal loss at all distances
+- Fixed a physics bug where a mountain blocking a microwave/SHF signal (e.g. a drone link at 5 GHz) was treated as if it were not there; terrain blockage now correctly applies a large penalty to obstructed SHF paths
+- Removed an artificial range ceiling on VHF/UHF detection; the model's natural 40 dB-per-decade rolloff now handles long-range behavior without a hard cutoff
+- SHF (microwave) sensing distance retains its strict one-hop horizon cap, as microwaves cannot bend over the Earth's curvature
+- Fixed a routing bug where upper UHF signals (1–2 GHz) from low antennas were fed into the Egli model, which is only calibrated for 40–900 MHz; those frequencies now correctly use a free-space baseline, removing a ~25 dB over-penalty that made 2 GHz appear to have a shorter range than 5 GHz
+- Fixed a follow-on bug where the free-space baseline for 1–2 GHz had no range cap, producing physically impossible 40+ km detection rings for ground-level antennas; a radio horizon cap (matching the existing microwave/SHF cap) now limits range to what Earth geometry actually allows
+- Updated CLAUDE.md and technical reference to document the upper-UHF routing rule
+
+-----
+
+-----
 22APR26
 
 - Replaced the old simplified path loss formula with a four-model routing stack based on frequency and antenna height

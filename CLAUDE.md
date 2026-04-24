@@ -64,18 +64,19 @@ There are no build steps, test suites, or linters configured.
 ## Key Design Decisions
 
 - **Multi-band hybrid propagation model**: path loss is routed by frequency and TX antenna height. `_cost231_valid()` gates COST-231 Hata / Two-Ray (freq ≥ 150 MHz AND tx_height ≥ 30 m). Routing table:
-  - `freq > 2000 MHz` → SHF: FSPL + ITU-R P.833 foliage/clutter absorption; strict 1× radio horizon cap (no over-horizon propagation at SHF)
+  - `freq > 2000 MHz` → SHF: FSPL + ITU-R P.833 foliage/clutter absorption; sensing distance capped at 1× radio horizon. NLOS paths add `diffraction_loss_db` as a terrain-blockage penalty (SHF does not meaningfully diffract, so the Deygout value represents opaque blockage severity rather than diffraction gain)
   - LOS + COST-231 valid → **Two-Ray Ground Reflection** (40 dB/decade)
   - NLOS + COST-231 valid → **COST-231 Hata** with urban/suburban/rural terrain correction
-  - All others (VHF/UHF tactical) → **Egli (1957)** empirical model (SI constant 47.39); 3× radio horizon cap preserves VHF ground-wave range while preventing extrapolation
+  - `freq ≥ 1000 MHz` AND COST-231 invalid (low antenna) → **FSPL** baseline; Egli is calibrated for 40–900 MHz and over-predicts path loss by 20–30 dB at 1–2 GHz, so FSPL is the physically correct floor for upper-UHF low-antenna scenarios
+  - All others (VHF/UHF tactical, freq < 1000 MHz, low antenna) → **Egli (1957)** empirical model (SI constant 47.39); no artificial horizon cap — the 40 dB/decade slope provides natural rolloff and the FSPL floor keeps results physically plausible at all distances
   - Free space / aerial terrain → **FSPL**
   - `calculate_sensing_distance()` is the exact closed-form (or binary-search for SHF clutter) inverse of `calculate_path_loss()` for each branch
-- **Deygout multiple knife-edge diffraction**: `_deygout_loss_db()` in `elevation.py` recursively finds the dominant obstacle, computes ITU-R P.526 knife-edge loss, and recurses on the two sub-paths; the sum is added to NLOS path loss for all non-SHF frequencies.
+- **Deygout multiple knife-edge diffraction**: `_deygout_loss_db()` in `elevation.py` recursively finds the dominant obstacle, computes ITU-R P.526 knife-edge loss, and recurses on the two sub-paths; the sum is added to NLOS path loss for all frequency bands. For SHF the value acts as a blockage penalty rather than a classical diffraction correction.
 - **No database**: all state is client-side (Leaflet map markers/layers); the backend is purely stateless calculation.
 - **Frequency-hopping tax**: applies a configurable dB penalty when hopping waveforms are selected.
 - **Terrain type as model selector**: terrain type (free space, rural, suburban, urban/dense) drives both the propagation model branch (COST-231 urban/suburban/rural correction; SHF foliage coefficient) and the clutter penalty magnitude.
 - **Directional antenna support**: nodes can be configured with azimuth and beamwidth; gain is reduced for off-boresight links using a Gaussian pattern approximation.
-- **Antenna height AGL**: per-node height (metres) adjusts the LOS/diffraction endpoint elevation AND gates the propagation model — tx_height ≥ 30 m is required to route to COST-231 Hata / Two-Ray. Default is 1.0 m (minimum accepted). Radio horizon caps in both Egli and SHF branches use the actual AGL heights.
+- **Antenna height AGL**: per-node height (metres) adjusts the LOS/diffraction endpoint elevation AND gates the propagation model — tx_height ≥ 30 m is required to route to COST-231 Hata / Two-Ray. Default is 1.0 m (minimum accepted). The SHF sensing distance cap and the Egli/SHF radio horizon calculations all use the actual AGL heights.
 - **Common area detection overlay**: computes the geographic overlap between multiple ES detection rings to identify jointly-observable areas.
 - **Jammer footprint**: per-bearing coverage polygon for blue nodes, driven by jammer EIRP and terrain diffraction. Uses the same `calculate_sensing_distance` / `get_elevation_profiles_batch` pattern as ES terrain rings. Reference threshold is the global `rx_sensitivity` parameter. Rendered in cyan (`#00bcd4`) to distinguish from red ES rings.
 - **Black marker nodes**: reference-only annotation icons (`blackNodes[]`, IDs prefixed `M`). No elevation fetch, no RF links, no calculations. Managed by `placeBlackNode()`, `bindBlackPopup()`, and the `'place-black'` mode. Included in `updateMGRSTooltips()` and the Clear All / Center on Nodes controls.

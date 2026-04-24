@@ -28,19 +28,16 @@ def _egli_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m):
 
     L = 20·log10(f_MHz) + 40·log10(d_km) − 20·log10(ht_m) − 20·log10(hr_m) + 47.39
 
-    Heights floored at 1 m. Distance clamped to radio horizon (Egli was calibrated
-    for 1–50 km and extrapolates unrealistically beyond the geometric horizon).
-    Returns at least FSPL.
+    Heights floored at 1 m. Returns at least FSPL.
+    The 40 dB/decade slope is already more conservative than FSPL beyond the
+    geometric horizon, so no artificial distance cap is applied — capping d while
+    keeping the FSPL floor on actual distance creates a flat-loss dead zone.
     """
     ht = max(1.0, tx_height_m)
     hr = max(1.0, rx_height_m)
 
-    # Clamp to 3× radio horizon: allows VHF over-horizon diffraction/ground-wave
-    # (empirically captured by Egli) while preventing extreme extrapolation.
-    d_eff = min(distance_km, 3.0 * _egli_horizon_km(ht, hr))
-
     loss = (20.0 * math.log10(frequency_mhz)
-            + 40.0 * math.log10(max(0.001, d_eff))
+            + 40.0 * math.log10(max(0.001, distance_km))
             - 20.0 * math.log10(ht)
             - 20.0 * math.log10(hr)
             + _EGLI_K)
@@ -142,8 +139,8 @@ def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
         COST-231 valid domain   → Two-Ray Ground Reflection
         tactical exception      → Egli
 
-      NLOS paths (+ Deygout diffraction_loss_db, except SHF):
-        freq > 2000 MHz         → SHF (FSPL + clutter, no diffraction)
+      NLOS paths (+ Deygout diffraction_loss_db):
+        freq > 2000 MHz         → SHF (FSPL + clutter + diffraction_loss_db as blockage penalty)
         free space              → FSPL
         COST-231 valid domain   → COST-231 Hata
         tactical exception      → Egli
@@ -159,11 +156,15 @@ def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
 
     is_free_space = "free space" in terrain_type.lower() or "air" in terrain_type.lower()
     hata_ok = _cost231_valid(frequency_mhz, tx_height_m)
+    # Egli was calibrated for 40–900 MHz VHF/UHF ground scenarios.  At 1–2 GHz with
+    # low antennas (where COST-231 Hata is unavailable) it over-predicts path loss by
+    # 20–30 dB relative to measured values.  Use FSPL as the baseline instead.
+    upper_uhf = frequency_mhz >= 1000.0 and not hata_ok
 
     if is_los:
         if frequency_mhz > 2000.0:
             return round(_shf_path_loss(distance_km, frequency_mhz, terrain_type), 2)
-        elif is_free_space:
+        elif is_free_space or upper_uhf:
             base_loss = (20.0 * math.log10(distance_km)
                          + 20.0 * math.log10(frequency_mhz) + 32.44)
         elif hata_ok:
@@ -175,8 +176,10 @@ def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
         return round(base_loss, 2)
     else:
         if frequency_mhz > 2000.0:
-            return round(_shf_path_loss(distance_km, frequency_mhz, terrain_type), 2)
-        elif is_free_space:
+            # SHF doesn't diffract meaningfully, so diffraction_loss_db represents
+            # terrain blockage severity rather than a bending loss.
+            return round(_shf_path_loss(distance_km, frequency_mhz, terrain_type) + diffraction_loss_db, 2)
+        elif is_free_space or upper_uhf:
             base_loss = (20.0 * math.log10(distance_km)
                          + 20.0 * math.log10(frequency_mhz) + 32.44)
         elif hata_ok:
@@ -261,9 +264,10 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
 
     is_free_space = "free space" in terrain_type.lower() or "air" in terrain_type.lower()
     hata_ok = _cost231_valid(freq_mhz, tx_height_m)
+    upper_uhf = freq_mhz >= 1000.0 and not hata_ok
 
     if is_los:
-        if is_free_space:
+        if is_free_space or upper_uhf:
             log_d = (max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
             distance_km = 10.0 ** log_d
         elif hata_ok:
@@ -273,17 +277,16 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
             log_d_m = (max_loss + 20.0 * math.log10(ht) + 20.0 * math.log10(hr)) / 40.0
             distance_km = (10.0 ** log_d_m) / 1000.0
         else:
-            # Egli inverse: d = 10^((max_loss - A_egli) / 40), capped at radio horizon
+            # Egli inverse: d = 10^((max_loss - A_egli) / 40)
             ht = max(1.0, tx_height_m)
             hr = max(1.0, rx_height_m)
             A_egli = (20.0 * math.log10(freq_mhz)
                       - 20.0 * math.log10(ht)
                       - 20.0 * math.log10(hr)
                       + _EGLI_K)
-            distance_km = min(10.0 ** ((max_loss - A_egli) / 40.0),
-                              3.0 * _egli_horizon_km(ht, hr))
+            distance_km = 10.0 ** ((max_loss - A_egli) / 40.0)
     else:
-        if is_free_space:
+        if is_free_space or upper_uhf:
             log_d = (max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
             distance_km = 10.0 ** log_d
         elif hata_ok:
@@ -304,14 +307,22 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
                 B = 1.0
             distance_km = 10.0 ** ((max_loss - A) / B)
         else:
-            # Egli inverse: d = 10^((max_loss - A_egli) / 40), capped at radio horizon
+            # Egli inverse: d = 10^((max_loss - A_egli) / 40)
             ht = max(1.0, tx_height_m)
             hr = max(1.0, rx_height_m)
             A_egli = (20.0 * math.log10(freq_mhz)
                       - 20.0 * math.log10(ht)
                       - 20.0 * math.log10(hr)
                       + _EGLI_K)
-            distance_km = min(10.0 ** ((max_loss - A_egli) / 40.0),
-                              3.0 * _egli_horizon_km(ht, hr))
+            distance_km = 10.0 ** ((max_loss - A_egli) / 40.0)
+
+    # At 1–2 GHz with low antennas, ground-wave is negligible — signal is horizon-limited.
+    # Apply the same strict 1× radio horizon cap used by the SHF branch.
+    # is_free_space paths (aerial/drone) are exempt: they share the upper_uhf code path
+    # but "free space" terrain means no Earth surface is involved.
+    if upper_uhf and not is_free_space:
+        ht = max(1.0, tx_height_m)
+        hr = max(1.0, rx_height_m)
+        distance_km = min(distance_km, _egli_horizon_km(ht, hr))
 
     return round(max(0.001, distance_km), 3)
