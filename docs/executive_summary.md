@@ -17,5 +17,5 @@ Specter-EW solves this by integrating a high-fidelity physics engine with real-t
 ### Key Capabilities
 * **Terrain & Elevation Aware:** Automatically pulls elevation data to calculate Line-of-Sight (LOS) and mountain diffraction.
 * **Tactical Integration:** Supports MGRS coordinates natively for rapid node placement and exportable KML files for integration into ATAK or Google Earth. 
-* **Platform Agnostic:** Handles dismounted VHF radios, mast-mounted UHF sites, and SHF drone/Wi-Fi links with specifically calibrated physics models for each.
+* **Platform Agnostic:** Handles dismounted VHF radios, mast-mounted UHF sites, and SHF drone/Wi-Fi links with specifically calibrated physics models for each. Terrain type (open, light forest, dense forest) applies calibrated signal penalties across all frequency bands — a 25 W radio in dense pine forest produces a materially different detection ring than the same radio in an open field.
 * **Rapid Deployment:** Runs locally on a tactical LAN or hosted environment, requiring minimal computing overhead.
