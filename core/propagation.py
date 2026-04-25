@@ -18,7 +18,31 @@ def _egli_horizon_km(ht_m, hr_m):
             + math.sqrt(2.0 * _RE_EFF_KM * hr_m / 1000.0))
 
 
-def _egli_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m):
+def _egli_terrain_correction_db(terrain_type):
+    """
+    Flat additive dB correction to Egli path loss for terrain/clutter type.
+
+    Egli (1957) was calibrated over average rolling terrain (open fields, low
+    suburban relief).  Environments that deviate from that baseline carry an
+    excess-loss correction (ITU-R P.833 VHF edge effects; military tactical
+    VHF field data in vegetation):
+
+      Rural / open / free space  →   0 dB  (Egli's native calibration env)
+      Light forest / suburban    →  +8 dB  (~37% range reduction vs. rural)
+      Dense forest / urban       → +20 dB  (~70% range reduction vs. rural)
+
+    Keyword matching mirrors _shf_path_loss() and _cost231_hata_path_loss().
+    """
+    terrain = terrain_type.strip().lower()
+    if "dense" in terrain or "urban" in terrain:
+        return 20.0
+    elif "suburb" in terrain or "light" in terrain:
+        return 8.0
+    else:
+        return 0.0  # rural / open / free space
+
+
+def _egli_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m, terrain_type="rural"):
     """
     Egli (1957) empirical path loss (dB), SI form.
 
@@ -27,8 +51,9 @@ def _egli_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m):
     at lower VHF frequencies (e.g. 80 MHz dismounted radio reaches ~20 km).
 
     L = 20·log10(f_MHz) + 40·log10(d_km) − 20·log10(ht_m) − 20·log10(hr_m) + 47.39
+        + _egli_terrain_correction_db(terrain_type)
 
-    Heights floored at 1 m. Returns at least FSPL.
+    Heights floored at 1 m. Terrain correction applied before the FSPL floor.
     The 40 dB/decade slope is already more conservative than FSPL beyond the
     geometric horizon, so no artificial distance cap is applied — capping d while
     keeping the FSPL floor on actual distance creates a flat-loss dead zone.
@@ -42,8 +67,9 @@ def _egli_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m):
             - 20.0 * math.log10(hr)
             + _EGLI_K)
 
+    correction = _egli_terrain_correction_db(terrain_type)
     fspl = 20.0 * math.log10(distance_km) + 20.0 * math.log10(frequency_mhz) + 32.44
-    return max(fspl, loss)
+    return max(fspl, loss + correction)
 
 
 def _cost231_hata_path_loss(distance_km, frequency_mhz, terrain_type, tx_height_m, rx_height_m):
@@ -106,9 +132,10 @@ def _shf_path_loss(distance_km, frequency_mhz, terrain_type):
     No diffraction component: at SHF, Fresnel zones are centimetres wide
     and knife-edge bending is negligible.
 
-    Clutter coefficients (dB per GHz·km):
-      suburban/light:  1.0  →  ~15 dB at 5 GHz / 3 km
-      urban/dense:     2.4  →  ~36 dB at 5 GHz / 3 km
+    Clutter coefficients (dB per GHz·km) — calibrated against empirical
+    SHF woodland measurements (Tornevik et al. 2001; ITU-R P.833-9):
+      suburban/light:  2.0  →  ~10 dB at 2.4 GHz / 2 km
+      urban/dense:     5.0  →  ~24 dB at 2.4 GHz / 2 km (12 dB/km)
     """
     fspl = (20.0 * math.log10(distance_km)
             + 20.0 * math.log10(frequency_mhz) + 32.44)
@@ -116,13 +143,40 @@ def _shf_path_loss(distance_km, frequency_mhz, terrain_type):
     terrain = terrain_type.strip().lower()
     f_ghz   = frequency_mhz / 1000.0
     if "suburb" in terrain or "light" in terrain:
-        clutter = 1.0 * f_ghz * distance_km
+        clutter = 2.0 * f_ghz * distance_km
     elif "dense" in terrain or "urban" in terrain:
-        clutter = 2.4 * f_ghz * distance_km
+        clutter = 5.0 * f_ghz * distance_km
     else:
         clutter = 0.0  # open / rural / free space
 
     return fspl + clutter
+
+
+def _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type):
+    """
+    Additional flat dB penalty for SHF (> 2 GHz) near-ground operation in
+    vegetated or cluttered terrain.
+
+    At SHF, the first Fresnel zone at ground level is fully obstructed by
+    terrain and low canopy when either antenna is below ~5 m AGL, causing
+    phase cancellation and canopy-entry absorption not captured by the
+    linear clutter term alone.  Empirical data for 2.4 GHz at 1–2 m height
+    in dense forest show an additional 8–15 dB loss vs. elevated terminals
+    (Devasirvatham 1990; DeSoto-type pine forest field measurements).
+
+    Threshold: min(tx_height, rx_height) < 5.0 m.
+    Open / rural / free space paths are exempt — Fresnel obstruction is
+    ground-surface geometry, not vegetation absorption.
+    """
+    if min(tx_height_m, rx_height_m) >= 5.0:
+        return 0.0
+    terrain = terrain_type.strip().lower()
+    if "dense" in terrain or "urban" in terrain:
+        return 10.0
+    elif "suburb" in terrain or "light" in terrain:
+        return 5.0
+    else:
+        return 0.0  # open / rural / free space
 
 
 def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
@@ -163,31 +217,40 @@ def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
 
     if is_los:
         if frequency_mhz > 2000.0:
-            return round(_shf_path_loss(distance_km, frequency_mhz, terrain_type), 2)
+            shf_loss = (_shf_path_loss(distance_km, frequency_mhz, terrain_type)
+                        + _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type))
+            return round(shf_loss, 2)
         elif is_free_space or upper_uhf:
             base_loss = (20.0 * math.log10(distance_km)
                          + 20.0 * math.log10(frequency_mhz) + 32.44)
+            if upper_uhf and not is_free_space:
+                base_loss += _egli_terrain_correction_db(terrain_type)
         elif hata_ok:
             base_loss = _two_ray_path_loss(distance_km, frequency_mhz,
                                            tx_height_m, rx_height_m)
         else:
             base_loss = _egli_path_loss(distance_km, frequency_mhz,
-                                        tx_height_m, rx_height_m)
+                                        tx_height_m, rx_height_m, terrain_type)
         return round(base_loss, 2)
     else:
         if frequency_mhz > 2000.0:
             # SHF doesn't diffract meaningfully, so diffraction_loss_db represents
             # terrain blockage severity rather than a bending loss.
-            return round(_shf_path_loss(distance_km, frequency_mhz, terrain_type) + diffraction_loss_db, 2)
+            shf_loss = (_shf_path_loss(distance_km, frequency_mhz, terrain_type)
+                        + _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
+                        + diffraction_loss_db)
+            return round(shf_loss, 2)
         elif is_free_space or upper_uhf:
             base_loss = (20.0 * math.log10(distance_km)
                          + 20.0 * math.log10(frequency_mhz) + 32.44)
+            if upper_uhf and not is_free_space:
+                base_loss += _egli_terrain_correction_db(terrain_type)
         elif hata_ok:
             base_loss = _cost231_hata_path_loss(distance_km, frequency_mhz,
                                                 terrain_type, tx_height_m, rx_height_m)
         else:
             base_loss = _egli_path_loss(distance_km, frequency_mhz,
-                                        tx_height_m, rx_height_m)
+                                        tx_height_m, rx_height_m, terrain_type)
         return round(base_loss + diffraction_loss_db, 2)
 
 
@@ -234,23 +297,27 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
         f_ghz   = freq_mhz / 1000.0
         terrain = terrain_type.strip().lower()
         if "suburb" in terrain or "light" in terrain:
-            k = 1.0 * f_ghz
+            k = 2.0 * f_ghz
         elif "dense" in terrain or "urban" in terrain:
-            k = 2.4 * f_ghz
+            k = 5.0 * f_ghz
         else:
             k = 0.0
 
+        # Subtract near-ground penalty from the available link budget before solving for distance.
+        shf_penalty = _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
+        effective_max_loss = max_loss - shf_penalty
+
         if k == 0.0:
-            log_d = (max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
+            log_d = (effective_max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
             distance_km = 10.0 ** log_d
         else:
             # Binary search: L(d) = FSPL(d) + k*d is monotonically increasing in d.
             # Upper bound = FSPL-only inverse (actual range is shorter with clutter).
-            d_hi = 10.0 ** ((max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0)
+            d_hi = 10.0 ** ((effective_max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0)
             d_lo = 0.001
             for _ in range(60):
                 mid = (d_lo + d_hi) / 2.0
-                if _shf_path_loss(mid, freq_mhz, terrain_type) < max_loss:
+                if _shf_path_loss(mid, freq_mhz, terrain_type) < effective_max_loss:
                     d_lo = mid
                 else:
                     d_hi = mid
@@ -268,7 +335,8 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
 
     if is_los:
         if is_free_space or upper_uhf:
-            log_d = (max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
+            uhf_correction = 0.0 if is_free_space else _egli_terrain_correction_db(terrain_type)
+            log_d = (max_loss - uhf_correction - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
             distance_km = 10.0 ** log_d
         elif hata_ok:
             # Two-ray inverse: d_m = 10^((max_loss + 20·log(ht) + 20·log(hr)) / 40)
@@ -277,17 +345,19 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
             log_d_m = (max_loss + 20.0 * math.log10(ht) + 20.0 * math.log10(hr)) / 40.0
             distance_km = (10.0 ** log_d_m) / 1000.0
         else:
-            # Egli inverse: d = 10^((max_loss - A_egli) / 40)
+            # Egli inverse: d = 10^((max_loss - correction - A_egli) / 40)
             ht = max(1.0, tx_height_m)
             hr = max(1.0, rx_height_m)
+            correction = _egli_terrain_correction_db(terrain_type)
             A_egli = (20.0 * math.log10(freq_mhz)
                       - 20.0 * math.log10(ht)
                       - 20.0 * math.log10(hr)
                       + _EGLI_K)
-            distance_km = 10.0 ** ((max_loss - A_egli) / 40.0)
+            distance_km = 10.0 ** ((max_loss - correction - A_egli) / 40.0)
     else:
         if is_free_space or upper_uhf:
-            log_d = (max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
+            uhf_correction = 0.0 if is_free_space else _egli_terrain_correction_db(terrain_type)
+            log_d = (max_loss - uhf_correction - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
             distance_km = 10.0 ** log_d
         elif hata_ok:
             # COST-231 Hata inverse: d = 10^((max_loss - A) / B)
@@ -307,14 +377,15 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
                 B = 1.0
             distance_km = 10.0 ** ((max_loss - A) / B)
         else:
-            # Egli inverse: d = 10^((max_loss - A_egli) / 40)
+            # Egli inverse: d = 10^((max_loss - correction - A_egli) / 40)
             ht = max(1.0, tx_height_m)
             hr = max(1.0, rx_height_m)
+            correction = _egli_terrain_correction_db(terrain_type)
             A_egli = (20.0 * math.log10(freq_mhz)
                       - 20.0 * math.log10(ht)
                       - 20.0 * math.log10(hr)
                       + _EGLI_K)
-            distance_km = 10.0 ** ((max_loss - A_egli) / 40.0)
+            distance_km = 10.0 ** ((max_loss - correction - A_egli) / 40.0)
 
     # At 1–2 GHz with low antennas, ground-wave is negligible — signal is horizon-limited.
     # Apply the same strict 1× radio horizon cap used by the SHF branch.
