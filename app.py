@@ -122,7 +122,7 @@ def check_auth():
 def set_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains'
+    # response.headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
     response.headers['Content-Security-Policy'] = (
