@@ -1,6 +1,12 @@
 -----
 24APR26
 
+- Added terrain-type correction factors to the Egli model (VHF/UHF, 30–999 MHz): terrain selection now meaningfully reduces detection range for light forest (+8 dB penalty, ~37% range reduction) and dense forest/urban (+20 dB, ~70% reduction) relative to open/rural; previously all non-free-space terrain produced identical results in this band
+- Applied the same flat terrain correction to the upper-UHF FSPL branch (1000–2000 MHz, low antennas), closing a gap where the terrain selector had no effect on 1–2 GHz ground-level signals
+- Raised SHF clutter absorption coefficients to values calibrated against empirical woodland measurements: light forest/suburban 1.0 → 2.0 dB/GHz·km; dense forest/urban 2.4 → 5.0 dB/GHz·km (gives ~12 dB/km effective attenuation at 2.4 GHz through dense forest vs. ~6 dB/km previously)
+- Added SHF near-ground canopy penalty: when either antenna is below 5 m AGL in vegetated terrain, an additional flat loss is applied (+10 dB dense, +5 dB light) to model Fresnel-zone obstruction and canopy-entry absorption at microwave frequencies; free-space/rural paths and elevated terminals (≥ 5 m) are unaffected
+- Net effect on the reported scenario (2.4 GHz, 25 W, 1 m antennas, dense forest): detection range reduced from ~4.6 km to ~2.0 km, consistent with empirical data for ground-level SHF propagation in dense pine forest
+
 - Fixed a physics bug where the VHF/UHF signal model (Egli) produced a flat "dead zone" — signals at 30 km and 500 km were incorrectly calculated as identical strength; the model now correctly increases signal loss at all distances
 - Fixed a physics bug where a mountain blocking a microwave/SHF signal (e.g. a drone link at 5 GHz) was treated as if it were not there; terrain blockage now correctly applies a large penalty to obstructed SHF paths
 - Removed an artificial range ceiling on VHF/UHF detection; the model's natural 40 dB-per-decade rolloff now handles long-range behavior without a hard cutoff
