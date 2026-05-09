@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 import secrets
+from pathlib import Path
 from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
 from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
 from flask_wtf.csrf import CSRFProtect
@@ -9,8 +11,12 @@ from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
 from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
+import core.local_data as _local_data
+from core.local_data import scan_local_data, get_imagery_for_tile, render_tile_png, is_locally_covered, get_status
 from core.antenna import bearing_deg, directional_gain_db
 from shapely.geometry import Polygon, MultiPolygon
+
+logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s: %(message)s')
 
 app = Flask(__name__)
 # Tell Flask it is behind one proxy
@@ -437,6 +443,15 @@ def calculate_es_terrain():
             )
         )
 
+        # Use higher resolution when all terrain data is served from local DTED (no rate limits).
+        # Fall back to API-safe values (36 bearings, 11 samples) when the online API is needed.
+        if is_locally_covered(enemy_lat, enemy_lon, proj_range_km):
+            num_bearings = 72
+            num_samples  = 25
+        else:
+            num_bearings = 36
+            num_samples  = 11
+
         # Build one endpoint per bearing at the projection range
         bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
         paths = []
@@ -446,7 +461,7 @@ def calculate_es_terrain():
 
         polygon_points = None
         try:
-            profiles = get_elevation_profiles_batch(paths, num_samples=11)
+            profiles = get_elevation_profiles_batch(paths, num_samples=num_samples)
             polygon_points = []
             for bearing, profile in zip(bearings, profiles):
                 eirp = eirp_at_bearing(bearing)
@@ -531,6 +546,13 @@ def calculate_jammer_footprint():
             )
         )
 
+        if is_locally_covered(jammer_lat, jammer_lon, proj_range_km):
+            num_bearings = 72
+            num_samples  = 25
+        else:
+            num_bearings = 36
+            num_samples  = 11
+
         bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
         paths = []
         for bearing in bearings:
@@ -539,7 +561,7 @@ def calculate_jammer_footprint():
 
         polygon_points = None
         try:
-            profiles = get_elevation_profiles_batch(paths, num_samples=11)
+            profiles = get_elevation_profiles_batch(paths, num_samples=num_samples)
             polygon_points = []
             for bearing, profile in zip(bearings, profiles):
                 eirp = eirp_at_bearing(bearing)
@@ -609,6 +631,100 @@ def get_elevations():
     except Exception:
         return jsonify({'elevations': [None] * len(points)})
 
+
+@app.route('/tiles/local/<int:z>/<int:x>/<int:y>.png')
+def local_tile(z, x, y):
+    path = get_imagery_for_tile(z, x, y)
+    if path is None:
+        return Response(status=204)
+    png = render_tile_png(path, z, x, y)
+    if png is None:
+        return Response(status=204)
+    return Response(png, mimetype='image/png')
+
+
+# ── Local data directory management (localhost-only) ─────────────────────────
+
+_BLOCKED_DATA_PATHS = {'/', '/proc', '/sys', '/dev', '/etc', '/bin', '/sbin', '/usr'}
+
+
+def _is_localhost():
+    return request.remote_addr in ('127.0.0.1', '::1')
+
+
+def _validate_data_path(raw):
+    p = Path(raw.strip()).resolve()
+    if not p.exists() or not p.is_dir():
+        raise ValueError("Path does not exist or is not a directory")
+    s = str(p)
+    if s in _BLOCKED_DATA_PATHS or any(s.startswith(b + '/') for b in _BLOCKED_DATA_PATHS):
+        raise ValueError("Path is restricted")
+    return p
+
+
+@app.route('/api/data_dir_status')
+def data_dir_status():
+    if not _is_localhost():
+        return Response(status=403)
+    return jsonify(get_status())
+
+
+@csrf.exempt
+@app.route('/api/rescan_data', methods=['POST'])
+def rescan_data():
+    if not _is_localhost():
+        return Response(status=403)
+    scan_local_data()
+    return jsonify(get_status())
+
+
+@csrf.exempt
+@app.route('/api/set_data_dir', methods=['POST'])
+def set_data_dir():
+    if not _is_localhost():
+        return Response(status=403)
+    if _local_data._locked:
+        return jsonify({'status': 'error', 'message': 'Path is locked by environment variable'})
+    data = request.json or {}
+    raw  = data.get('path', '').strip()
+    if not raw:
+        return jsonify({'status': 'error', 'message': 'Path is required'})
+    try:
+        p = _validate_data_path(raw)
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
+    _local_data.LOCAL_DATA_DIR = p
+    try:
+        Path('specter_config.json').write_text(
+            json.dumps({'local_data_dir': str(p)}, indent=2)
+        )
+    except Exception as exc:
+        app.logger.warning("Could not save specter_config.json: %s", exc)
+    scan_local_data()
+    return jsonify({'status': 'success', **get_status()})
+
+
+# ── Startup: resolve data directory from env var → config file → default ─────
+
+def _init_data_dir():
+    env_path = os.environ.get('LOCAL_DATA_DIR', '').strip()
+    if env_path:
+        _local_data.LOCAL_DATA_DIR = Path(env_path)
+        _local_data._locked = True
+    else:
+        cfg = Path('specter_config.json')
+        if cfg.exists():
+            try:
+                saved = json.loads(cfg.read_text()).get('local_data_dir', '')
+                if saved:
+                    _local_data.LOCAL_DATA_DIR = Path(saved)
+            except Exception as exc:
+                app.logger.warning("Could not read specter_config.json: %s", exc)
+        _local_data._locked = False
+    scan_local_data()
+
+
+_init_data_dir()
 
 if __name__ == '__main__':
     # host='0.0.0.0' allows you to access this from a tablet on the same Wi-Fi

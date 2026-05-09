@@ -1,4 +1,17 @@
 -----
+09MAY26
+
+- Added local geospatial data support — drop DTED or GeoTIFF files into a `local_data/` folder and the tool reads elevation directly from disk instead of querying the internet
+- Only DTED Level 2 (30 m resolution) is used; Level 0 (900 m) and Level 1 (90 m) are ignored because they are too coarse for accurate terrain calculations, and the online API already provides equivalent quality for areas without local files
+- Detection rings and jammer footprints automatically use higher precision (72 directions × 25 samples) when local data covers the area, versus the standard 36 × 11 when falling back to the API — local rings render near-instantly
+- Added a Local Data Directory panel in the sidebar (visible only when accessing from the same machine) to change or rescan the data folder without restarting the app
+- The data folder path can also be fixed at startup via the `LOCAL_DATA_DIR` environment variable for server deployments
+- Local GeoTIFF imagery files are served as map tiles and appear as a toggleable overlay layer in the map controls
+- Added server log output showing, for every terrain ring or footprint calculation, how many elevation points came from local files versus the internet API
+- Updated README with a Local Geospatial Data section explaining the folder layout, which data levels are accepted, and where to download free USGS 3DEP elevation files
+- Updated internal developer documentation (CLAUDE.md) to document the local data pipeline, adaptive ring quality logic, and data directory security model
+
+-----
 24APR26
 
 - Added terrain-type correction factors to the Egli model (VHF/UHF, 30–999 MHz): terrain selection now meaningfully reduces detection range for light forest (+8 dB penalty, ~37% range reduction) and dense forest/urban (+20 dB, ~70% reduction) relative to open/rural; previously all non-free-space terrain produced identical results in this band

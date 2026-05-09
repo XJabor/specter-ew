@@ -7,8 +7,8 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 ## Features
 
 - **Jamming effectiveness (J/S margin)** — calculates jammer-to-signal ratio at the enemy receiver
-- **Elevation-aware propagation** — queries the Open-Topo-Data API (SRTM 30m) to compute line-of-sight status and Deygout multiple knife-edge diffraction loss (ITU-R P.526) for each jamming link; EA results include an LOS/NLOS badge and the diffraction penalty applied
-- **Terrain-shaped detection rings** — ES sensing range is rendered as an azimuthal polygon rather than a uniform circle, shrinking in directions blocked by terrain; falls back to a circle if the elevation API is unreachable. Initial render takes ~4 seconds (36 bearings × 11 elevation samples, 4 API requests); subsequent renders of the same area are instant from cache
+- **Elevation-aware propagation** — uses local DTED Level 2 (30m) when available, falling back to the Open-Topo-Data API (SRTM 30m) for uncovered areas; computes line-of-sight status and Deygout multiple knife-edge diffraction loss (ITU-R P.526) for each jamming link; EA results include an LOS/NLOS badge and the diffraction penalty applied
+- **Terrain-shaped detection rings** — ES sensing range is rendered as an azimuthal polygon rather than a uniform circle, shrinking in directions blocked by terrain; falls back to a circle if the elevation API is unreachable. Quality adapts to data source: **72 bearings × 25 samples** when local DTED L2 covers the area (near-instant); **36 bearings × 11 samples** when falling back to the API (~4 seconds, 4 API requests). Subsequent renders of the same area are instant from cache regardless of source
 - **Jammer footprint** — toggle "Show Jammer Footprint" on any friendly node to display a terrain-shaped cyan polygon showing the jammer's effective coverage area per bearing, using the same reference sensitivity as ES detection rings. Directional antennas produce the expected teardrop lobe; omni antennas produce a roughly circular footprint. Falls back to a uniform circle if the elevation API is unreachable
 - **Directional antenna support** — each node can be configured as omni or directional via its popup; enter boresight azimuth (True North) and half-power beamwidth. Effective gain is computed per bearing using a Gaussian beam model with a −20 dB sidelobe floor, affecting J/S margin, the shape of detection rings, and the shape of jammer footprints
 - **Antenna height AGL** — each node has a configurable height above ground level (meters). Height is applied to the LOS/diffraction calculation so a mast-mounted antenna can correctly clear terrain obstacles that a ground-level node would not, and also gates the propagation model — tx height ≥ 30 m enables COST-231 Hata and Two-Ray Ground Reflection for UHF frequencies
@@ -30,6 +30,8 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - shapely 2.0+
 - flask-wtf 1.2+
 - flask-limiter 3.5+
+- rasterio 1.3+ *(local DTED and imagery support)*
+- Pillow 9.0+ *(local imagery tile rendering)*
 
 ## Install and Setup
 
@@ -59,6 +61,40 @@ Additional controls available from any node popup:
 - **Height AGL** — set the antenna height above ground level in meters (affects LOS/diffraction only) *(red and blue nodes only)*
 
 Adjust platform parameters in the left sidebar and all links recalculate instantly.
+
+## Local Geospatial Data
+
+Specter can use local elevation and imagery files instead of (or in addition to) the online API, enabling offline operation and higher ring quality.
+
+### DTED Elevation
+
+Place DTED **Level 2** (`.dt2`, 30m) files in the `local_data/` directory using the standard military directory layout:
+
+```
+local_data/
+  w094/
+    n29.dt2
+    n30.dt2
+  w095/
+    n29.dt2
+```
+
+Only Level 2 is indexed. Level 0 (900m) and Level 1 (90m) are intentionally excluded — their post spacing is too coarse for accurate diffraction calculations, and the fallback API (SRTM 30m) provides equivalent or better quality for areas without L2 coverage.
+
+Free DTED L2 for CONUS is available from the [USGS National Map Downloader](https://apps.nationalmap.gov/downloader/) under *Elevation Products (3DEP) → 1/3 arc-second → GeoTIFF* (note: USGS 3DEP GeoTIFFs are not in DTED format — DTED L2 files must be sourced separately from NGA or similar).
+
+### Imagery
+
+Place GeoTIFF imagery (`.tif`, `.tiff`) anywhere under `local_data/`. Files are served as XYZ map tiles via an overlay layer in the layer control.
+
+### Configuring the Data Directory
+
+The default data directory is `local_data/` inside the app folder. To use an external drive or alternate path:
+
+- **Environment variable** (recommended for fixed deployments): set `LOCAL_DATA_DIR=/path/to/data` before starting the app — the path is locked and cannot be changed via the UI
+- **UI** (localhost only): a *Local Data Directory* panel appears in the sidebar when accessing from `127.0.0.1`; enter the path and click Apply, or click Rescan after adding new files
+
+The configured path is persisted in `specter_config.json` across restarts.
 
 ## Field Deployment
 
