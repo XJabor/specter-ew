@@ -79,6 +79,19 @@
             </div>
         </div>
 
+        <div id="data-dir-panel" class="control-group" style="display:none; border-left: 4px solid #555555;">
+            <h3>Local Data Directory</h3>
+            <div id="data-dir-path" style="font-size:11px; color:#aaa; word-break:break-all; margin-bottom:4px;"></div>
+            <div id="data-dir-status" style="font-size:11px; color:#aaa;"></div>
+            <input type="text" id="data-dir-input" placeholder="/path/to/local_data"
+                   style="display:none; width:100%; margin-top:6px; box-sizing:border-box;">
+            <div style="display:flex; gap:6px; margin-top:6px;">
+                <button class="sidebar-btn" id="data-dir-apply" style="display:none;">Apply</button>
+                <button class="sidebar-btn" id="data-dir-rescan">Rescan</button>
+            </div>
+            <div id="data-dir-msg" style="font-size:11px; margin-top:4px;"></div>
+        </div>
+
     </div>
 
     <button id="sidebar-toggle" aria-label="Toggle settings">&#9776;</button>

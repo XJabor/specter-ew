@@ -41,13 +41,18 @@ There are no build steps, test suites, or linters configured.
 - `POST /calculate_jammer_footprint` — EA jammer coverage polygon (per-bearing, terrain-aware); uses jammer EIRP and the global rx_sensitivity as the reference threshold
 - `POST /compute_overlap` — Common area overlap between multiple ES detection rings
 - `POST /get_elevations` — Elevation profile fetch for LOS/diffraction calculations
+- `GET /tiles/local/<z>/<x>/<y>.png` — Serves local imagery GeoTIFFs as XYZ map tiles (204 if no coverage)
+- `GET /api/data_dir_status` — Returns current local data directory path, DTED cell count, imagery file count, and locked state (localhost only)
+- `POST /api/rescan_data` — Re-runs the local data directory scan without restarting (localhost only)
+- `POST /api/set_data_dir` — Changes the local data directory path and rescans; persists to `specter_config.json` (localhost only, path validation enforced)
 - `GET/POST /login` — Login page (session-based auth)
 - `GET /logout` — Clears session and redirects to login
 
 **Core physics** (`core/`):
 - `link_budget.py` — EIRP, watts-to-dBm, frequency-hopping tax
 - `propagation.py` — Multi-band hybrid path loss model (Egli, COST-231 Hata, Two-Ray, SHF/FSPL+foliage), received power, jamming evaluation, and sensing distance
-- `elevation.py` — Elevation profile fetching, LOS checking, Deygout multiple knife-edge diffraction (ITU-R P.526)
+- `elevation.py` — Elevation profile fetching, LOS checking, Deygout multiple knife-edge diffraction (ITU-R P.526); `_fetch_elevations()` implements local-first / API-fallback pipeline
+- `local_data.py` — Local geospatial data manager: startup scanner for DTED L2 and GeoTIFF imagery, DTED elevation sampler, imagery tile renderer, coverage checker, and data directory configuration
 - `antenna.py` — Directional antenna gain pattern, bearing calculations
 
 **Frontend** (`static/js/map_logic.js`, ~1,400 lines, vanilla JS):
@@ -83,3 +88,7 @@ There are no build steps, test suites, or linters configured.
 - **Black marker nodes**: reference-only annotation icons (`blackNodes[]`, IDs prefixed `M`). No elevation fetch, no RF links, no calculations. Managed by `placeBlackNode()`, `bindBlackPopup()`, and the `'place-black'` mode. Included in `updateMGRSTooltips()` and the Clear All / Center on Nodes controls.
 - **Inline MGRS input**: all three icon types include an MGRS text field in their popup (`mgrsInputSection()`), pre-filled with the current grid. Enter or the Go button calls `window.moveNodeToMGRS(type, id, value)`, which validates via `mgrs.toPoint()`, repositions the marker, pans the map, and triggers recalculation for red/blue nodes.
 - **Authentication**: session-based login via `APP_CREDENTIALS` env var. CSRF protection (Flask-WTF) on the login form. Login attempts are rate-limited to 10/minute per IP (Flask-Limiter). API endpoints (`/calculate_*`, etc.) are same-origin `fetch()` calls and are not subject to CSRF. Security headers are set on all responses.
+- **Local geospatial data pipeline**: `core/local_data.py` manages a startup-scanned index of DTED and GeoTIFF files in `LOCAL_DATA_DIR`. `_fetch_elevations()` in `elevation.py` tries `sample_dted()` first, then falls back to the opentopodata API for uncovered points. Only DTED Level 2 (`.dt2`, 30m) is indexed — L0 (900m) and L1 (90m) are excluded because their post spacing is too coarse for accurate Deygout diffraction calculations, and the API's SRTM 30m provides equivalent quality where local L2 is absent.
+- **Adaptive ring quality**: `calculate_es_terrain` and `calculate_jammer_footprint` call `is_locally_covered(lat, lon, radius_km)` before computing bearings. If all required DTED cells are in the local index, ring quality is 72 bearings × 25 samples (near-instant); otherwise it falls back to 36 × 11 (rate-limited API, ~4 seconds).
+- **Data directory configuration**: `LOCAL_DATA_DIR` is initialised by `_init_data_dir()` at startup: env var `LOCAL_DATA_DIR` → `specter_config.json` → default `local_data/`. The env-var path is locked (UI cannot override it). The three `/api/data_dir_*` endpoints are localhost-only (consistent with the existing auth model) and block sensitive filesystem paths to prevent local file inclusion attacks.
+- **Local imagery tiles**: GeoTIFF files in `local_data/` (other than DTED) are indexed by WGS84 bounds and served as 256×256 PNG tiles via `/tiles/local/<z>/<x>/<y>.png`, reprojeced to Web Mercator (EPSG:3857) using rasterio. The Leaflet layer control exposes this as an overlay that users can toggle on/off.

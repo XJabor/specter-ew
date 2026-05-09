@@ -12,6 +12,12 @@ const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/
     attribution: 'Tiles © Esri'
 });
 
+const localImageryLayer = L.tileLayer('/tiles/local/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: 'Local Imagery',
+    opacity: 1
+});
+
 const map = L.map('map', {
     center: [30.4632, -86.5345],
     zoom: 11,
@@ -22,7 +28,10 @@ const baseMaps = {
     "Satellite": satelliteLayer,
     "Streets": streetLayer
 };
-L.control.layers(baseMaps).addTo(map);
+const overlayMaps = {
+    "Local Imagery": localImageryLayer
+};
+L.control.layers(baseMaps, overlayMaps).addTo(map);
 
 // ============================================================
 // ICON DEFINITIONS
@@ -1734,3 +1743,96 @@ function exportKML(includeLabels) {
     document.body.removeChild(a);
     URL.revokeObjectURL(a.href);
 }
+
+// ============================================================
+// LOCAL DATA DIRECTORY PANEL (localhost only)
+// ============================================================
+
+(function initDataDirPanel() {
+    fetch('/api/data_dir_status')
+        .then(r => {
+            if (!r.ok) return null;   // 403 for remote users — hide panel silently
+            return r.json();
+        })
+        .then(status => {
+            if (!status) return;
+
+            const panel   = document.getElementById('data-dir-panel');
+            const pathEl  = document.getElementById('data-dir-path');
+            const statEl  = document.getElementById('data-dir-status');
+            const input   = document.getElementById('data-dir-input');
+            const applyBtn  = document.getElementById('data-dir-apply');
+            const rescanBtn = document.getElementById('data-dir-rescan');
+            const msgEl   = document.getElementById('data-dir-msg');
+
+            panel.style.display = '';
+
+            function renderStatus(s) {
+                pathEl.textContent = s.path;
+                statEl.textContent = `${s.dted_cells} DTED cells · ${s.imagery_files} imagery file(s)`;
+                if (s.locked) {
+                    input.style.display   = 'none';
+                    applyBtn.style.display = 'none';
+                    msgEl.style.color  = '#aaa';
+                    msgEl.textContent  = 'Path locked by environment variable.';
+                } else {
+                    input.style.display    = '';
+                    applyBtn.style.display = '';
+                    input.value = s.path;
+                    msgEl.textContent = '';
+                }
+            }
+
+            renderStatus(status);
+
+            applyBtn.addEventListener('click', function () {
+                const newPath = input.value.trim();
+                if (!newPath) return;
+                applyBtn.disabled = true;
+                msgEl.style.color = '#aaa';
+                msgEl.textContent = 'Scanning…';
+                fetch('/api/set_data_dir', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: newPath }),
+                })
+                .then(r => r.json())
+                .then(result => {
+                    applyBtn.disabled = false;
+                    if (result.status === 'success') {
+                        msgEl.style.color = '#66cc66';
+                        msgEl.textContent = 'Applied.';
+                        renderStatus(result);
+                    } else {
+                        msgEl.style.color = '#ff4444';
+                        msgEl.textContent = result.message || 'Error applying path.';
+                    }
+                })
+                .catch(() => {
+                    applyBtn.disabled = false;
+                    msgEl.style.color = '#ff4444';
+                    msgEl.textContent = 'Request failed.';
+                });
+            });
+
+            rescanBtn.addEventListener('click', function () {
+                rescanBtn.disabled = true;
+                msgEl.style.color  = '#aaa';
+                msgEl.textContent  = 'Rescanning…';
+                fetch('/api/rescan_data', { method: 'POST' })
+                .then(r => r.json())
+                .then(result => {
+                    rescanBtn.disabled = false;
+                    msgEl.style.color  = '#66cc66';
+                    msgEl.textContent  = 'Rescan complete.';
+                    renderStatus(result);
+                })
+                .catch(() => {
+                    rescanBtn.disabled = false;
+                    msgEl.style.color  = '#ff4444';
+                    msgEl.textContent  = 'Rescan failed.';
+                });
+            });
+        })
+        .catch(() => {});  // network error — panel stays hidden
+})();

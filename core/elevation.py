@@ -1,6 +1,10 @@
+import logging
 import math
 import time
 import requests
+from core.local_data import sample_dted
+
+_logger = logging.getLogger(__name__)
 
 ELEVATION_API_URL = "https://api.opentopodata.org/v1/srtm30m"
 _BATCH_SIZE = 100        # public API hard limit: 100 locations per request
@@ -73,6 +77,31 @@ def _fetch_online(locations):
     return all_elevations
 
 
+def _fetch_elevations(locations):
+    """Fetch elevations preferring local DTED, falling back to the online API.
+
+    locations: list of {latitude, longitude} dicts
+    Returns: list of elevation values in metres, same order as input.
+    Raises requests.RequestException if the API is needed and unreachable.
+    """
+    local = sample_dted(locations)
+
+    uncovered = [i for i, v in enumerate(local) if v is None]
+    n_local = len(locations) - len(uncovered)
+    if not uncovered:
+        _logger.info("elevations: %d/%d from local DTED (all local)", n_local, len(locations))
+        return local
+
+    _logger.info("elevations: %d/%d from local DTED, %d from API", n_local, len(locations), len(uncovered))
+    api_locs = [locations[i] for i in uncovered]
+    api_results = _fetch_online(api_locs)
+
+    for i, val in zip(uncovered, api_results):
+        local[i] = val
+
+    return local
+
+
 def get_point_elevations(points):
     """
     Get elevation for a list of {lat, lon} dicts.
@@ -80,7 +109,7 @@ def get_point_elevations(points):
     Raises requests.RequestException if the API is unreachable.
     """
     locations = [{"latitude": p["lat"], "longitude": p["lon"]} for p in points]
-    return _fetch_online(locations)
+    return _fetch_elevations(locations)
 
 
 def get_elevation_profile(lat1, lon1, lat2, lon2, num_samples=20):
@@ -110,7 +139,7 @@ def get_elevation_profile(lat1, lon1, lat2, lon2, num_samples=20):
         for i in range(num_samples)
     ]
 
-    elevations = _fetch_online(locations)
+    elevations = _fetch_elevations(locations)
 
     profile = []
     for i, (loc, elev) in enumerate(zip(locations, elevations)):
@@ -183,7 +212,7 @@ def get_elevation_profiles_batch(paths, num_samples=12):
                 })
             slice_map.append((idx, start, start + num_samples))
 
-        all_elevations = _fetch_online(all_locations)
+        all_elevations = _fetch_elevations(all_locations)
 
         for path_idx, start, end in slice_map:
             lat1, lon1, lat2, lon2 = paths[path_idx]

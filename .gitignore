@@ -32,3 +32,10 @@ dist/
 
 # Planning
 TODO.md
+
+# Local geospatial data (DTED, imagery) — too large for version control
+local_data/
+!local_data/.gitkeep
+
+# Runtime config (data directory path set via UI)
+specter_config.json
