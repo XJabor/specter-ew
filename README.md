@@ -18,6 +18,7 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - **Frequency-hopping tax** — applies a configurable jamming penalty for frequency-hopping waveforms
 - **Per-node naming and MGRS labels** — nodes can be renamed; permanent MGRS grid labels and elevation readouts are displayed above each marker on the map; all icon types have an inline MGRS input field in their popup — type a grid string and press Enter (or Go) to jump the icon to that location
 - **Marker icons** — a third icon type (black) can be placed as a reference point; shows a permanent MGRS label, supports rename and move-to-MGRS, and has no RF or link features
+- **EP (Electronic Protection) mode** — a separate workbench mode for friendly force analysis. Place EP nodes on the map, add named sub-systems to each node (each with its own frequency, TX power, and gain), then click Calculate to generate terrain-aware detection rings for every system. Rings are color-coded per system from a fixed palette. Universal parameters (terrain type, enemy RX sensitivity) live in the sidebar. Switch between EA and EP modes with the EP button in the workbench header; all node types coexist when switching
 - **Workbench** — place red (enemy), blue (friendly), and black (marker) nodes, link them individually or all at once, rename them, and remove links via the ✕ buttons in the link status table; click any row to highlight the corresponding link on the map
 - **Node overlap analysis** — select two or more active detection rings to compute and highlight their common coverage area in yellow, with MGRS coordinates at each corner vertex
 - **KML export** — exports the current map state to a `.kml` file from the Workbench. Includes enemy and friendly node placemarks, enemy comms links, jamming links (colored by J/S margin), ES detection ring polygons, and overlap zones. A second export option includes midpoint distance labels on all links and detection range labels on each ring, for use in Google Earth, ATAK, or any KML-compatible tool
@@ -48,6 +49,8 @@ Open `http://localhost:5000` in your browser.
 
 ## Usage
 
+### EA/ES Mode (default)
+
 1. Select **Enemy Node**, **Friendly Node**, or **Marker** and click the map to place them
 2. Link enemy nodes individually or select **Link All Enemy Comms** in the Workbench
 3. Left-click an enemy node and select **Show Detection Ring** if desired
@@ -61,6 +64,16 @@ Additional controls available from any node popup:
 - **Height AGL** — set the antenna height above ground level in meters (affects LOS/diffraction only) *(red and blue nodes only)*
 
 Adjust platform parameters in the left sidebar and all links recalculate instantly.
+
+### EP Mode
+
+1. Click the **EP** button in the workbench header to switch to EP mode
+2. Click **Place EP Node** and click the map to place a friendly node
+3. In the workbench card, click **+ Add System** and configure each system's name, frequency, TX power, and gain
+4. Click **Calculate** to generate terrain-aware detection rings for all systems on that node
+5. Left-click the EP node icon on the map to rename or delete it
+
+Set terrain type and enemy RX sensitivity in the left sidebar. All node types (red, blue, black, EP) coexist — switching modes does not clear the map.
 
 ## Local Geospatial Data
 

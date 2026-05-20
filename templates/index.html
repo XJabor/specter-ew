@@ -18,18 +18,18 @@
             <button id="btn_search" class="sidebar-btn" style="width: 100%; margin-top: 8px;">Go to Grid</button>
         </div>
 
-        <div class="control-group" style="border-left: 4px solid #2d7a2d;">
+        <div class="control-group ea-only" style="border-left: 4px solid #2d7a2d;">
             <h3>Radio Information</h3>
             <label>Frequency (MHz): <input type="number" id="freq_mhz" value="150"></label>
         </div>
 
-        <div class="control-group" style="padding: 10px 15px; border-left: 4px solid #ffaa00;">
+        <div class="control-group ea-only" style="padding: 10px 15px; border-left: 4px solid #ffaa00;">
             <label style="color: #ffaa00; font-weight: bold; margin: 0; cursor: pointer;">
                 <input type="checkbox" id="fh_toggle"> Enable Frequency Hopping (FH) Tax
             </label>
         </div>
 
-        <div class="control-group red-team">
+        <div class="control-group ea-only red-team">
             <h3>Enemy Link (Red)</h3>
             <label>Enemy-to-Enemy Terrain: 
                 <select id="enemy_terrain">
@@ -48,7 +48,7 @@
             </div>
         </div>
 
-        <div class="control-group blue-team">
+        <div class="control-group ea-only blue-team">
             <h3>Friendly Assets (Blue)</h3>
             <label>Jammer-to-Target Terrain: 
                 <select id="jammer_terrain">
@@ -70,13 +70,28 @@
             <label>Sensor Rx Ant Gain (dBi): <input type="number" id="friendly_rx_gain" value="0"></label>
         </div>
 
-        <div class="control-group" style="border-left: 4px solid #aaaaaa;">
+        <div class="control-group ea-only" style="border-left: 4px solid #aaaaaa;">
             <h3>Capture Effect Thresholds (dB)</h3>
             <label>No Effect below: <input type="number" id="lower_threshold" value="-6" step="0.5"></label>
             <label>Complete Jamming above: <input type="number" id="upper_threshold" value="6" step="0.5"></label>
             <div id="threshold-error" style="display:none; color:#ff4444; font-size:12px; margin-top:4px;">
                 ⚠ "Complete Jamming" threshold must be greater than "No Effect" threshold.
             </div>
+        </div>
+
+        <div class="control-group ep-only" style="border-left: 4px solid #27ae60;">
+            <h3>EP Detection Settings</h3>
+            <label>Terrain Type:
+                <select id="ep_terrain">
+                    <option value="free space">Free Space (Air)</option>
+                    <option value="rural">Rural / Open</option>
+                    <option value="light forest">Light Forest / Suburbs</option>
+                    <option value="dense forest">Dense Forest / Urban</option>
+                </select>
+            </label>
+            <label>Enemy Rx Sensitivity (dBm):
+                <input type="number" id="ep_rx_sensitivity" value="-90">
+            </label>
         </div>
 
         <div id="data-dir-panel" class="control-group" style="display:none; border-left: 4px solid #555555;">
@@ -100,7 +115,8 @@
         <span id="mobile-margin">--</span> dB &nbsp;&bull;&nbsp; <span id="mobile-effect">Place nodes...</span>
     </div>
     <div id="workbench">
-        <div class="workbench-title">WORKBENCH <button id="workbench-collapse-btn" class="minimize-btn" aria-label="Minimize workbench">&#9660;</button></div>
+        <div class="workbench-title"><span>WORKBENCH</span><div style="display:flex;gap:4px;align-items:center;"><button id="btn-ep-mode" class="ep-mode-btn" title="Switch to EP Mode">EP</button><button id="workbench-collapse-btn" class="minimize-btn" aria-label="Minimize workbench">&#9660;</button></div></div>
+        <div id="ea-workbench">
         <div class="workbench-section">
             <div class="workbench-section-label">PLACE NODES</div>
             <button class="workbench-btn red-btn" id="btn-place-red">⬤ Enemy Node</button>
@@ -140,6 +156,16 @@
             <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportKML(false)" title="Export nodes, links, and detection rings to KML">Export KML</button>
             <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportKML(true)" title="Export with distance and range labels">Export KML (w/ Labels)</button>
         </div>
+        </div><!-- #ea-workbench -->
+        <div id="ep-workbench" style="display:none;">
+            <div class="workbench-section">
+                <div class="workbench-section-label">EP NODES</div>
+                <button class="workbench-btn ep-place-btn" id="btn-place-ep">⬤ Place EP Node</button>
+            </div>
+            <div id="ep-nodes-list">
+                <p class="results-empty">No EP nodes placed.</p>
+            </div>
+        </div><!-- #ep-workbench -->
         <div id="mode-indicator">Pan / Select</div>
         <a href="{{ url_for('logout') }}" id="logout-btn">Logout</a>
     </div>

@@ -55,14 +55,16 @@ There are no build steps, test suites, or linters configured.
 - `local_data.py` — Local geospatial data manager: startup scanner for DTED L2 and GeoTIFF imagery, DTED elevation sampler, imagery tile renderer, coverage checker, and data directory configuration
 - `antenna.py` — Directional antenna gain pattern, bearing calculations
 
-**Frontend** (`static/js/map_logic.js`, ~1,400 lines, vanilla JS):
+**Frontend** (`static/js/map_logic.js`, ~2,100 lines, vanilla JS):
 - Leaflet.js map with OpenStreetMap and Esri Satellite tile layers
 - Interactive placement of red (enemy), blue (friendly), and black (marker) nodes
 - Black marker nodes are reference-only — no RF calculations, no links, no elevation fetch
 - Link creation between red/blue nodes triggers RF calculations via API calls
-- Workbench panel for managing multiple nodes simultaneously
+- Workbench panel for managing multiple nodes simultaneously; toggles between EA and EP modes via the EP button in the workbench header
 - Permanent MGRS grid labels above all icons; inline MGRS input in every popup lets the user type a grid string and jump the icon to that location
 - Jammer footprint toggle on blue nodes: terrain-shaped cyan polygon showing per-bearing jammer coverage
+- EP (Electronic Protection) mode: green EP nodes (`epNodes[]`, IDs prefixed `EP`) each hold one or more named sub-systems; clicking Calculate fires sequential `/calculate_es_terrain` calls (one per system) and renders color-coded terrain rings; sidebar shows EP-specific parameters (terrain, enemy RX sensitivity) while hiding EA controls
+- Ring and footprint labels rendered as standalone `L.tooltip` instances positioned at the rightmost polygon vertex (not bound to the layer, so they don't re-anchor to the geometric center on map move); stored as `node.esLabel`, `node.fpLabel`, and `sys.label` and cleaned up alongside their ring layer; EP system labels are staggered 20 px vertically per system index to prevent stacking
 
 **Template** (`templates/index.html`): Single-page app; all JS/CSS loaded from `static/`.
 
@@ -86,6 +88,8 @@ There are no build steps, test suites, or linters configured.
 - **Common area detection overlay**: computes the geographic overlap between multiple ES detection rings to identify jointly-observable areas.
 - **Jammer footprint**: per-bearing coverage polygon for blue nodes, driven by jammer EIRP and terrain diffraction. Uses the same `calculate_sensing_distance` / `get_elevation_profiles_batch` pattern as ES terrain rings. Reference threshold is the global `rx_sensitivity` parameter. Rendered in cyan (`#00bcd4`) to distinguish from red ES rings.
 - **Black marker nodes**: reference-only annotation icons (`blackNodes[]`, IDs prefixed `M`). No elevation fetch, no RF links, no calculations. Managed by `placeBlackNode()`, `bindBlackPopup()`, and the `'place-black'` mode. Included in `updateMGRSTooltips()` and the Clear All / Center on Nodes controls.
+- **EP mode**: toggled by `toggleEpMode()` which sets `epModeActive` and adds/removes the `ep-mode` CSS class on `<body>`. `.ea-only` elements are hidden and `.ep-only` elements shown via CSS rules when `body.ep-mode` is active. EP nodes (`epNodes[]`, IDs prefixed `EP`) are placed by `placeEpNode()` and managed by `addSystemToEpNode()`, `removeSystemFromEpNode()`, `calculateEpNode()`, `clearEpNodeRings()`, and `removeEpNode()`. Systems use colors from `EP_COLORS[]` (8-color palette, assigned by index mod 8). Sequential `for...of` loop in `calculateEpNode()` avoids exceeding the OpenTopoData 1 req/sec rate limit. EP nodes are included in `updateMGRSTooltips()`, Clear All, and Center on Nodes (including ring bounds).
+- **Edge labels on rings**: all ring/footprint labels use `makeEdgeLabel()` — a standalone `L.tooltip` (not bound via `bindTooltip`) positioned at the rightmost polygon vertex (`polygonPoints.reduce()` by max longitude) or at a computed east offset for circle fallbacks. Stored separately from the ring layer (`node.esLabel`, `node.fpLabel`, `sys.label`) and removed alongside the ring at every cleanup site. This prevents Leaflet from re-anchoring the label to `getBounds().getCenter()` on map move events.
 - **Inline MGRS input**: all three icon types include an MGRS text field in their popup (`mgrsInputSection()`), pre-filled with the current grid. Enter or the Go button calls `window.moveNodeToMGRS(type, id, value)`, which validates via `mgrs.toPoint()`, repositions the marker, pans the map, and triggers recalculation for red/blue nodes.
 - **Authentication**: session-based login via `APP_CREDENTIALS` env var. CSRF protection (Flask-WTF) on the login form. Login attempts are rate-limited to 10/minute per IP (Flask-Limiter). API endpoints (`/calculate_*`, etc.) are same-origin `fetch()` calls and are not subject to CSRF. Security headers are set on all responses.
 - **Local geospatial data pipeline**: `core/local_data.py` manages a startup-scanned index of DTED and GeoTIFF files in `LOCAL_DATA_DIR`. `_fetch_elevations()` in `elevation.py` tries `sample_dted()` first, then falls back to the opentopodata API for uncovered points. Only DTED Level 2 (`.dt2`, 30m) is indexed — L0 (900m) and L1 (90m) are excluded because their post spacing is too coarse for accurate Deygout diffraction calculations, and the API's SRTM 30m provides equivalent quality where local L2 is absent.

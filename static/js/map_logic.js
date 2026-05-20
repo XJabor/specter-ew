@@ -87,6 +87,15 @@ let _fpDebounceTimer       = null;
 const _fpAbortControllers  = {};
 
 // ============================================================
+// EP MODE DATA
+// ============================================================
+
+const epNodes    = [];
+const EP_COLORS  = ['#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e91e63','#00bfff'];
+let epNodeCounter = 0;
+let epModeActive  = false;
+
+// ============================================================
 // MODE MANAGEMENT
 // ============================================================
 
@@ -94,6 +103,7 @@ const modeBtnIds = {
     'place-red':   'btn-place-red',
     'place-blue':  'btn-place-blue',
     'place-black': 'btn-place-black',
+    'place-ep':    'btn-place-ep',
 };
 
 const modeLabels = {
@@ -102,7 +112,8 @@ const modeLabels = {
     'place-blue':   'Click map to place Friendly Node — ESC to cancel',
     'place-black':  'Click map to place Marker — ESC to cancel',
     'link-enemy':   'Click the TX Enemy Node — ESC to cancel',
-    'link-jammer':  'Click the target Enemy Node — ESC to cancel'
+    'link-jammer':  'Click the target Enemy Node — ESC to cancel',
+    'place-ep':     'Click map to place EP Node — ESC to cancel',
 };
 
 function setMode(newMode) {
@@ -134,6 +145,24 @@ function findNode(color, id) {
     if (color === 'black') return blackNodes.find(n => n.id === id);
 }
 
+function escapeHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function makeEdgeLabel(polygonPoints, centerLat, centerLon, radiusM, text, offsetPx = [0, 0]) {
+    let edgePt;
+    if (polygonPoints && polygonPoints.length > 0) {
+        edgePt = polygonPoints.reduce((a, b) => b[1] > a[1] ? b : a);
+    } else {
+        const lonOff = (radiusM / 1000) / (111.32 * Math.cos(centerLat * Math.PI / 180));
+        edgePt = [centerLat, centerLon + lonOff];
+    }
+    return L.tooltip({ permanent: true, direction: 'right', className: 'dist-label', offset: offsetPx })
+        .setLatLng(edgePt)
+        .setContent(text)
+        .addTo(map);
+}
+
 function highlightNode(color, id, on) {
     const node = findNode(color, id);
     if (!node) return;
@@ -150,7 +179,7 @@ function placeRedNode(latlng) {
     const id = 'R' + redCounter;
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('red', id); });
-    const node = { id, name: id, marker, esActive: false, esCircle: null, elevationM: null,
+    const node = { id, name: id, marker, esActive: false, esCircle: null, esLabel: null, elevationM: null,
                    antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0 };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
     marker.on('popupclose', function() { bindRedPopup(id); });
@@ -168,7 +197,7 @@ function placeBlueNode(latlng) {
     marker.on('click', function() { handleNodeClick('blue', id); });
     const node = { id, name: id, marker, elevationM: null,
                    antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0,
-                   footprintActive: false, footprintCircle: null, footprintPolygonPoints: null };
+                   footprintActive: false, footprintCircle: null, fpLabel: null, footprintPolygonPoints: null };
     marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); scheduleFootprintUpdate(); });
     marker.on('popupclose', function() { bindBluePopup(id); });
     blueNodes.push(node);
@@ -504,6 +533,7 @@ window.removeNode = function(color, id) {
         if (node) {
             map.removeLayer(node.marker);
             if (node.esCircle) map.removeLayer(node.esCircle);
+            if (node.esLabel) map.removeLayer(node.esLabel);
         }
         redNodes = redNodes.filter(n => n.id !== id);
         clearOverlapLayer();
@@ -517,6 +547,7 @@ window.removeNode = function(color, id) {
         if (node) {
             map.removeLayer(node.marker);
             if (node.footprintCircle) map.removeLayer(node.footprintCircle);
+            if (node.fpLabel) map.removeLayer(node.fpLabel);
         }
         blueNodes = blueNodes.filter(n => n.id !== id);
         jammingLinks.filter(l => l.blueId === id).forEach(l => map.removeLayer(l.line));
@@ -755,6 +786,13 @@ function updateMGRSTooltips() {
             permanent: true, direction: 'top', className: 'mgrs-label'
         });
     });
+    epNodes.forEach(function(node) {
+        const latlng = node.marker.getLatLng();
+        const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
+        node.marker.bindTooltip(`${node.name} — ${mgrsStr}`, {
+            permanent: true, direction: 'top', className: 'mgrs-label'
+        });
+    });
 }
 
 async function fetchAndStoreElevation(node) {
@@ -937,6 +975,7 @@ async function updateESCircles() {
     // Remove circles for any node that is no longer active
     redNodes.forEach(n => {
         if (!n.esActive && n.esCircle) { map.removeLayer(n.esCircle); n.esCircle = null; }
+        if (!n.esActive && n.esLabel) { map.removeLayer(n.esLabel); n.esLabel = null; }
     });
 
     const activeESNodes = redNodes.filter(n => n.esActive);
@@ -986,6 +1025,7 @@ async function updateESCircles() {
 
             node.esRangeKm = data.base_range_km;
             if (node.esCircle) map.removeLayer(node.esCircle);
+            if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
 
             if (data.polygon_points) {
                 // Terrain-aware detection polygon
@@ -993,9 +1033,8 @@ async function updateESCircles() {
                 const label = `Detection: ~${data.base_range_km.toFixed(1)} km (terrain)`;
                 node.esCircle = L.polygon(data.polygon_points, {
                     color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
-                }).bindTooltip(label, {
-                    permanent: true, direction: 'right', className: 'dist-label'
                 }).addTo(map);
+                node.esLabel = makeEdgeLabel(data.polygon_points, null, null, null, label);
             } else {
                 // Fallback: uniform circle when elevation API is unavailable
                 node.esPolygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
@@ -1003,9 +1042,8 @@ async function updateESCircles() {
                 const label = `Detection: ${data.base_range_km.toFixed(2)} km`;
                 node.esCircle = L.circle(ll, {
                     color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
-                }).bindTooltip(label, {
-                    permanent: true, direction: 'right', className: 'dist-label'
                 }).addTo(map);
+                node.esLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
             }
         } catch (e) {
             if (e.name !== 'AbortError') { /* network error — leave existing ring in place */ }
@@ -1029,6 +1067,7 @@ window.toggleNodeFootprint = function(id) {
         map.removeLayer(node.footprintCircle);
         node.footprintCircle = null;
         node.footprintPolygonPoints = null;
+        if (node.fpLabel) { map.removeLayer(node.fpLabel); node.fpLabel = null; }
     }
     map.closePopup();
     bindBluePopup(id);
@@ -1043,6 +1082,7 @@ function scheduleFootprintUpdate() {
 async function updateJammerFootprints() {
     blueNodes.forEach(n => {
         if (!n.footprintActive && n.footprintCircle) { map.removeLayer(n.footprintCircle); n.footprintCircle = null; }
+        if (!n.footprintActive && n.fpLabel) { map.removeLayer(n.fpLabel); n.fpLabel = null; }
     });
 
     const activeNodes = blueNodes.filter(n => n.footprintActive);
@@ -1085,24 +1125,23 @@ async function updateJammerFootprints() {
             if (data.status !== 'success') continue;
 
             if (node.footprintCircle) map.removeLayer(node.footprintCircle);
+            if (node.fpLabel) { map.removeLayer(node.fpLabel); node.fpLabel = null; }
 
             if (data.polygon_points) {
                 node.footprintPolygonPoints = data.polygon_points;
                 const label = `Jammer Coverage: ~${data.base_range_km.toFixed(1)} km (terrain)`;
                 node.footprintCircle = L.polygon(data.polygon_points, {
                     color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12, weight: 1
-                }).bindTooltip(label, {
-                    permanent: true, direction: 'right', className: 'dist-label'
                 }).addTo(map);
+                node.fpLabel = makeEdgeLabel(data.polygon_points, null, null, null, label);
             } else {
                 node.footprintPolygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
                 const radiusMeters = data.base_range_km * 1000;
                 const label = `Jammer Coverage: ${data.base_range_km.toFixed(2)} km`;
                 node.footprintCircle = L.circle(ll, {
                     color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12, radius: radiusMeters
-                }).bindTooltip(label, {
-                    permanent: true, direction: 'right', className: 'dist-label'
                 }).addTo(map);
+                node.fpLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
             }
         } catch (e) {
             if (e.name !== 'AbortError') { /* network error — leave existing footprint in place */ }
@@ -1275,13 +1314,243 @@ function renderResults() {
 }
 
 // ============================================================
-// MAP CLICK — PLACE NODES
+// EP MODE & MAP CLICK — PLACE NODES
 // ============================================================
+
+function toggleEpMode() {
+    epModeActive = !epModeActive;
+    document.body.classList.toggle('ep-mode', epModeActive);
+    document.getElementById('ea-workbench').style.display  = epModeActive ? 'none' : '';
+    document.getElementById('ep-workbench').style.display  = epModeActive ? ''     : 'none';
+    const btn = document.getElementById('btn-ep-mode');
+    btn.classList.toggle('active', epModeActive);
+    btn.title = epModeActive ? 'Switch to EA/ES Mode' : 'Switch to EP Mode';
+    if (epModeActive) setMode(null);
+}
+document.getElementById('btn-ep-mode').addEventListener('click', toggleEpMode);
+
+function placeEpNode(latlng) {
+    const id   = 'EP' + (++epNodeCounter);
+    const icon = L.divIcon({
+        className:  '',
+        html:       '<div class="ep-marker-dot"></div>',
+        iconSize:   [24, 24],
+        iconAnchor: [12, 12]
+    });
+    const marker = L.marker(latlng, { icon, draggable: true }).addTo(map);
+    const node = { id, name: id, lat: latlng.lat, lon: latlng.lng, marker, systems: [] };
+    epNodes.push(node);
+
+    marker.on('dragend', function(e) {
+        node.lat = e.target.getLatLng().lat;
+        node.lon = e.target.getLatLng().lng;
+        clearEpNodeRings(node);
+        updateMGRSTooltips();
+        updateEpWorkbench();
+    });
+    bindEpPopup(id);
+    marker.on('popupclose', function() { bindEpPopup(id); });
+    updateMGRSTooltips();
+    updateEpWorkbench();
+}
+
+function bindEpPopup(id) {
+    const node = epNodes.find(n => n.id === id);
+    if (!node) return;
+    node.marker.bindPopup(
+        `<b>${escapeHtml(node.name)}</b><br>` +
+        `<small>Drag to reposition. Rings clear on move.</small><br>` +
+        `<button onclick="map.closePopup(); removeEpNode('${id}')">🗑️ Remove Node</button>`
+    );
+}
+
+function clearEpNodeRings(node) {
+    node.systems.forEach(s => {
+        if (s.layer) { map.removeLayer(s.layer); s.layer = null; }
+        if (s.label) { map.removeLayer(s.label); s.label = null; }
+        s.rangeKm       = null;
+        s.polygonPoints = null;
+    });
+}
+
+window.removeEpNode = function(nodeId) {
+    const idx = epNodes.findIndex(n => n.id === nodeId);
+    if (idx === -1) return;
+    const node = epNodes[idx];
+    clearEpNodeRings(node);
+    map.removeLayer(node.marker);
+    epNodes.splice(idx, 1);
+    updateEpWorkbench();
+};
+
+window.addSystemToEpNode = function(nodeId) {
+    const node = epNodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const sysIdx = node.systems.length;
+    node.systems.push({
+        id:               nodeId + '_S' + (sysIdx + 1),
+        name:             'System ' + (sysIdx + 1),
+        freqMhz:          150,
+        txPowerW:         5,
+        txGainDbi:        0,
+        antennaType:      'omni',
+        antennaAzimuth:   0,
+        antennaBeamwidth: 360,
+        antennaHeightAgl: 1.0,
+        color:            EP_COLORS[sysIdx % EP_COLORS.length],
+        layer:            null,
+        label:            null,
+        polygonPoints:    null,
+        rangeKm:          null
+    });
+    updateEpWorkbench();
+};
+
+window.removeSystemFromEpNode = function(nodeId, sysId) {
+    const node = epNodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const sys = node.systems.find(s => s.id === sysId);
+    if (sys && sys.layer) map.removeLayer(sys.layer);
+    node.systems = node.systems.filter(s => s.id !== sysId);
+    updateEpWorkbench();
+};
+
+window.epUpdateNodeName = function(nodeId, val) {
+    const node = epNodes.find(n => n.id === nodeId);
+    if (node) { node.name = val; updateMGRSTooltips(); }
+};
+
+window.epUpdateSysName = function(nodeId, sysId, val) {
+    const node = epNodes.find(n => n.id === nodeId);
+    const sys  = node && node.systems.find(s => s.id === sysId);
+    if (sys) sys.name = val;
+};
+
+window.epUpdateSysParam = function(nodeId, sysId, param, val) {
+    const node = epNodes.find(n => n.id === nodeId);
+    const sys  = node && node.systems.find(s => s.id === sysId);
+    if (sys) sys[param] = val;
+};
+
+window.calculateEpNode = async function(nodeId) {
+    const node = epNodes.find(n => n.id === nodeId);
+    if (!node || node.systems.length === 0) return;
+
+    const terrain = document.getElementById('ep_terrain').value;
+    const rxSens  = parseFloat(document.getElementById('ep_rx_sensitivity').value);
+    clearEpNodeRings(node);
+
+    for (let sysIdx = 0; sysIdx < node.systems.length; sysIdx++) {
+        const sys = node.systems[sysIdx];
+        const labelOffset = [0, sysIdx * 20];
+        const payload = {
+            freq_mhz:            sys.freqMhz,
+            enemy_terrain:       terrain,
+            enemy_tx_w:          sys.txPowerW,
+            enemy_tx_gain:       sys.txGainDbi,
+            rx_sensitivity:      rxSens,
+            friendly_rx_gain:    0,
+            enemy_lat:           node.lat,
+            enemy_lon:           node.lon,
+            tx_antenna_type:     sys.antennaType,
+            tx_azimuth_deg:      sys.antennaAzimuth,
+            tx_beamwidth_deg:    sys.antennaBeamwidth,
+            tx_antenna_height_m: sys.antennaHeightAgl
+        };
+        try {
+            const r    = await fetch('/calculate_es_terrain', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(payload)
+            });
+            const data = await r.json();
+            if (data.status !== 'success') continue;
+
+            sys.rangeKm       = data.base_range_km;
+            sys.polygonPoints = data.polygon_points;
+            const label = `${sys.name}: ~${data.base_range_km.toFixed(1)} km`;
+
+            if (data.polygon_points) {
+                sys.layer = L.polygon(data.polygon_points, {
+                    color: sys.color, fillColor: sys.color, fillOpacity: 0.13, weight: 2
+                }).addTo(map);
+                sys.label = makeEdgeLabel(data.polygon_points, null, null, null, label, labelOffset);
+            } else {
+                const radiusMeters = data.base_range_km * 1000;
+                sys.layer = L.circle([node.lat, node.lon], {
+                    radius: radiusMeters,
+                    color: sys.color, fillColor: sys.color, fillOpacity: 0.13, weight: 2
+                }).addTo(map);
+                sys.label = makeEdgeLabel(null, node.lat, node.lon, radiusMeters, label, labelOffset);
+            }
+        } catch(e) {
+            console.error('EP calculate error for', sys.id, e);
+        }
+    }
+    updateEpWorkbench();
+};
+
+function updateEpWorkbench() {
+    const container = document.getElementById('ep-nodes-list');
+    if (!container) return;
+
+    if (epNodes.length === 0) {
+        container.innerHTML = '<p class="results-empty">No EP nodes placed.</p>';
+        return;
+    }
+
+    container.innerHTML = epNodes.map(node => `
+        <div class="ep-node-card" id="ep-card-${node.id}">
+            <div class="ep-node-header">
+                <input type="text" class="ep-node-name-input" value="${escapeHtml(node.name)}"
+                    oninput="epUpdateNodeName('${node.id}', this.value)"
+                    onclick="this.select()" title="Click to rename node">
+                <button class="ep-node-delete-btn" onclick="removeEpNode('${node.id}')" title="Remove node">✕</button>
+            </div>
+            ${node.systems.length === 0
+                ? '<p class="results-empty" style="margin:2px 0 4px 0;font-size:11px;">No systems — click + Add System.</p>'
+                : node.systems.map(sys => `
+                <div class="ep-system-row">
+                    <span class="ep-system-color-dot" style="background:${sys.color};"></span>
+                    <input type="text" class="ep-sys-name" value="${escapeHtml(sys.name)}"
+                        oninput="epUpdateSysName('${node.id}','${sys.id}',this.value)"
+                        onclick="this.select()" title="System name">
+                    <span class="ep-sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
+                    <button class="ep-sys-delete" onclick="removeSystemFromEpNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
+                    <div class="ep-sys-params">
+                        <label class="ep-sys-label">Freq (MHz)
+                            <input type="number" value="${sys.freqMhz}" min="30" max="40000"
+                                onchange="epUpdateSysParam('${node.id}','${sys.id}','freqMhz',+this.value)">
+                        </label>
+                        <label class="ep-sys-label">Tx Power (W)
+                            <input type="number" value="${sys.txPowerW}" min="0.001" step="0.1"
+                                onchange="epUpdateSysParam('${node.id}','${sys.id}','txPowerW',+this.value)">
+                        </label>
+                        <label class="ep-sys-label">Tx Gain (dBi)
+                            <input type="number" value="${sys.txGainDbi}" step="0.5"
+                                onchange="epUpdateSysParam('${node.id}','${sys.id}','txGainDbi',+this.value)">
+                        </label>
+                        <label class="ep-sys-label">Height AGL (m)
+                            <input type="number" value="${sys.antennaHeightAgl}" min="1" max="500"
+                                onchange="epUpdateSysParam('${node.id}','${sys.id}','antennaHeightAgl',+this.value)">
+                        </label>
+                    </div>
+                </div>`).join('')}
+            <div class="ep-node-actions">
+                <button class="workbench-btn" style="border-left:3px solid #27ae60;"
+                    onclick="addSystemToEpNode('${node.id}')">+ Add System</button>
+                <button class="workbench-btn" style="border-left:3px solid #27ae60; color:#27ae60;"
+                    onclick="calculateEpNode('${node.id}')">Calculate</button>
+            </div>
+        </div>
+    `).join('');
+}
 
 map.on('click', function(e) {
     if      (activeMode === 'place-red')   placeRedNode(e.latlng);
     else if (activeMode === 'place-blue')  placeBlueNode(e.latlng);
     else if (activeMode === 'place-black') placeBlackNode(e.latlng);
+    else if (activeMode === 'place-ep')    placeEpNode(e.latlng);
 });
 
 // ============================================================
@@ -1353,6 +1622,7 @@ function unlinkAllEnemyComms() {
 document.getElementById('btn-place-red').addEventListener('click',   () => setMode('place-red'));
 document.getElementById('btn-place-blue').addEventListener('click',  () => setMode('place-blue'));
 document.getElementById('btn-place-black').addEventListener('click', () => setMode('place-black'));
+document.getElementById('btn-place-ep').addEventListener('click',    () => setMode('place-ep'));
 
 document.getElementById('btn-link-all-enemy').addEventListener('click', function() {
     if (allCommsLinked()) unlinkAllEnemyComms();
@@ -1376,18 +1646,24 @@ document.getElementById('btn-toggle-corners').addEventListener('click', toggleCo
 
 document.getElementById('clear-nodes-btn').addEventListener('click', function() {
     setMode(null);
-    redNodes.forEach(n => { map.removeLayer(n.marker); if (n.esCircle) map.removeLayer(n.esCircle); });
-    blueNodes.forEach(n => { map.removeLayer(n.marker); if (n.footprintCircle) map.removeLayer(n.footprintCircle); });
+    redNodes.forEach(n => { map.removeLayer(n.marker); if (n.esCircle) map.removeLayer(n.esCircle); if (n.esLabel) map.removeLayer(n.esLabel); });
+    blueNodes.forEach(n => { map.removeLayer(n.marker); if (n.footprintCircle) map.removeLayer(n.footprintCircle); if (n.fpLabel) map.removeLayer(n.fpLabel); });
     blackNodes.forEach(n => { map.removeLayer(n.marker); });
     enemyLinks.forEach(l => map.removeLayer(l.line));
     jammingLinks.forEach(l => map.removeLayer(l.line));
+    epNodes.forEach(n => {
+        n.systems.forEach(s => { if (s.layer) map.removeLayer(s.layer); if (s.label) map.removeLayer(s.label); });
+        map.removeLayer(n.marker);
+    });
     redNodes = []; blueNodes = []; blackNodes = []; enemyLinks = []; jammingLinks = [];
     redCounter = 0; blueCounter = 0; blackCounter = 0;
+    epNodes.length = 0; epNodeCounter = 0;
     selectedLink = null;
     overlapChecked.clear();
     clearOverlapLayer();
     renderOverlapControls();
     renderResults();
+    updateEpWorkbench();
 });
 
 // ============================================================
@@ -1401,12 +1677,14 @@ const CenterControl = L.Control.extend({
         btn.innerText = 'Center on Nodes';
         L.DomEvent.disableClickPropagation(btn);
         L.DomEvent.on(btn, 'click', function() {
-            const allNodes = [...redNodes, ...blueNodes, ...blackNodes];
+            const allNodes = [...redNodes, ...blueNodes, ...blackNodes, ...epNodes];
             if (allNodes.length === 0) return;
             const circles = redNodes.filter(n => n.esCircle).map(n => n.esCircle);
             const bounds = L.latLngBounds([]);
             allNodes.forEach(n => bounds.extend(n.marker.getLatLng()));
             circles.forEach(c => bounds.extend(c.getBounds()));
+            blueNodes.filter(n => n.footprintCircle).forEach(n => bounds.extend(n.footprintCircle.getBounds()));
+            epNodes.forEach(n => n.systems.filter(s => s.layer).forEach(s => bounds.extend(s.layer.getBounds())));
             // Extra right padding accounts for the 280px workbench panel
             map.fitBounds(bounds, {
                 paddingTopLeft:     [80, 80],
