@@ -1,9 +1,12 @@
+import base64
 import json
 import logging
 import os
 import secrets
 from pathlib import Path
 from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
+import jwt
+from jwt import PyJWKClient
 from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
 from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
@@ -43,6 +46,48 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 csrf = CSRFProtect(app)
 limiter = Limiter(app=app, key_func=get_remote_address, default_limits=[])
+
+# ── Clerk authentication (HTTPS deployments) ──────────────────────────────────
+# Set CLERK_PUBLISHABLE_KEY to enable Clerk. The Frontend API URL is derived
+# automatically from the key so only one env var is needed.
+
+_CLERK_PK = os.environ.get('CLERK_PUBLISHABLE_KEY', '').strip()
+
+def _derive_clerk_frontend_api(pk: str) -> str:
+    """Decode the Frontend API URL embedded in a Clerk publishable key."""
+    try:
+        encoded = pk.split('_', 2)[2]
+        padded = encoded + '=' * (-len(encoded) % 4)
+        decoded = base64.urlsafe_b64decode(padded).decode('utf-8').rstrip('$')
+        return 'https://' + decoded
+    except Exception:
+        return ''
+
+_CLERK_FRONTEND_API = (
+    os.environ.get('CLERK_FRONTEND_API', '').strip().rstrip('/')
+    or _derive_clerk_frontend_api(_CLERK_PK)
+)
+
+_clerk_jwks_client: PyJWKClient | None = None
+
+def _get_clerk_jwks_client() -> PyJWKClient:
+    global _clerk_jwks_client
+    if _clerk_jwks_client is None:
+        _clerk_jwks_client = PyJWKClient(
+            f"{_CLERK_FRONTEND_API}/.well-known/jwks.json",
+            cache_keys=True,
+        )
+    return _clerk_jwks_client
+
+def _verify_clerk_session(token: str) -> dict:
+    client = _get_clerk_jwks_client()
+    signing_key = client.get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        options={"verify_aud": False},
+    )
 
 def _walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m):
     """
@@ -112,15 +157,24 @@ def check_auth():
         return
 
     # 2. Always allow access to the login page and static assets (CSS/JS/images)
-    if request.endpoint in ['login', 'static']:
+    if request.endpoint in ('login', 'static'):
         return
 
-    # 3. If no credentials are set in the environment, leave the app open
+    # 3a. Clerk auth — stateless JWT verification via __session cookie
+    if _CLERK_PK:
+        token = request.cookies.get('__session')
+        if not token:
+            return redirect(url_for('login'))
+        try:
+            _verify_clerk_session(token)
+            return
+        except Exception:
+            return redirect(url_for('login'))
+
+    # 3b. Legacy APP_CREDENTIALS session auth (LAN deployments)
     raw = os.environ.get('APP_CREDENTIALS', '').strip()
     if not raw:
         return
-
-    # 4. Check if the user has a valid session
     if not session.get('authenticated'):
         return redirect(url_for('login'))
 
@@ -131,24 +185,34 @@ def set_security_headers(response):
     # response.headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+    clerk = f" {_CLERK_FRONTEND_API}" if _CLERK_FRONTEND_API else ""
     response.headers['Content-Security-Policy'] = (
         "default-src 'none'; "
-        "script-src 'self' https://unpkg.com 'unsafe-inline'; "
-        "style-src 'self' https://unpkg.com 'unsafe-inline'; "
+        f"script-src 'self' https://unpkg.com 'unsafe-inline'{clerk}; "
+        f"style-src 'self' https://unpkg.com 'unsafe-inline'{clerk}; "
         "img-src 'self' https: data:; "
-        "connect-src 'self'; "
-        "font-src 'self'"
+        f"connect-src 'self'{clerk}; "
+        f"font-src 'self'{clerk}"
     )
     return response
 
 @app.route('/')
 def index():
-    # This serves your HTML page when you open the browser
-    return render_template('index.html')
+    return render_template('index.html',
+                           clerk_publishable_key=_CLERK_PK,
+                           clerk_frontend_api=_CLERK_FRONTEND_API)
 
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("10 per minute")
 def login():
+    # When Clerk is active, the login page only serves the Clerk SignIn component.
+    # POST is handled entirely by Clerk's JS; no server-side form processing.
+    if _CLERK_PK:
+        return render_template('login.html',
+                               clerk_publishable_key=_CLERK_PK,
+                               clerk_frontend_api=_CLERK_FRONTEND_API,
+                               error=None)
+
     error = None
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
@@ -173,7 +237,10 @@ def login():
             else:
                 error = "Invalid credentials"
 
-    return render_template('login.html', error=error)
+    return render_template('login.html',
+                           clerk_publishable_key='',
+                           clerk_frontend_api='',
+                           error=error)
 
 
 @app.route('/logout')

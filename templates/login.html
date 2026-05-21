@@ -314,6 +314,9 @@
 
             <div class="box-title">// AN EW PLANNING TOOL //</div>
 
+            {% if clerk_publishable_key %}
+            <div id="clerk-signin"></div>
+            {% else %}
             <!-- Error message: set by Flask, shown only if non-empty and rendered -->
             <div class="error-msg" id="err-display" style="display:none"></div>
             <span id="err-data" style="display:none">{{ error or '' }}</span>
@@ -331,6 +334,7 @@
 
                 <button type="submit" class="submit-btn">[ AUTHENTICATE ]</button>
             </form>
+            {% endif %}
 
             <div class="dot-row">· · · · · · · · · · ·</div>
         </div>
@@ -342,6 +346,39 @@
 
     </div>
 
+    {% if clerk_publishable_key %}
+    <script src="{{ clerk_frontend_api }}/npm/@clerk/clerk-js@latest/dist/clerk.browser.js" crossorigin="anonymous"></script>
+    <script>
+    (async () => {
+        const clerk = new Clerk('{{ clerk_publishable_key }}');
+        await clerk.load();
+        if (clerk.user) {
+            window.location.href = '/';
+            return;
+        }
+        clerk.mountSignIn(document.getElementById('clerk-signin'), {
+            afterSignInUrl: '/',
+            appearance: {
+                variables: {
+                    colorPrimary: '#00ff41',
+                    colorBackground: '#060e06',
+                    colorText: '#00ff41',
+                    colorTextSecondary: 'rgba(0,255,65,0.7)',
+                    colorInputBackground: '#060e06',
+                    colorInputText: '#00ff41',
+                    borderRadius: '0px',
+                    fontFamily: "'Courier New', Courier, monospace",
+                },
+                elements: {
+                    card: 'background:transparent;box-shadow:none;padding:0;',
+                    formButtonPrimary: 'background:#001400;border:2px solid #00ff41;color:#00ff41;font-family:"Courier New",Courier,monospace;letter-spacing:3px;border-radius:0;text-transform:uppercase;',
+                    footerActionLink: 'color:#00ff41;',
+                },
+            },
+        });
+    })();
+    </script>
+    {% else %}
     <script>
     (function () {
         var raw = document.getElementById('err-data').textContent.trim();
@@ -353,6 +390,7 @@
         }
     })();
     </script>
+    {% endif %}
 
 </body>
 </html>
