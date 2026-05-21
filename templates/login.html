@@ -347,7 +347,7 @@
     </div>
 
     {% if clerk_publishable_key %}
-    <script src="{{ clerk_frontend_api }}/npm/@clerk/clerk-js@latest/dist/clerk.browser.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js" crossorigin="anonymous"></script>
     <script>
     (async () => {
         const clerk = new Clerk('{{ clerk_publishable_key }}');
