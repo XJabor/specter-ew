@@ -102,11 +102,22 @@
             background: rgba(6, 16, 6, 0.94);
             border: 2px solid #00ff41;
             padding: 28px 30px 24px;
-            width: 340px;
+            width: 400px;
             box-shadow:
                 0 0 20px rgba(0,255,65,0.2),
                 inset 0 0 20px rgba(0,255,65,0.03);
+            overflow: hidden;
         }
+
+        /* ---------- Clerk component centering + badge suppression ---------- */
+        #clerk-signin {
+            display: flex;
+            justify-content: center;
+        }
+        /* Hide "Secured by Clerk" badge — leaks outside the styled box */
+        #clerk-signin .cl-badge,
+        #clerk-signin [data-localization-key="badge__default"],
+        #clerk-signin [class*="cl-internal"] { display: none !important; }
 
         /* Inner frame inset */
         .login-box::before {
@@ -273,7 +284,7 @@
         }
 
         /* ---------- Responsive ---------- */
-        @media (max-width: 400px) {
+        @media (max-width: 440px) {
             .ascii-banner { font-size: 7px; }
             .login-box   { width: 90vw; }
         }
@@ -340,7 +351,7 @@
         </div>
 
         <div class="page-footer">
-            <p>Specter EW is a browser-based tactical Electronic Warfare planning tool designed for EA/ES mission analysis. Place enemy and friendly nodes on a live map to calculate jamming effectiveness (J/S margin), terrain-aware sensing ranges, and jammer coverage footprints. Supports directional antennas, frequency-hopping waveforms, clutter terrain types, and MGRS coordinate display. Built for use on a tactical LAN or hosted instance.</p>
+            <p>Specter EW is a browser-based tactical Electronic Warfare planning tool designed for EA/ES/EP mission analysis. Place enemy and friendly nodes on a live map to calculate jamming effectiveness (J/S margin), terrain-aware sensing ranges, and jammer coverage footprints. Supports directional antennas, frequency-hopping waveforms, clutter terrain types, and MGRS coordinate display. Built for use on a tactical LAN or hosted instance.</p>
             <a href="https://github.com/XJabor/specter-ew" target="_blank" rel="noopener">[ github.com/XJabor/specter-ew ]</a>
         </div>
 
@@ -373,7 +384,9 @@
                     fontFamily: "'Courier New', Courier, monospace",
                 },
                 elements: {
-                    card: 'background:transparent;box-shadow:none;padding:0;',
+                    card: 'background:transparent;box-shadow:none;padding:0;width:100%;',
+                    cardBox: 'width:100%;',
+                    badge: 'display:none;',
                     formButtonPrimary: 'background:#001400;border:2px solid #00ff41;color:#00ff41;font-family:"Courier New",Courier,monospace;letter-spacing:3px;border-radius:0;text-transform:uppercase;',
                     footerActionLink: 'color:#00ff41;',
                 },

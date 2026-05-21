@@ -1,4 +1,15 @@
 -----
+21MAY26 Claude Code
+
+- Added Clerk as the login system for the public-facing (HTTPS) version of the site — replaces the old username/password form with a professional sign-in page
+- The local network (LAN) version is unchanged and still uses the existing username/password setup
+- The server now verifies a short-lived security token (JWT) attached to each browser request instead of relying on a stored login session — more secure and works correctly across multiple server workers
+- The login page keeps the existing CRT green-on-black aesthetic with the Clerk sign-in form styled to match
+- Logging out calls Clerk's sign-out API to fully invalidate the session before redirecting to the login page
+- Updated the browser security policy (CSP) to allow Clerk's scripts, styles, fonts, and background worker threads to run
+- The local-only bypass (localhost access skips all authentication) is preserved
+
+-----
 09MAY26
 
 - Added local geospatial data support — drop DTED or GeoTIFF files into a `local_data/` folder and the tool reads elevation directly from disk instead of querying the internet
