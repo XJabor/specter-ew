@@ -349,7 +349,7 @@
     {% if clerk_publishable_key %}
     <script
         data-clerk-publishable-key="{{ clerk_publishable_key }}"
-        src="https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js"
+        src="{{ clerk_frontend_api }}/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
         crossorigin="anonymous"
     ></script>
     <script>
