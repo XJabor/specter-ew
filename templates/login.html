@@ -347,16 +347,19 @@
     </div>
 
     {% if clerk_publishable_key %}
-    <script src="https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js" crossorigin="anonymous"></script>
+    <script
+        data-clerk-publishable-key="{{ clerk_publishable_key }}"
+        src="https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js"
+        crossorigin="anonymous"
+    ></script>
     <script>
     (async () => {
-        const clerk = new Clerk('{{ clerk_publishable_key }}');
-        await clerk.load();
-        if (clerk.user) {
+        await window.Clerk.load();
+        if (window.Clerk.user) {
             window.location.href = '/';
             return;
         }
-        clerk.mountSignIn(document.getElementById('clerk-signin'), {
+        window.Clerk.mountSignIn(document.getElementById('clerk-signin'), {
             afterSignInUrl: '/',
             appearance: {
                 variables: {
