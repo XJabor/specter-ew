@@ -186,13 +186,15 @@ def set_security_headers(response):
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
     clerk = f" {_CLERK_FRONTEND_API}" if _CLERK_FRONTEND_API else ""
+    worker = " blob:" if _CLERK_FRONTEND_API else ""
     response.headers['Content-Security-Policy'] = (
         "default-src 'none'; "
         f"script-src 'self' https://unpkg.com 'unsafe-inline'{clerk}; "
         f"style-src 'self' https://unpkg.com 'unsafe-inline'{clerk}; "
         "img-src 'self' https: data:; "
         f"connect-src 'self'{clerk}; "
-        f"font-src 'self'{clerk}"
+        f"font-src 'self'{clerk}; "
+        f"worker-src{worker}"
     )
     return response
 
