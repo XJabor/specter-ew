@@ -176,16 +176,19 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
     <script src="/static/js/map_logic.js"></script>
     {% if clerk_publishable_key %}
-    <script src="https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js" crossorigin="anonymous"></script>
+    <script
+        data-clerk-publishable-key="{{ clerk_publishable_key }}"
+        src="https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js"
+        crossorigin="anonymous"
+    ></script>
     <script>
     (async () => {
-        const clerk = new Clerk('{{ clerk_publishable_key }}');
-        await clerk.load();
+        await window.Clerk.load();
         const logoutBtn = document.getElementById('logout-btn');
         if (logoutBtn) {
             logoutBtn.addEventListener('click', async (e) => {
                 e.preventDefault();
-                await clerk.signOut();
+                await window.Clerk.signOut();
                 window.location.href = '/login';
             });
         }
