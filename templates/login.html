@@ -114,6 +114,8 @@
             display: flex;
             justify-content: center;
         }
+        /* Hide "Secured by Clerk" badge by its public class name */
+        #clerk-signin .cl-badge { display: none !important; }
 
         /* Inner frame inset */
         .login-box::before {
@@ -382,6 +384,7 @@
                 elements: {
                     card: 'background:transparent;box-shadow:none;padding:0;width:100%;',
                     cardBox: 'width:100%;',
+                    badge: 'display:none;',
                     formButtonPrimary: 'background:#001400;border:2px solid #00ff41;color:#00ff41;font-family:"Courier New",Courier,monospace;letter-spacing:3px;border-radius:0;text-transform:uppercase;',
                     footerActionLink: 'color:#00ff41;',
                 },

@@ -33,6 +33,8 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - flask-limiter 3.5+
 - rasterio 1.3+ *(local DTED and imagery support)*
 - Pillow 9.0+ *(local imagery tile rendering)*
+- PyJWT 2.4+ *(Clerk JWT verification for hosted deployments)*
+- cryptography 41.0+ *(RSA key support for JWT)*
 
 ## Install and Setup
 
@@ -121,22 +123,45 @@ Debug mode is disabled. Use on a **trusted network only** (tactical LAN, isolate
 
 ### Authentication
 
-Password protection is configured via environment variables. Set these before starting the server:
+Specter supports two authentication modes depending on the deployment target.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `APP_CREDENTIALS` | Optional | Enables login. Format: `user:pass` or `user1:pass1,user2:pass2` for multiple accounts. If unset, the app is open to anyone who can reach it. |
-| `FLASK_SECRET_KEY` | Recommended | Signs session cookies. Generate a strong random value: `python3 -c "import secrets; print(secrets.token_hex(32))"`. If unset, a random key is generated each restart — every restart logs everyone out. |
-| `SPECTER_HTTPS` | HTTPS only | Set to `true` when serving over TLS (e.g. behind nginx or on a PaaS like Digital Ocean App Platform). Enables the `Secure` flag on session cookies. **Do not set on plain-HTTP deployments** — browsers will silently drop the session cookie, causing an infinite login redirect. |
+#### Hosted / HTTPS deployments — Clerk
 
-Example (Linux/macOS):
+Public-facing deployments use [Clerk](https://clerk.com) for sign-in. Clerk handles the login UI and issues short-lived JWTs that the server verifies on every request — no server-side session storage required.
+
+| Variable | Description |
+|----------|-------------|
+| `CLERK_PUBLISHABLE_KEY` | Your Clerk production publishable key (`pk_live_...`). Setting this activates Clerk auth and disables the `APP_CREDENTIALS` path. The Frontend API URL is derived from the key automatically. |
+| `CLERK_FRONTEND_API` | Optional override for the Clerk Frontend API URL. Only needed if automatic derivation from the publishable key fails (e.g. custom domain configurations). |
+| `SPECTER_HTTPS` | Set to `true` when serving over TLS. Enables the `Secure` flag on session cookies. **Do not set on plain-HTTP deployments.** |
+
+Setup steps:
+1. Create a **production** instance in the [Clerk dashboard](https://dashboard.clerk.com) (development instances only work on `localhost`)
+2. Add your domain (e.g. `specter-ew.com`) under Configure → Domains
+3. Add the required DNS records at your DNS provider — set any CNAME records to **DNS only (grey cloud)** if using Cloudflare
+4. Set `CLERK_PUBLISHABLE_KEY` in your server's environment and restart
+
+#### LAN / HTTP deployments — APP_CREDENTIALS
+
+Local network deployments use simple username/password authentication via environment variables.
+
+| Variable | Description |
+|----------|-------------|
+| `APP_CREDENTIALS` | Enables login. Format: `user:pass` or `user1:pass1,user2:pass2`. If unset, the app is open to anyone who can reach it. |
+| `FLASK_SECRET_KEY` | Signs session cookies. Generate one with: `python3 -c "import secrets; print(secrets.token_hex(32))"`. Required when `APP_CREDENTIALS` is set — without it, each server worker uses a different key, causing random logouts. |
+
+Example:
 ```bash
 export APP_CREDENTIALS="alice:correcthorsebatterystaple,bob:hunter2"
 export FLASK_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 python3 app.py
 ```
 
-> **Security note:** Password protection must be paired with HTTPS to be meaningful. Credentials set in `APP_CREDENTIALS` are transmitted in plaintext over HTTP. Always place the server behind a TLS-terminating reverse proxy (e.g. nginx, Caddy) or use a PaaS with managed TLS for any internet-facing deployment.
+> **Security note:** `APP_CREDENTIALS` transmits passwords in plaintext over HTTP. For any internet-facing deployment, use Clerk (HTTPS) instead.
+
+#### Localhost bypass
+
+Requests from `127.0.0.1` or `::1` always bypass authentication — both Clerk and `APP_CREDENTIALS`. This allows local development without credentials.
 
 ### Disclaimer
 This application was built with AI assistance. The propagation models (Egli, COST-231 Hata, Two-Ray Ground Reflection, FSPL + ITU-R P.833 foliage) are empirical or theoretical approximations. Use results at your own risk.
