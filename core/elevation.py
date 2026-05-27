@@ -257,11 +257,14 @@ def _knife_edge_loss_db(nu):
 
 def _deygout_loss_db(profile, freq_mhz, h_tx_abs, h_rx_abs):
     """
-    Deygout multiple knife-edge diffraction loss (dB).
+    Dominant-obstruction knife-edge diffraction loss (dB).
 
-    Recursively finds the dominant obstacle (highest Fresnel-Kirchhoff ν),
-    computes its knife-edge loss, then recurses on the two sub-paths either
-    side of that peak and sums all contributions.
+    The previous recursive Deygout implementation worked for sparse, discrete
+    knife edges but badly over-counted continuous terrain. A smooth hill sampled
+    at many points was treated as many independent obstacles, producing 100+ dB
+    losses on short VHF links. For this planning tool's sampled terrain profiles,
+    using the dominant Fresnel obstruction is a more stable approximation and
+    avoids inflating J/S when one side of the link crosses broad terrain.
 
     profile    : list of {distance_km, elevation_m} ordered TX→RX
     freq_mhz   : link frequency in MHz
@@ -279,7 +282,6 @@ def _deygout_loss_db(profile, freq_mhz, h_tx_abs, h_rx_abs):
     wavelength_m = 3e8 / (freq_mhz * 1e6)
 
     best_nu = -float("inf")
-    best_idx = -1
 
     for i in range(1, len(profile) - 1):
         d1 = profile[i]["distance_km"] - d0
@@ -300,18 +302,11 @@ def _deygout_loss_db(profile, freq_mhz, h_tx_abs, h_rx_abs):
 
         if nu > best_nu:
             best_nu = nu
-            best_idx = i
 
-    if best_idx < 0 or best_nu <= -0.78:
+    if best_nu <= -0.78:
         return 0.0
 
-    main_loss = _knife_edge_loss_db(best_nu)
-    h_main = profile[best_idx]["elevation_m"]
-
-    left_loss  = _deygout_loss_db(profile[:best_idx + 1], freq_mhz, h_tx_abs, h_main)
-    right_loss = _deygout_loss_db(profile[best_idx:],     freq_mhz, h_main,   h_rx_abs)
-
-    return main_loss + left_loss + right_loss
+    return _knife_edge_loss_db(best_nu)
 
 
 def check_line_of_sight(profile, freq_mhz, tx_height_agl_m=0.0, rx_height_agl_m=0.0):

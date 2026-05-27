@@ -143,6 +143,7 @@ function findNode(color, id) {
     if (color === 'red')   return redNodes.find(n => n.id === id);
     if (color === 'blue')  return blueNodes.find(n => n.id === id);
     if (color === 'black') return blackNodes.find(n => n.id === id);
+    if (color === 'ep')    return epNodes.find(n => n.id === id);
 }
 
 function escapeHtml(str) {
@@ -385,10 +386,16 @@ window.moveNodeToMGRS = function(type, id, value) {
             fetchAndStoreElevation(node);
             recalculateAll();
             scheduleFootprintUpdate();
+        } else if (type === 'ep') {
+            node.lat = lat;
+            node.lon = lng;
+            clearEpNodeRings(node);
+            updateEpWorkbench();
         }
         node.marker.closePopup();
         if (type === 'red') bindRedPopup(id);
         else if (type === 'blue') bindBluePopup(id);
+        else if (type === 'ep') bindEpPopup(id);
         else bindBlackPopup(id);
     } catch (e) {
         alert('Invalid MGRS grid string. Example: 18SUJ2345678901');
@@ -1252,7 +1259,7 @@ function renderResults() {
                     && selectedLink.jammingLinkId === jLink.id
                     && selectedLink.enemyLinkId === eLink.id;
 
-                let margin = '--', effect = 'Pending...', rowClass = '', losBadge = '';
+                let margin = '--', effect = 'Pending...', rowClass = '', losBadge = '', enemyLosBadge = '', terrainWarningBadge = '';
                 if (result) {
                     if      (result.status === 'no-enemy-link') { effect = 'No enemy link'; rowClass = 'result-unknown'; }
                     else if (result.status === 'error')         { effect = 'Error';          rowClass = 'result-unknown'; }
@@ -1265,8 +1272,16 @@ function renderResults() {
                         if (bestMargin === null || result.margin > bestMargin) bestMargin = result.margin;
                         if (result.jammer_los != null) {
                             losBadge = result.jammer_los.is_los
-                                ? '<span class="los-badge los-badge--los">LOS</span>'
-                                : `<span class="los-badge los-badge--nlos">NLOS +${result.jammer_los.diffraction_loss_db}dB</span>`;
+                                ? '<span class="los-badge los-badge--los">J:LOS</span>'
+                                : `<span class="los-badge los-badge--nlos">J:NLOS +${result.jammer_los.diffraction_loss_db}dB</span>`;
+                        }
+                        if (result.enemy_los != null) {
+                            enemyLosBadge = result.enemy_los.is_los
+                                ? '<span class="los-badge los-badge--los">E:LOS</span>'
+                                : `<span class="los-badge los-badge--nlos">E:NLOS +${result.enemy_los.diffraction_loss_db}dB</span>`;
+                        }
+                        if (Array.isArray(result.terrain_warnings) && result.terrain_warnings.length > 0) {
+                            terrainWarningBadge = '<span class="los-badge los-badge--nlos" title="' + escapeHtml(result.terrain_warnings.join(' ')) + '">Terrain fallback</span>';
                         }
                     }
                 }
@@ -1276,7 +1291,7 @@ function renderResults() {
                     <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeJammingLinkById('${jLink.id}')">✕</button></td>
                     <td>↳ ${getNodeDisplayName('blue', jLink.blueId)}</td>
                     <td>${margin}</td>
-                    <td>${effect} ${losBadge}</td>
+                    <td>${effect} ${losBadge}${enemyLosBadge}${terrainWarningBadge}</td>
                 </tr>`;
             });
         }
@@ -1360,7 +1375,9 @@ function bindEpPopup(id) {
     node.marker.bindPopup(
         `<b>${escapeHtml(node.name)}</b><br>` +
         `<small>Drag to reposition. Rings clear on move.</small><br>` +
-        `<button onclick="map.closePopup(); removeEpNode('${id}')">🗑️ Remove Node</button>`
+        `<button onclick="map.closePopup(); removeEpNode('${id}')">🗑️ Remove Node</button>` +
+        mgrsInputSection('ep', id, node),
+        { minWidth: 180 }
     );
 }
 
@@ -2016,6 +2033,77 @@ function exportKML(includeLabels) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'specter-export.kml';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+}
+
+function exportEpKML(includeLabels) {
+    const lines = [];
+    lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+    lines.push('<kml xmlns="http://www.opengis.net/kml/2.2">');
+    lines.push('<Document>');
+    lines.push('  <name>Specter-EW EP Export</name>');
+
+    // --- Styles ---
+    const iconHref = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png';
+    lines.push(`  <Style id="epNode"><IconStyle><color>${cssToKmlColor('#27ae60')}</color><scale>1.2</scale><Icon><href>${iconHref}</href></Icon></IconStyle></Style>`);
+    lines.push('  <Style id="epLabel"><IconStyle><scale>0</scale></IconStyle><LabelStyle><color>ffffffff</color><scale>0.75</scale></LabelStyle></Style>');
+    EP_COLORS.forEach((color, i) => {
+        lines.push(`  <Style id="epRing-${i}"><LineStyle><color>${cssToKmlColor(color)}</color><width>1</width></LineStyle><PolyStyle><color>${cssToKmlColor(color, 0.15)}</color></PolyStyle></Style>`);
+    });
+
+    // --- EP Nodes ---
+    lines.push('  <Folder><name>EP Nodes</name>');
+    for (const node of epNodes) {
+        const ll = node.marker.getLatLng();
+        lines.push('    <Placemark>');
+        lines.push(`      <name>${escapeXml(node.name)}</name>`);
+        lines.push('      <styleUrl>#epNode</styleUrl>');
+        lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
+        lines.push('    </Placemark>');
+    }
+    lines.push('  </Folder>');
+
+    // --- EP Detection Rings ---
+    lines.push('  <Folder><name>EP Detection Rings</name>');
+    for (const node of epNodes) {
+        for (const sys of node.systems) {
+            if (!sys.polygonPoints || sys.polygonPoints.length < 3) continue;
+            const colorIdx = EP_COLORS.indexOf(sys.color);
+            const styleId = colorIdx >= 0 ? `epRing-${colorIdx}` : 'epRing-0';
+            const pts = [...sys.polygonPoints, sys.polygonPoints[0]];
+            const coordStr = pts.map(pt => `${pt[1]},${pt[0]},0`).join(' ');
+            lines.push('    <Placemark>');
+            lines.push(`      <name>${escapeXml(node.name + ' - ' + sys.name)}</name>`);
+            lines.push(`      <styleUrl>#${styleId}</styleUrl>`);
+            lines.push('      <Polygon><tessellate>1</tessellate>');
+            lines.push('        <outerBoundaryIs><LinearRing>');
+            lines.push(`          <coordinates>${coordStr}</coordinates>`);
+            lines.push('        </LinearRing></outerBoundaryIs>');
+            lines.push('      </Polygon>');
+            lines.push('    </Placemark>');
+            if (includeLabels && sys.rangeKm != null) {
+                const ll = node.marker.getLatLng();
+                lines.push('    <Placemark>');
+                lines.push(`      <name>${escapeXml(sys.name + ': ~' + sys.rangeKm.toFixed(1) + ' km')}</name>`);
+                lines.push('      <styleUrl>#epLabel</styleUrl>');
+                lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
+                lines.push('    </Placemark>');
+            }
+        }
+    }
+    lines.push('  </Folder>');
+
+    lines.push('</Document>');
+    lines.push('</kml>');
+
+    const kmlString = lines.join('\n');
+    const blob = new Blob([kmlString], { type: 'application/vnd.google-earth.kml+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'specter-ep-export.kml';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

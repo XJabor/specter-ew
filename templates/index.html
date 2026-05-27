@@ -34,7 +34,7 @@
             <label>Enemy-to-Enemy Terrain: 
                 <select id="enemy_terrain">
                     <option value="free space">Free Space (Air)</option>
-                    <option value="rural">Rural / Open</option>
+                    <option value="rural" selected>Rural / Open</option>
                     <option value="light forest">Light Forest / Suburbs</option>
                     <option value="dense forest">Dense Forest / Urban</option>
                 </select>
@@ -44,7 +44,7 @@
             <label>Rx Ant Gain (dBi): <input type="number" id="enemy_rx_gain" value="0"></label>
             
             <div id="enemy_bw_container" style="display: none;">
-                <label style="color: #ffaa00;">Signal Bandwidth (kHz): <input type="number" id="enemy_bw_khz" value="25"></label>
+                <label style="color: #ffaa00;">Target Channel BW (kHz): <input type="number" id="enemy_bw_khz" value="25"></label>
             </div>
         </div>
 
@@ -53,7 +53,7 @@
             <label>Jammer-to-Target Terrain: 
                 <select id="jammer_terrain">
                     <option value="free space">Free Space (Air)</option>
-                    <option value="rural">Rural / Open</option>
+                    <option value="rural" selected>Rural / Open</option>
                     <option value="light forest">Light Forest / Suburbs</option>
                     <option value="dense forest">Dense Forest / Urban</option>
                 </select>
@@ -164,6 +164,11 @@
             </div>
             <div id="ep-nodes-list">
                 <p class="results-empty">No EP nodes placed.</p>
+            </div>
+            <div class="workbench-section">
+                <div class="workbench-section-label">EXPORT</div>
+                <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportEpKML(false)" title="Export EP nodes and detection rings to KML">Export KML</button>
+                <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportEpKML(true)" title="Export with system names and range labels">Export KML (w/ Labels)</button>
             </div>
         </div><!-- #ep-workbench -->
         <div id="mode-indicator">Pan / Select</div>
