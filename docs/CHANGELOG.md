@@ -1,4 +1,25 @@
 -----
+27MAY26 Codex
+
+- Fixed an EA terrain issue where smooth hills could be counted many times, causing unrealistically high jamming results
+- Mountain blockage now uses the strongest single obstruction instead of stacking every sampled point along the slope
+- EA links now sample terrain more closely, making short jammer and radio paths less likely to miss blocking terrain
+- The link table now warns when terrain data could not be loaded and the calculation had to fall back to non-terrain math
+- Clarified the frequency-hopping input label so operators enter target channel bandwidth separately from jammer sweep width
+- Added tests covering the reported 80 MHz open-terrain scenario and the smooth-ridge terrain case
+
+-----
+27MAY26 Claude Code
+
+- EP nodes (green sensing nodes used in Electronic Protection planning mode) can now have their position set by typing an MGRS grid coordinate directly in their popup — same as the red and blue nodes already supported
+- MGRS (Military Grid Reference System) is a standardized coordinate system used to describe map locations with a short alphanumeric string
+- Typing a grid and pressing Enter (or the Go button) moves the EP node to that location and clears any previously calculated detection rings
+- Added a KML export button to the EP workbench sidebar — "Export KML" downloads all EP nodes and their terrain-shaped detection rings as a file that can be opened in Google Earth or any GIS application
+- A second button, "Export KML (w/ Labels)", includes text annotations showing each system's name and detection range in kilometers
+- Each system's detection ring is exported in its assigned color (up to 8 distinct colors), matching what is shown on the map
+- Both export buttons appear at the bottom of the EP workbench panel, following the same layout as the existing export buttons in EA/ES mode
+
+-----
 21MAY26 Claude Code
 
 - Added Clerk as the login system for the public-facing (HTTPS) version of the site — replaces the old username/password form with a professional sign-in page

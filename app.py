@@ -148,6 +148,15 @@ def _walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensiti
     return profile[-1]['distance_km']
 
 
+def _ea_profile_samples(distance_km):
+    """Terrain sample count for point-to-point EA links."""
+    if distance_km <= 5.0:
+        return 48
+    if distance_km <= 15.0:
+        return 72
+    return 96
+
+
 @app.before_request
 def check_auth():
     # 1. Allow local machine bypass — check the actual connection IP, not the Host header.
@@ -284,6 +293,7 @@ def calculate_ea():
         # Optional elevation-aware LOS analysis
         jammer_los = None
         enemy_los = None
+        terrain_warnings = []
 
         # Per-node antenna parameters (all default to omni if absent)
         tx_antenna_type      = data.get('tx_antenna_type', 'omni')
@@ -321,21 +331,25 @@ def calculate_ea():
             try:
                 profile = get_elevation_profile(
                     float(jammer_lat), float(jammer_lon),
-                    float(rx_lat), float(rx_lon)
+                    float(rx_lat), float(rx_lon),
+                    num_samples=_ea_profile_samples(jammer_dist_km)
                 )
                 jammer_los = check_line_of_sight(profile, freq_mhz, jammer_antenna_height_m, rx_antenna_height_m)
-            except Exception:
-                pass  # fall back to no elevation data
+            except Exception as e:
+                app.logger.warning("calculate_ea: jammer terrain lookup failed: %s", e)
+                terrain_warnings.append("Jammer-to-target terrain data unavailable; used non-terrain path loss.")
 
         if all(v is not None for v in [tx_lat, tx_lon, rx_lat, rx_lon]):
             try:
                 profile = get_elevation_profile(
                     float(tx_lat), float(tx_lon),
-                    float(rx_lat), float(rx_lon)
+                    float(rx_lat), float(rx_lon),
+                    num_samples=_ea_profile_samples(enemy_dist_km)
                 )
                 enemy_los = check_line_of_sight(profile, freq_mhz, tx_antenna_height_m, rx_antenna_height_m)
-            except Exception:
-                pass
+            except Exception as e:
+                app.logger.warning("calculate_ea: enemy terrain lookup failed: %s", e)
+                terrain_warnings.append("Enemy-link terrain data unavailable; used non-terrain path loss.")
 
         jammer_diff_db = jammer_los['diffraction_loss_db'] if jammer_los else 0.0
         enemy_diff_db  = enemy_los['diffraction_loss_db']  if enemy_los  else 0.0
@@ -413,6 +427,7 @@ def calculate_ea():
             'effect': effect_text,
             'jammer_los': jammer_los,
             'enemy_los': enemy_los,
+            'terrain_warnings': terrain_warnings,
         })
     except Exception as e:
         app.logger.error("calculate_ea error: %s", e)
