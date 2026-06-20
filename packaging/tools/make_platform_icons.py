@@ -10,7 +10,7 @@ from PIL import Image
 from make_windows_icon import _render
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PNG_OUT = ROOT / 'assets' / 'specterew.png'
 ICNS_OUT = ROOT / 'assets' / 'specterew.icns'
 

@@ -1,4 +1,18 @@
 -----
+20JUN26 Codex
+
+- Added native PyInstaller release builds for Windows x86_64, Linux x86_64, macOS Intel, and macOS Apple Silicon
+- Added GitHub Actions validation for pushes and pull requests; version tags matching `v*` now build and publish all platform artifacts to a GitHub Release
+- Added Linux terminal and desktop packages, a Finder-launchable macOS app, platform-specific icons, and packaged HTTP smoke tests
+- Added `--local`, `--lan`, `--host`, `--port`, and `--open-browser` startup options while keeping desktop launchers local-only by default
+- Kept packaged templates and static assets inside the application bundle while storing runtime configuration and local geospatial data outside PyInstaller's temporary extraction directory
+- Reorganized build scripts, PyInstaller specifications, desktop entry points, and packaging utilities under the `packaging/` directory
+- Replaced the BSD 2-Clause license with the GNU Affero General Public License version 3 for new releases; earlier BSD-licensed releases retain their original terms
+- Added copyright attribution for John E. Plaziak, visible license/source/no-warranty notices, a public `/license` endpoint, and the AGPL text inside packaged executables
+- Updated the executive summary and technical reference to document the local-first DTED pipeline, adaptive sampling, current dominant-obstruction diffraction method, model boundaries, authentication, and cross-platform deployment
+- Expanded runtime and packaging tests, including verification that packaged applications start successfully and serve the bundled AGPL license
+
+-----
 27MAY26 Codex
 
 - Fixed an EA terrain issue where smooth hills could be counted many times, causing unrealistically high jamming results

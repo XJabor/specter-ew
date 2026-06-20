@@ -1,21 +1,39 @@
 # Executive Summary: Specter-EW Planning Tool
 
 ## BLUF (Bottom Line Up Front)
-**Specter-EW** is a standalone, browser-based tactical Electronic Warfare (EW) planning tool. It allows armored and ground maneuver elements to rapidly visualize friendly jamming effects (Electronic Attack) and enemy detection capabilities (Electronic Support) over real-world terrain. It replaces guesswork with mathematically rigorous, terrain-aware RF modeling.
+
+**Specter-EW** is a browser-based tactical Electronic Warfare planning aid for estimating jamming effectiveness, sensing exposure, and RF coverage over real terrain. It combines link-budget calculations, frequency-aware propagation models, antenna patterns, and elevation profiles to give operators a more useful estimate than uniform circles or free-space assumptions alone.
+
+Specter-EW is a decision-support tool, not a substitute for field measurements, spectrum analysis, or authoritative mission-planning systems.
 
 ## The Problem
-Historically, tactical EW planning has relied on flat-earth assumptions or generic "circles on a map." This leads to severe operational blind spots: assuming a friendly jammer is suppressing an enemy when a mountain actually blocks the signal, or assuming friendly comms are safe from enemy detection because VHF ground-wave propagation was not accounted for.
 
-## The Specter Solution
-Specter-EW solves this by integrating a high-fidelity physics engine with real-time satellite elevation data (SRTM 30m). When an operator places a node on the map, Specter calculates how the electromagnetic wave interacts with the specific hills, valleys, and clutter of that exact environment.
+Tactical EW planning is often reduced to generic coverage circles or flat-terrain calculations. Those shortcuts can hide important effects: terrain may block a jammer, low-frequency signals may propagate farther than expected, directional antennas may expose only part of an area, and friendly emitters may be detectable from unexpected bearings.
 
-### Operational Impact
-* **Electronic Support (ES) - Threat Detection:** Operators can drop an enemy receiver on the map to instantly draw its "Detection Ring." Specter shapes this polygon around the terrain, showing exactly where blue forces can operate without being detected. 
-* **Electronic Attack (EA) - Jamming Footprints:** Commanders can visualize exactly what area a friendly jammer is suppressing. The "Jammer Footprint" ensures the target is neutralized while visually confirming that adjacent friendly units won't suffer fratricide from signal bleed-over.
-* **Overlap Analysis:** Identifies geographic "kill boxes" where multiple enemy sensors have overlapping coverage, allowing commanders to route forces through electromagnetic dead space.
+## The Specter Approach
+
+Specter-EW places friendly, enemy, reference, and Electronic Protection nodes on an interactive map. Its backend calculates received power, jammer-to-signal margin, sensing distance, terrain obstruction, and geographic overlap. Elevation lookup is local-first: DTED Level 2 data is used when available, with SRTM 30 m data from OpenTopoData used for uncovered points.
+
+### Operational Views
+
+- **Electronic Attack (EA):** Calculates the received enemy signal, received jammer signal, and resulting J/S margin at a target receiver. User-configurable thresholds classify the estimated result as No Effect, Warbling/Contested, or Complete Jamming.
+- **Electronic Support (ES):** Produces terrain-shaped sensing polygons that estimate where an emitter may be detected by a configured sensor.
+- **Jammer Footprints:** Displays a terrain- and bearing-aware received-power boundary for a jammer. This is a coverage estimate referenced to the configured sensitivity threshold; it is not, by itself, proof of successful jamming.
+- **Electronic Protection (EP):** Models multiple friendly subsystems at a shared node and displays separate terrain-aware exposure rings, helping planners assess where friendly emissions may be observed.
+- **Overlap Analysis:** Highlights areas covered by multiple active sensing polygons, identifying jointly observable or higher-exposure areas.
 
 ### Key Capabilities
-* **Terrain & Elevation Aware:** Automatically pulls elevation data to calculate Line-of-Sight (LOS) and mountain diffraction.
-* **Tactical Integration:** Supports MGRS coordinates natively for rapid node placement and exportable KML files for integration into ATAK or Google Earth. 
-* **Platform Agnostic:** Handles dismounted VHF radios, mast-mounted UHF sites, and SHF drone/Wi-Fi links with specifically calibrated physics models for each. Terrain type (open, light forest, dense forest) applies calibrated signal penalties across all frequency bands — a 25 W radio in dense pine forest produces a materially different detection ring than the same radio in an open field.
-* **Rapid Deployment:** Runs locally on a tactical LAN or hosted environment, requiring minimal computing overhead.
+
+- **Hybrid propagation engine:** Routes VHF/UHF, elevated UHF, upper-UHF low-antenna, and SHF links through different calibrated model branches.
+- **Terrain-aware analysis:** Uses antenna height, 4/3-Earth geometric LOS, dominant-obstruction knife-edge loss, clutter corrections, and SHF canopy penalties.
+- **Directional antennas:** Applies bearing-dependent gain using boresight azimuth and half-power beamwidth.
+- **Tactical coordinates and export:** Supports MGRS placement and KML export for use in Google Earth, ATAK, and compatible GIS tools.
+- **Local geospatial data:** Indexes DTED Level 2 elevation and GeoTIFF imagery, reducing reliance on external elevation and imagery services where local coverage exists.
+- **Flexible deployment:** Runs from source or packaged Windows, Linux, and macOS builds; supports local-only, trusted-LAN, and hosted HTTPS deployments.
+- **Authentication choices:** Supports Clerk JWT authentication for hosted deployments and session-based credentials for LAN deployments. Loopback access is intentionally allowed without authentication.
+
+## Operational Limitations
+
+Propagation results are estimates derived from empirical and theoretical models. Accuracy depends on input power, antenna characteristics, terrain classification, elevation quality, atmospheric conditions, vegetation, structures, and receiver behavior. Local data does not make the entire interface fully offline: external JavaScript libraries and online base-map layers may still require network access unless separately cached or replaced.
+
+Copyright (C) 2026 John E. Plaziak. Licensed under the GNU Affero General Public License version 3; see the repository `LICENSE` file.

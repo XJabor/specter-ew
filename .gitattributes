@@ -8,10 +8,14 @@
 *.yml      text eol=lf
 *.yaml     text eol=lf
 *.desktop  text eol=lf
+*.html     text eol=lf
+*.css      text eol=lf
+*.js       text eol=lf
 *.md       text eol=lf
 *.txt      text eol=lf
 .gitignore text eol=lf
 .python-version text eol=lf
+LICENSE text eol=lf
 
 *.ico  binary
 *.icns binary

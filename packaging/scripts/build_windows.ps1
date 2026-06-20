@@ -4,12 +4,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $VenvDir = Join-Path $RepoRoot ".venv-build"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $TemplatesDir = Join-Path $RepoRoot "templates"
 $StaticDir = Join-Path $RepoRoot "static"
 $IconPath = Join-Path $RepoRoot "assets\specterew.ico"
+$LicensePath = Join-Path $RepoRoot "LICENSE"
 
 Set-Location $RepoRoot
 
@@ -85,6 +86,7 @@ $CommonPyInstallerArgs = @(
     "--name", "SpecterEW",
     "--add-data", "${TemplatesDir};templates",
     "--add-data", "${StaticDir};static",
+    "--add-data", "${LicensePath};.",
     "--icon", $IconPath,
     "--collect-all", "rasterio",
     "--collect-all", "shapely",
@@ -98,15 +100,15 @@ $OnedirExe = Join-Path $RepoRoot "dist\SpecterEW\SpecterEW.exe"
 if (-not (Test-Path $OnedirExe)) {
     throw "Onedir validation build did not produce $OnedirExe"
 }
-Invoke-Native $VenvPython @("tools\smoke_test_executable.py", $OnedirExe)
+Invoke-Native $VenvPython @("packaging\tools\smoke_test_executable.py", $OnedirExe)
 
-Invoke-Native $VenvPython @("-m", "PyInstaller", "--noconfirm", "--clean", "SpecterEW.spec")
+Invoke-Native $VenvPython @("-m", "PyInstaller", "--noconfirm", "--clean", "packaging\pyinstaller\SpecterEW.spec")
 
 $OnefileExe = Join-Path $RepoRoot "dist\SpecterEW.exe"
 if (-not (Test-Path $OnefileExe)) {
     throw "Onefile build did not produce $OnefileExe"
 }
-Invoke-Native $VenvPython @("tools\smoke_test_executable.py", $OnefileExe)
+Invoke-Native $VenvPython @("packaging\tools\smoke_test_executable.py", $OnefileExe)
 
 Write-Host ""
 Write-Host "Built validation bundle: $OnedirExe"

@@ -12,7 +12,7 @@ http://localhost:5000
 Use Windows with Python 3.12 installed through the Python launcher.
 
 ```powershell
-.\build_windows.ps1
+.\packaging\scripts\build_windows.ps1
 ```
 
 The script:
@@ -24,12 +24,12 @@ The script:
 5. Builds the final one-file exe at `dist\SpecterEW.exe`.
 
 Both builds embed the project icon from `assets\specterew.ico`. To regenerate
-it, run `python tools\make_windows_icon.py`.
+it, run `python packaging\tools\make_windows_icon.py`.
 
 If dependencies are already installed in `.venv-build`, rerun with:
 
 ```powershell
-.\build_windows.ps1 -SkipInstall
+.\packaging\scripts\build_windows.ps1 -SkipInstall
 ```
 
 ## Runtime data

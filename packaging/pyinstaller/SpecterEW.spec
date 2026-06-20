@@ -6,11 +6,12 @@ import sys
 from PyInstaller.utils.hooks import collect_all
 
 
-ROOT = Path(SPECPATH).resolve()
+ROOT = Path(SPECPATH).resolve().parents[1]
 
 datas = [
     (str(ROOT / 'templates'), 'templates'),
     (str(ROOT / 'static'), 'static'),
+    (str(ROOT / 'LICENSE'), '.'),
 ]
 binaries = []
 hiddenimports = []
@@ -42,8 +43,8 @@ for package in (
 
 
 a = Analysis(
-    ['app.py'],
-    pathex=[],
+    [str(ROOT / 'app.py')],
+    pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

@@ -861,3 +861,20 @@ body.ep-mode .ep-only { display: block; }
     text-align: center;
     margin-bottom: 0;
 }
+
+#legal-notice {
+    margin-top: 8px;
+    color: #8a9a8a;
+    font-size: 9px;
+    line-height: 1.35;
+    text-align: center;
+}
+
+#legal-notice a {
+    color: #9fbf9f;
+    text-decoration: underline;
+}
+
+#legal-notice a:hover {
+    color: #ffffff;
+}

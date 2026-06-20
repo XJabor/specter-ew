@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 VENV_DIR="${VENV_DIR:-$ROOT/.venv-build}"
@@ -21,7 +21,7 @@ if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
 fi
 
 "$PYTHON" -m unittest
-"$PYTHON" tools/make_platform_icons.py
+"$PYTHON" packaging/tools/make_platform_icons.py
 rm -rf build/validation-dist build/validation-work dist release
 mkdir -p release
 
@@ -33,6 +33,7 @@ COMMON_ARGS=(
     --name SpecterEW
     --add-data "$ROOT/templates:templates"
     --add-data "$ROOT/static:static"
+    --add-data "$ROOT/LICENSE:."
     --icon "$ROOT/assets/specterew.icns"
     --collect-all rasterio
     --collect-all shapely
@@ -41,17 +42,17 @@ COMMON_ARGS=(
 )
 "$PYTHON" -m PyInstaller "${COMMON_ARGS[@]}" --onedir app.py
 VALIDATION_EXE="$ROOT/build/validation-dist/SpecterEW/SpecterEW"
-"$PYTHON" tools/smoke_test_executable.py "$VALIDATION_EXE"
+"$PYTHON" packaging/tools/smoke_test_executable.py "$VALIDATION_EXE"
 
-"$PYTHON" -m PyInstaller --noconfirm --clean SpecterEW.spec
+"$PYTHON" -m PyInstaller --noconfirm --clean packaging/pyinstaller/SpecterEW.spec
 FINAL_EXE="$ROOT/dist/SpecterEW"
-"$PYTHON" tools/smoke_test_executable.py "$FINAL_EXE"
+"$PYTHON" packaging/tools/smoke_test_executable.py "$FINAL_EXE"
 
 # Build the Finder-launchable app separately from the terminal executable.
 "$PYTHON" -m PyInstaller --noconfirm --clean --distpath dist/app \
-    --workpath build/app-work SpecterEWApp.spec
+    --workpath build/app-work packaging/pyinstaller/SpecterEWApp.spec
 APP_BUNDLE="$ROOT/dist/app/SpecterEW.app"
-"$PYTHON" tools/smoke_test_executable.py "$APP_BUNDLE/Contents/MacOS/SpecterEW"
+"$PYTHON" packaging/tools/smoke_test_executable.py "$APP_BUNDLE/Contents/MacOS/SpecterEW"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
