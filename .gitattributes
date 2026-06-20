@@ -1,0 +1,18 @@
+# Keep cross-platform source files deterministic on Windows, Linux, and macOS.
+* text=auto
+
+*.py       text eol=lf
+*.spec     text eol=lf
+*.sh       text eol=lf
+*.ps1      text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.desktop  text eol=lf
+*.md       text eol=lf
+*.txt      text eol=lf
+.gitignore text eol=lf
+.python-version text eol=lf
+
+*.ico  binary
+*.icns binary
+*.png  binary

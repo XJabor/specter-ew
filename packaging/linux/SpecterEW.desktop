@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Specter EW
+Comment=Tactical Electronic Warfare planning tool
+Exec="@APP_DIR@/SpecterEW" --local --open-browser
+Icon=@APP_DIR@/specterew.png
+Terminal=true
+Categories=Utility;Science;
+StartupNotify=false

@@ -49,6 +49,11 @@ python3 app.py
 
 Open `http://localhost:5000` in your browser.
 
+Native Windows, Linux, and macOS executable builds are documented in
+[`docs/cross_platform_executables.md`](docs/cross_platform_executables.md) and
+[`docs/windows_exe.md`](docs/windows_exe.md). Tagged `v*` releases are built
+natively for all supported platforms by GitHub Actions.
+
 ## Usage
 
 ### EA/ES Mode (default)
