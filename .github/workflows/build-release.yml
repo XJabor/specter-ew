@@ -1,0 +1,99 @@
+name: Build cross-platform executables
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Build and smoke test
+        run: bash build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: release/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: x86_64
+          - runner: macos-14-arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Confirm native architecture
+        run: test "$(uname -m)" = "${{ matrix.arch }}"
+      - name: Build and smoke test
+        run: bash build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: release/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Build and smoke test
+        shell: powershell
+        run: .\build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/SpecterEW.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - linux
+      - macos
+      - windows
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: List release files
+        run: find release -maxdepth 1 -type f -printf '%f\n' | sort
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -2,7 +2,11 @@ import base64
 import json
 import logging
 import os
+import platform
 import secrets
+import sys
+import threading
+import webbrowser
 from pathlib import Path
 from core.link_budget import watts_to_dbm, calculate_eirp, apply_hopping_tax
 import jwt
@@ -21,7 +25,42 @@ from shapely.geometry import Polygon, MultiPolygon
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s: %(message)s')
 
-app = Flask(__name__)
+def _is_frozen():
+    return getattr(sys, 'frozen', False)
+
+
+def _bundled_root():
+    """Return the read-only app root, including PyInstaller's extraction dir."""
+    if _is_frozen() and hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent
+
+
+def _runtime_root():
+    """Return the writable root for runtime config and external local data."""
+    if _is_frozen():
+        executable = Path(sys.executable).resolve()
+        # A macOS app executable lives under SpecterEW.app/Contents/MacOS. Keep
+        # external data beside the .app, not hidden inside its signed bundle.
+        if (
+            sys.platform == 'darwin'
+            and executable.parent.name == 'MacOS'
+            and executable.parent.parent.name == 'Contents'
+            and executable.parent.parent.parent.suffix == '.app'
+        ):
+            return executable.parent.parent.parent.parent
+        return executable.parent
+    return Path(__file__).resolve().parent
+
+
+BUNDLED_ROOT = _bundled_root()
+RUNTIME_ROOT = _runtime_root()
+
+app = Flask(
+    __name__,
+    template_folder=str(BUNDLED_ROOT / 'templates'),
+    static_folder=str(BUNDLED_ROOT / 'static'),
+)
 # Tell Flask it is behind one proxy
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -779,7 +818,7 @@ def set_data_dir():
         return jsonify({'status': 'error', 'message': str(exc)})
     _local_data.LOCAL_DATA_DIR = p
     try:
-        Path('specter_config.json').write_text(
+        (RUNTIME_ROOT / 'specter_config.json').write_text(
             json.dumps({'local_data_dir': str(p)}, indent=2)
         )
     except Exception as exc:
@@ -796,7 +835,8 @@ def _init_data_dir():
         _local_data.LOCAL_DATA_DIR = Path(env_path)
         _local_data._locked = True
     else:
-        cfg = Path('specter_config.json')
+        cfg = RUNTIME_ROOT / 'specter_config.json'
+        _local_data.LOCAL_DATA_DIR = RUNTIME_ROOT / 'local_data'
         if cfg.exists():
             try:
                 saved = json.loads(cfg.read_text()).get('local_data_dir', '')
@@ -810,6 +850,102 @@ def _init_data_dir():
 
 _init_data_dir()
 
+def _argv_value(flag):
+    try:
+        index = sys.argv.index(flag)
+    except ValueError:
+        return None
+    if index + 1 >= len(sys.argv):
+        return None
+    return sys.argv[index + 1]
+
+
+def _normalize_host_choice(value):
+    value = (value or '').strip().lower()
+    if value in ('local', 'localhost', 'loopback', '127.0.0.1'):
+        return '127.0.0.1'
+    if value in ('lan', 'network', 'all', '0.0.0.0'):
+        return '0.0.0.0'
+    return value or None
+
+
+def _prompt_bind_host():
+    print("")
+    print("Specter EW startup")
+    print("1) Local only - this computer only (recommended)")
+    print("2) LAN-wide   - allow other devices on this network")
+    print("")
+    try:
+        choice = input("Choose 1 or 2 [1]: ").strip()
+    except (EOFError, OSError):
+        choice = ''
+    return '0.0.0.0' if choice == '2' else '127.0.0.1'
+
+
+def _resolve_bind_options(force_host=None):
+    host = _normalize_host_choice(force_host)
+    if host is not None:
+        pass
+    elif '--local' in sys.argv:
+        host = '127.0.0.1'
+    elif '--lan' in sys.argv:
+        host = '0.0.0.0'
+    else:
+        host = _normalize_host_choice(_argv_value('--host'))
+        if host is None:
+            host = _normalize_host_choice(os.environ.get('SPECTER_BIND_HOST'))
+
+    if host is None:
+        host = _prompt_bind_host() if _is_frozen() else '0.0.0.0'
+
+    raw_port = _argv_value('--port') or os.environ.get('SPECTER_PORT') or '5000'
+    try:
+        port = int(raw_port)
+    except ValueError:
+        raise RuntimeError(f"Invalid SPECTER_PORT/--port value: {raw_port!r}")
+    if not 1 <= port <= 65535:
+        raise RuntimeError(f"SPECTER_PORT/--port must be between 1 and 65535: {port}")
+
+    return host, port
+
+
+def _print_startup_access(host, port):
+    url_host = 'localhost' if host in ('127.0.0.1', '::1') else '<this-computer-ip>'
+    print("")
+    print(f"Specter EW listening on {host}:{port}")
+    print(f"Open http://{url_host}:{port} in your browser.")
+    if host == '0.0.0.0':
+        print("")
+        system_name = platform.system() or 'operating system'
+        print(f"LAN-wide mode is enabled. Your {system_name} firewall may ask for permission.")
+        if not os.environ.get('APP_CREDENTIALS') and not os.environ.get('CLERK_PUBLISHABLE_KEY'):
+            print("Warning: no authentication is configured; trusted networks only.")
+    print("")
+
+
+def _open_browser_later(port, delay_seconds=1.0):
+    """Open the local UI after Flask has had a moment to begin listening."""
+    if os.environ.get('SPECTER_DISABLE_BROWSER', '').lower() in ('1', 'true', 'yes'):
+        return None
+
+    timer = threading.Timer(
+        delay_seconds,
+        webbrowser.open,
+        args=(f'http://localhost:{port}',),
+    )
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def main(force_host=None, default_open_browser=False):
+    """Run the local server for source, terminal, and desktop entry points."""
+    bind_host, bind_port = _resolve_bind_options(force_host=force_host)
+    _print_startup_access(bind_host, bind_port)
+    if default_open_browser or '--open-browser' in sys.argv:
+        _open_browser_later(bind_port)
+    app.run(debug=False, use_reloader=False, host=bind_host, port=bind_port)
+
+
 if __name__ == '__main__':
-    # host='0.0.0.0' allows you to access this from a tablet on the same Wi-Fi
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    main()
