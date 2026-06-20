@@ -170,3 +170,19 @@ Requests from `127.0.0.1` or `::1` always bypass authentication — both Clerk a
 
 ### Disclaimer
 This application was built with AI assistance. The propagation models (Egli, COST-231 Hata, Two-Ray Ground Reflection, FSPL + ITU-R P.833 foliage) are empirical or theoretical approximations. Use results at your own risk.
+
+## License
+
+Copyright &copy; 2026 John E. Plaziak.
+
+Specter EW is free software: you may redistribute it and/or modify it under the
+terms of the [GNU Affero General Public License version 3](LICENSE), as published
+by the Free Software Foundation. Modified versions made available over a network
+must offer their corresponding source code as required by the AGPL.
+
+This software is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for details.
+
+Versions released before this license change remain available under the license
+included with those releases.

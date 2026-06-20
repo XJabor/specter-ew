@@ -23,7 +23,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - name: Build and smoke test
-        run: bash build_linux.sh
+        run: bash packaging/scripts/build_linux.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
@@ -50,7 +50,7 @@ jobs:
       - name: Confirm native architecture
         run: test "$(uname -m)" = "${{ matrix.arch }}"
       - name: Build and smoke test
-        run: bash build_macos.sh
+        run: bash packaging/scripts/build_macos.sh
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
@@ -68,7 +68,7 @@ jobs:
           cache: pip
       - name: Build and smoke test
         shell: powershell
-        run: .\build_windows.ps1
+        run: .\packaging\scripts\build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64

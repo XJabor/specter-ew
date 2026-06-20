@@ -38,13 +38,13 @@ templates, static files, or native dependencies cannot load.
 Install Python 3.12 and its venv support, then run:
 
 ```bash
-bash build_linux.sh
+bash packaging/scripts/build_linux.sh
 ```
 
 Artifacts are written to `release/`. To reuse an existing `.venv-build`:
 
 ```bash
-SKIP_INSTALL=1 bash build_linux.sh
+SKIP_INSTALL=1 bash packaging/scripts/build_linux.sh
 ```
 
 For the desktop archive, extract all files into the same directory and run
@@ -57,7 +57,7 @@ the server. Rerun the installer after moving the extracted directory.
 Install Python 3.12 on the target Mac, then run:
 
 ```bash
-bash build_macos.sh
+bash packaging/scripts/build_macos.sh
 ```
 
 The script names artifacts from `uname -m`, producing either `x86_64` or

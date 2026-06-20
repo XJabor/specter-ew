@@ -5,10 +5,11 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 
-ROOT = Path(SPECPATH).resolve()
+ROOT = Path(SPECPATH).resolve().parents[1]
 datas = [
     (str(ROOT / 'templates'), 'templates'),
     (str(ROOT / 'static'), 'static'),
+    (str(ROOT / 'LICENSE'), '.'),
 ]
 binaries = []
 hiddenimports = []
@@ -28,8 +29,8 @@ for package in ('rasterio', 'pyproj', 'shapely', 'PIL', 'certifi'):
 
 
 a = Analysis(
-    ['desktop_entry.py'],
-    pathex=[],
+    [str(ROOT / 'packaging' / 'entrypoints' / 'desktop_entry.py')],
+    pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

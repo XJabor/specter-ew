@@ -68,6 +68,13 @@ class RuntimeOptionsTests(unittest.TestCase):
         ), patch.object(sys, 'platform', 'darwin'):
             self.assertEqual(app._runtime_root(), fake_executable.resolve().parents[3])
 
+    def test_license_endpoint_serves_agpl(self):
+        response = app.app.test_client().get(
+            '/license', environ_base={'REMOTE_ADDR': '127.0.0.1'}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'GNU AFFERO GENERAL PUBLIC LICENSE', response.data)
+
 
 if __name__ == '__main__':
     unittest.main()

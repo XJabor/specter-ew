@@ -79,6 +79,10 @@ def main() -> int:
                 with urllib.request.urlopen(url, timeout=2) as response:
                     body = response.read()
                     if response.status == 200 and body:
+                        with urllib.request.urlopen(f'{url}license', timeout=2) as license_response:
+                            license_body = license_response.read()
+                        if b'GNU AFFERO GENERAL PUBLIC LICENSE' not in license_body:
+                            raise RuntimeError('packaged application did not serve the AGPL license')
                         print(f'Packaged application responded successfully at {url}')
                         return 0
             except (urllib.error.URLError, TimeoutError):

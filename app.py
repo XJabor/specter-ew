@@ -61,6 +61,15 @@ app = Flask(
     template_folder=str(BUNDLED_ROOT / 'templates'),
     static_folder=str(BUNDLED_ROOT / 'static'),
 )
+
+
+@app.get('/license')
+def license_text():
+    """Serve the bundled license used by source and packaged builds."""
+    return Response(
+        (BUNDLED_ROOT / 'LICENSE').read_text(encoding='utf-8'),
+        mimetype='text/plain',
+    )
 # Tell Flask it is behind one proxy
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -205,7 +214,7 @@ def check_auth():
         return
 
     # 2. Always allow access to the login page and static assets (CSS/JS/images)
-    if request.endpoint in ('login', 'static'):
+    if request.endpoint in ('login', 'static', 'license_text'):
         return
 
     # 3a. Clerk auth — stateless JWT verification via __session cookie

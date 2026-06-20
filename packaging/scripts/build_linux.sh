@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 VENV_DIR="${VENV_DIR:-$ROOT/.venv-build}"
@@ -21,7 +21,7 @@ if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
 fi
 
 "$PYTHON" -m unittest
-"$PYTHON" tools/make_platform_icons.py
+"$PYTHON" packaging/tools/make_platform_icons.py
 rm -rf build/validation-dist build/validation-work dist release
 mkdir -p release
 
@@ -33,6 +33,7 @@ COMMON_ARGS=(
     --name SpecterEW
     --add-data "$ROOT/templates:templates"
     --add-data "$ROOT/static:static"
+    --add-data "$ROOT/LICENSE:."
     --collect-all rasterio
     --collect-all shapely
     --collect-all PIL
@@ -40,11 +41,11 @@ COMMON_ARGS=(
 )
 "$PYTHON" -m PyInstaller "${COMMON_ARGS[@]}" --onedir app.py
 VALIDATION_EXE="$ROOT/build/validation-dist/SpecterEW/SpecterEW"
-"$PYTHON" tools/smoke_test_executable.py "$VALIDATION_EXE"
+"$PYTHON" packaging/tools/smoke_test_executable.py "$VALIDATION_EXE"
 
-"$PYTHON" -m PyInstaller --noconfirm --clean SpecterEW.spec
+"$PYTHON" -m PyInstaller --noconfirm --clean packaging/pyinstaller/SpecterEW.spec
 FINAL_EXE="$ROOT/dist/SpecterEW"
-"$PYTHON" tools/smoke_test_executable.py "$FINAL_EXE"
+"$PYTHON" packaging/tools/smoke_test_executable.py "$FINAL_EXE"
 
 TERMINAL_DIR="$ROOT/build/package-linux-terminal"
 DESKTOP_DIR="$ROOT/build/package-linux-desktop"
