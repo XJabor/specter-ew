@@ -1,4 +1,20 @@
 -----
+22JUN26 Codex
+
+- Reworked the login page with a dark, high-contrast theme using the new blue, Spectrum Red, Aconite Violet, and Orange Yellow palette
+- Made form labels, input text, placeholders, footer copy, and links easier to read against the dark background
+- Added clearer keyboard focus, hover, active, and error states for both the local login form and hosted Clerk sign-in
+- Softened the scanlines, vignette, glow, and background ghost so decorative effects no longer compete with the page content
+- Added reduced-motion support for users who prefer a steadier interface
+- Verified both login variants render correctly and confirmed all existing automated tests still pass
+- Reworded the main interface and login notices to clearly identify the copyright owner and GNU AGPL version 3 license
+- Kept direct links to the full license and public source code, along with the no-warranty notice
+- Added information for organizations interested in obtaining a separate commercial license without publishing a fixed price
+- Added dedicated email links for commercial licensing and general inquiries
+- Added automated checks confirming the licensing notices and links appear on both application pages
+
+-----
+-----
 20JUN26 Codex
 
 - Added native PyInstaller release builds for Windows x86_64, Linux x86_64, macOS Intel, and macOS Apple Silicon
