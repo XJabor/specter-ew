@@ -75,6 +75,25 @@ class RuntimeOptionsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'GNU AFFERO GENERAL PUBLIC LICENSE', response.data)
 
+    def test_application_pages_include_agpl_notices(self):
+        client = app.app.test_client()
+        for endpoint in ('/', '/login'):
+            with self.subTest(endpoint=endpoint):
+                response = client.get(
+                    endpoint, environ_base={'REMOTE_ADDR': '127.0.0.1'}
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b'&copy; 2026 John E. Plaziak.', response.data)
+                self.assertIn(
+                    b'Licensed under the GNU Affero General Public License v3.0.',
+                    response.data,
+                )
+                self.assertIn(b'href="/license"', response.data)
+                self.assertIn(
+                    b'href="https://github.com/XJabor/specter-ew"', response.data
+                )
+                self.assertIn(b'No warranty.', response.data)
+
 
 if __name__ == '__main__':
     unittest.main()

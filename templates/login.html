@@ -10,11 +10,24 @@
     <title>SPECTER - Login</title>
 
     <style>
+        :root {
+            --specter-blue: #0d75ff;
+            --specter-red: #f20000;
+            --specter-violet: #9c52f2;
+            --specter-orange: #ffab00;
+            --surface-page: #080b12;
+            --surface-panel: #101725;
+            --surface-input: #0b111d;
+            --text-primary: #f4f7ff;
+            --text-muted: #b8c4d9;
+        }
+
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         body, html {
             height: 100%;
-            background: #080808;
+            background: var(--surface-page);
+            color: var(--text-primary);
             overflow: hidden;
             font-family: 'Courier New', Courier, monospace;
         }
@@ -37,8 +50,8 @@
                 0deg,
                 transparent,
                 transparent 2px,
-                rgba(0, 0, 0, 0.18) 2px,
-                rgba(0, 0, 0, 0.18) 4px
+                rgba(0, 0, 0, 0.10) 2px,
+                rgba(0, 0, 0, 0.10) 4px
             );
             pointer-events: none;
             z-index: 1;
@@ -48,7 +61,7 @@
         .crt-vignette {
             position: fixed;
             inset: 0;
-            background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.75) 100%);
+            background: radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,0.55) 100%);
             pointer-events: none;
             z-index: 2;
         }
@@ -79,33 +92,33 @@
 
         /* ---------- ASCII banner ---------- */
         .ascii-banner {
-            color: #00ff41;
+            color: var(--specter-blue);
             font-size: 9px;
             line-height: 1.65;
             text-align: center;
             white-space: pre;
             letter-spacing: 0;
             margin-bottom: 22px;
-            text-shadow: 0 0 8px #00ff41, 0 0 22px rgba(0,255,65,0.4);
+            text-shadow: 0 0 8px rgba(13,117,255,0.65), 0 0 20px rgba(13,117,255,0.28);
             user-select: none;
         }
 
         @keyframes bannerPulse {
-            0%, 100% { text-shadow: 0 0 8px #00ff41, 0 0 22px rgba(0,255,65,0.4); }
-            50%       { text-shadow: 0 0 14px #00ff41, 0 0 36px rgba(0,255,65,0.6); }
+            0%, 100% { text-shadow: 0 0 8px rgba(13,117,255,0.65), 0 0 20px rgba(13,117,255,0.28); }
+            50%       { text-shadow: 0 0 12px rgba(13,117,255,0.75), 0 0 28px rgba(13,117,255,0.38); }
         }
         .ascii-banner { animation: bannerPulse 3.5s ease-in-out infinite; }
 
         /* ---------- Login box ---------- */
         .login-box {
             position: relative;
-            background: rgba(6, 16, 6, 0.94);
-            border: 2px solid #00ff41;
+            background: rgba(16, 23, 37, 0.96);
+            border: 2px solid var(--specter-blue);
             padding: 28px 30px 24px;
             width: 480px;
             box-shadow:
-                0 0 20px rgba(0,255,65,0.2),
-                inset 0 0 20px rgba(0,255,65,0.03);
+                0 0 18px rgba(13,117,255,0.22),
+                inset 0 0 20px rgba(156,82,242,0.04);
             overflow: hidden;
         }
 
@@ -116,13 +129,32 @@
         }
         /* Hide "Secured by Clerk" badge by its public class name */
         #clerk-signin .cl-badge { display: none !important; }
+        #clerk-signin .cl-formFieldLabel,
+        #clerk-signin .cl-headerTitle,
+        #clerk-signin .cl-identityPreviewText { color: var(--text-primary) !important; }
+        #clerk-signin .cl-headerSubtitle,
+        #clerk-signin .cl-footerActionText { color: var(--text-muted) !important; }
+        #clerk-signin .cl-formFieldInput {
+            background: var(--surface-input) !important;
+            border-color: var(--specter-blue) !important;
+            color: var(--text-primary) !important;
+        }
+        #clerk-signin .cl-formFieldInput:focus {
+            border-color: var(--specter-blue) !important;
+            box-shadow: 0 0 0 2px rgba(13,117,255,0.32) !important;
+        }
+        #clerk-signin .cl-formFieldErrorText {
+            color: var(--text-primary) !important;
+            border-left: 2px solid var(--specter-red);
+            padding-left: 6px;
+        }
 
         /* Inner frame inset */
         .login-box::before {
             content: '';
             position: absolute;
             inset: 4px;
-            border: 1px solid rgba(0,255,65,0.15);
+            border: 1px solid rgba(156,82,242,0.42);
             pointer-events: none;
         }
 
@@ -132,35 +164,37 @@
             width: 12px;
             height: 12px;
         }
-        .corner-tl { top: -2px;    left: -2px;  border-top:    2px solid #ff9900; border-left:   2px solid #ff9900; }
-        .corner-tr { top: -2px;    right: -2px; border-top:    2px solid #ff9900; border-right:  2px solid #ff9900; }
-        .corner-bl { bottom: -2px; left: -2px;  border-bottom: 2px solid #ff9900; border-left:   2px solid #ff9900; }
-        .corner-br { bottom: -2px; right: -2px; border-bottom: 2px solid #ff9900; border-right:  2px solid #ff9900; }
+        .corner-tl { top: -2px;    left: -2px;  border-top:    2px solid var(--specter-orange); border-left:   2px solid var(--specter-orange); }
+        .corner-tr { top: -2px;    right: -2px; border-top:    2px solid var(--specter-orange); border-right:  2px solid var(--specter-orange); }
+        .corner-bl { bottom: -2px; left: -2px;  border-bottom: 2px solid var(--specter-orange); border-left:   2px solid var(--specter-orange); }
+        .corner-br { bottom: -2px; right: -2px; border-bottom: 2px solid var(--specter-orange); border-right:  2px solid var(--specter-orange); }
 
         /* ---------- Box header ---------- */
         .box-title {
-            color: #ff9900;
+            color: var(--specter-orange);
             font-size: 11px;
             letter-spacing: 2px;
             text-align: center;
             margin-bottom: 20px;
-            text-shadow: 0 0 8px rgba(255,153,0,0.6);
+            text-shadow: 0 0 8px rgba(255,171,0,0.35);
         }
 
         /* ---------- Error ---------- */
         .error-msg {
-            color: #ff3333;
+            color: var(--text-primary);
+            background: rgba(242,0,0,0.10);
+            border: 1px solid var(--specter-red);
+            padding: 8px;
             font-size: 10px;
             margin-bottom: 14px;
             text-align: center;
-            text-shadow: 0 0 6px rgba(255,51,51,0.5);
             letter-spacing: 1px;
         }
 
         /* ---------- Form fields ---------- */
         .field-label {
             display: block;
-            color: #00ff41;
+            color: var(--text-primary);
             font-size: 10px;
             letter-spacing: 1px;
             margin-bottom: 14px;
@@ -171,23 +205,24 @@
             width: 100%;
             margin-top: 6px;
             padding: 8px 7px;
-            background: #060e06;
-            border: 1px solid rgba(0,255,65,0.5);
-            color: #00ff41;
+            background: var(--surface-input);
+            border: 1px solid var(--specter-blue);
+            color: var(--text-primary);
             font-family: 'Courier New', Courier, monospace;
             font-size: 11px;
             outline: none;
-            caret-color: #00ff41;
+            caret-color: var(--specter-orange);
             transition: border-color 0.15s, box-shadow 0.15s;
         }
 
         .field-label input::placeholder {
-            color: rgba(0,255,65,0.25);
+            color: var(--text-muted);
+            opacity: 0.78;
         }
 
         .field-label input:focus {
-            border-color: #00ff41;
-            box-shadow: 0 0 8px rgba(0,255,65,0.35);
+            border-color: var(--specter-blue);
+            box-shadow: 0 0 0 2px rgba(13,117,255,0.32), 0 0 10px rgba(13,117,255,0.18);
         }
 
         /* ---------- Submit button ---------- */
@@ -196,28 +231,35 @@
             width: 100%;
             margin-top: 18px;
             padding: 11px 0;
-            background: #001400;
-            border: 2px solid #00ff41;
-            color: #00ff41;
+            background: var(--specter-orange);
+            border: 2px solid var(--specter-orange);
+            color: var(--surface-page);
             font-family: 'Courier New', Courier, monospace;
             font-size: 10px;
             letter-spacing: 3px;
             cursor: pointer;
             text-transform: uppercase;
+            font-weight: 700;
+            transition: box-shadow 0.15s, transform 0.15s;
         }
 
         .submit-btn:hover {
-            background: #002800;
-            box-shadow: 0 0 14px rgba(0,255,65,0.45);
+            box-shadow: 0 0 16px rgba(255,171,0,0.48);
         }
 
         .submit-btn:active {
-            background: #003c00;
+            transform: translateY(1px);
+        }
+
+        .submit-btn:focus-visible,
+        .page-footer a:focus-visible {
+            outline: 2px solid var(--specter-blue);
+            outline-offset: 3px;
         }
 
         /* ---------- Dot divider ---------- */
         .dot-row {
-            color: rgba(0,255,65,0.3);
+            color: var(--specter-violet);
             font-size: 11px;
             text-align: center;
             margin-top: 14px;
@@ -241,9 +283,9 @@
             font-size: clamp(22px, 5.5vh, 68px);
             line-height: 1.05;
             letter-spacing: 0;
-            color: #00ff41;
-            opacity: 0.07;
-            text-shadow: 0 0 30px #00ff41, 0 0 60px rgba(0,255,65,0.3);
+            color: var(--specter-violet);
+            opacity: 0.055;
+            text-shadow: 0 0 28px rgba(156,82,242,0.7), 0 0 55px rgba(156,82,242,0.24);
             pointer-events: none;
             user-select: none;
             white-space: pre;
@@ -258,27 +300,33 @@
         }
 
         @keyframes ghostBreathe {
-            0%, 100% { opacity: 0.065; }
-            50%       { opacity: 0.095; }
+            0%, 100% { opacity: 0.045; }
+            50%       { opacity: 0.07; }
         }
 
         /* ---------- Page footer ---------- */
         .page-footer {
             margin-top: 18px;
             text-align: center;
-            color: rgba(0,255,65,0.75);
+            color: var(--text-muted);
             font-size: 10px;
             letter-spacing: 1px;
             line-height: 1.8;
             max-width: 340px;
         }
         .page-footer a {
-            color: rgba(0,255,65,0.85);
+            color: var(--specter-orange);
             text-decoration: none;
         }
         .page-footer a:hover {
-            color: #00ff41;
-            text-shadow: 0 0 8px rgba(0,255,65,0.5);
+            color: var(--text-primary);
+            text-shadow: 0 0 7px rgba(255,171,0,0.35);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .crt-scanlines,
+            .ascii-banner,
+            .specter-ghost { animation: none; }
         }
 
         /* ---------- Responsive ---------- */
@@ -350,9 +398,10 @@
 
         <div class="page-footer">
             <p>Specter EW is a browser-based tactical Electronic Warfare planning tool designed for EA/ES/EP mission analysis. Place enemy and friendly nodes on a live map to calculate jamming effectiveness (J/S margin), terrain-aware sensing ranges, and jammer coverage footprints. Supports directional antennas, frequency-hopping waveforms, clutter terrain types, and MGRS coordinate display. Built for use on a tactical LAN or hosted instance.</p>
-            <p>&copy; 2026 John E. Plaziak &middot; AGPL-3.0 &middot; No warranty</p>
+            <p>&copy; 2026 John E. Plaziak. Licensed under the GNU Affero General Public License v3.0.</p>
             <a href="{{ url_for('license_text') }}" target="_blank" rel="noopener">[ license ]</a>
             <a href="https://github.com/XJabor/specter-ew" target="_blank" rel="noopener">[ source code ]</a>
+            <span>&middot; No warranty.</span>
         </div>
 
     </div>
@@ -374,12 +423,13 @@
             afterSignInUrl: '/',
             appearance: {
                 variables: {
-                    colorPrimary: '#00ff41',
-                    colorBackground: '#060e06',
-                    colorText: '#00ff41',
-                    colorTextSecondary: 'rgba(0,255,65,0.7)',
-                    colorInputBackground: '#060e06',
-                    colorInputText: '#00ff41',
+                    colorPrimary: '#ffab00',
+                    colorDanger: '#f20000',
+                    colorBackground: '#101725',
+                    colorText: '#f4f7ff',
+                    colorTextSecondary: '#b8c4d9',
+                    colorInputBackground: '#0b111d',
+                    colorInputText: '#f4f7ff',
                     borderRadius: '0px',
                     fontFamily: "'Courier New', Courier, monospace",
                 },
@@ -387,8 +437,9 @@
                     card: 'background:transparent;box-shadow:none;padding:0;width:100%;',
                     cardBox: 'width:100%;',
                     badge: 'display:none;',
-                    formButtonPrimary: 'background:#001400;border:2px solid #00ff41;color:#00ff41;font-family:"Courier New",Courier,monospace;letter-spacing:3px;border-radius:0;text-transform:uppercase;',
-                    footerActionLink: 'color:#00ff41;',
+                    formFieldInput: 'background:#0b111d;border:1px solid #0d75ff;color:#f4f7ff;border-radius:0;',
+                    formButtonPrimary: 'background:#ffab00;border:2px solid #ffab00;color:#080b12;font-family:"Courier New",Courier,monospace;font-weight:700;letter-spacing:3px;border-radius:0;text-transform:uppercase;',
+                    footerActionLink: 'color:#ffab00;',
                 },
             },
         });

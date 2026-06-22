@@ -186,3 +186,14 @@ PARTICULAR PURPOSE. See the GNU Affero General Public License for details.
 
 Versions released before this license change remain available under the license
 included with those releases.
+
+## Commercial Licenses
+
+Organizations that prefer not to operate under AGPL-3.0 may obtain a separate
+commercial license. For pricing and licensing inquiries, contact
+[licensing@specter-ew.com](mailto:licensing@specter-ew.com).
+
+## Contact
+
+For general inquiries, contact
+[contact@specter-ew.com](mailto:contact@specter-ew.com).
