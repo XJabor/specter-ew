@@ -15,13 +15,22 @@ A tactical Electronic Warfare planning tool for EA/ES mission analysis. Runs loc
 - **Configurable capture effect thresholds** — the J/S margin boundaries for No Effect, Warbling, and Complete Jamming are adjustable in the sidebar to match the target receiver type (analog vs. digital); link colors and workbench row colors update instantly when thresholds change
 - **Range sanity warning** — a warning appears in the workbench when any jamming link or detection ring exceeds 50 km, flagging that Earth curvature is not modeled at those ranges
 - **Multi-band propagation routing** — terrain type (free space, rural, light forest, dense forest) applies calibrated corrections across every frequency band: Egli empirical for VHF/UHF ground forces (flat penalty of +8 dB light / +20 dB dense vs. rural); COST-231 Hata for elevated UHF stations; Two-Ray Ground Reflection for confirmed LOS at UHF; and an ITU-R P.833 foliage/clutter model for SHF (>2 GHz) drone and ISM-band links (2.0 / 5.0 dB/GHz·km for light/dense terrain, plus a near-ground canopy penalty when antennas are below 5 m AGL). SHF sensing distance is capped at the geometric radio horizon; VHF/UHF Egli propagates at 40 dB/decade with no artificial ceiling. SHF NLOS paths apply the Deygout blockage penalty, correctly treating terrain as an opaque barrier
-- **Frequency-hopping tax** — applies a configurable jamming penalty for frequency-hopping waveforms
+- **Frequency-hopping tax** — applies a configurable, node-attached jamming penalty for frequency-hopping waveforms
 - **Per-node naming and MGRS labels** — nodes can be renamed; permanent MGRS grid labels and elevation readouts are displayed above each marker on the map; all icon types have an inline MGRS input field in their popup — type a grid string and press Enter (or Go) to jump the icon to that location
 - **Marker icons** — a third icon type (black) can be placed as a reference point; shows a permanent MGRS label, supports rename and move-to-MGRS, and has no RF or link features
-- **EP (Electronic Protection) mode** — a separate workbench mode for friendly force analysis. Place EP nodes on the map, add named sub-systems to each node (each with its own frequency, TX power, and gain), then click Calculate to generate terrain-aware detection rings for every system. Rings are color-coded per system from a fixed palette. Universal parameters (terrain type, enemy RX sensitivity) live in the sidebar. Switch between EA and EP modes with the EP button in the workbench header; all node types coexist when switching
-- **Workbench** — place red (enemy), blue (friendly), and black (marker) nodes, link them individually or all at once, rename them, and remove links via the ✕ buttons in the link status table; click any row to highlight the corresponding link on the map
+- **EP (Electronic Protection) mode** — a separate workbench mode for friendly force analysis. Place EP nodes on the map, add named sub-systems manually or from Library templates, then click Calculate to generate terrain-aware detection rings for every system. Rings are color-coded per system from a fixed palette. Universal parameters (terrain type, enemy RX sensitivity) live in the sidebar. Switch between EA and EP modes with the EP button in the workbench header; all node types coexist when switching
+- **Workbench** — place red (enemy), blue (friendly), and black (marker) nodes, manage Ops/Library/Builder/Scenario tabs, link enemy radios by matching frequency, rename nodes, and remove links via the X buttons in the link status table; click any row to highlight the corresponding link on the map
 - **Node overlap analysis** — select two or more active detection rings to compute and highlight their common coverage area in yellow, with MGRS coordinates at each corner vertex
+- **Scenario save/load** — save the current planning state to a portable `.specter.json` file and load it later. Scenario files include nodes, links, EP systems, RF settings, active overlay intent, and map view. Autosave recovery is stored only in the current browser/device
 - **KML export** — exports the current map state to a `.kml` file from the Workbench. Includes enemy and friendly node placemarks, enemy comms links, jamming links (colored by J/S margin), ES detection ring polygons, and overlap zones. A second export option includes midpoint distance labels on all links and detection range labels on each ring, for use in Google Earth, ATAK, or any KML-compatible tool
+
+### Equipment Library and Node Equipment
+
+Equipment is attached to each red or blue node. Placed nodes store their own frequency, power, sensitivity, gain, antenna type, beamwidth, antenna height, and frequency-hop settings. Selecting a node loads that node's equipment into the left sidebar, and edits update the selected node.
+
+The Workbench tabs are **Ops**, **Library**, **Builder**, and **Scenario**. Library templates can be placed as Enemy or Friendly nodes. Builder creates custom radio, receiver, or jammer node templates, which persist in browser `localStorage`, can be imported/exported as JSON packs, and are embedded into saved scenarios for portability.
+
+Built-in Library templates are sourced civilian/commercial radios only. The app does not ship generic device templates, military radio templates, or jammer presets. User-created templates may include jammer assets. Radio frequency is editable after placement; receiver and jammer frequency fields are currently shown as locked reference/target context to avoid implying frequency-mismatch modeling that is not yet implemented.
 
 ## Requirements
 
@@ -59,7 +68,7 @@ natively for all supported platforms by GitHub Actions.
 ### EA/ES Mode (default)
 
 1. Select **Enemy Node**, **Friendly Node**, or **Marker** and click the map to place them
-2. Link enemy nodes individually or select **Link All Enemy Comms** in the Workbench
+2. Link enemy nodes individually or select **Link Enemy Comms by Frequency** in the Workbench to auto-link same-frequency enemy radio nets
 3. Left-click an enemy node and select **Show Detection Ring** if desired
 4. Left-click a friendly node and select **Show Jammer Footprint** to visualize its coverage area (optional)
 5. Left-click a friendly node, select **Link to Target**, then click the enemy node to target
@@ -70,13 +79,19 @@ Additional controls available from any node popup:
 - **Antenna** — switch between Omni and Directional; if Directional, enter the boresight azimuth (° True North) and beamwidth (° HPBW) *(red and blue nodes only)*
 - **Height AGL** — set the antenna height above ground level in meters (affects LOS/diffraction only) *(red and blue nodes only)*
 
-Adjust platform parameters in the left sidebar and all links recalculate instantly.
+Select a red or blue node to edit its node-attached equipment in the left sidebar. Links, rings, and footprints recalculate from the selected node values rather than a hidden global radio profile.
+
+### Scenario Files
+
+Use **Save Scenario** in the Workbench to download the current planning state as a `.specter.json` file. Use **Load Scenario** to restore a saved file, or **Save Copy** to export another copy without clearing the unsaved-change indicator. Scenario files include node-attached equipment configs and custom Library templates needed to reopen the plan on another browser.
+
+Scenario save/load is file-based by design. The app also keeps a browser-local autosave recovery snapshot for unsaved work, but that snapshot is stored only in the current browser profile on the current device. Hosted Clerk login does not upload scenarios or provide cloud sync; users who need to preserve or transfer work should download a `.specter.json` file.
 
 ### EP Mode
 
 1. Click the **EP** button in the workbench header to switch to EP mode
 2. Click **Place EP Node** and click the map to place a friendly node
-3. In the workbench card, click **+ Add System** and configure each system's name, frequency, TX power, and gain
+3. In the workbench card, click **+ Add System** to configure a system manually, or choose a Library system and click **Add From Library** to populate the system name, frequency, power, gain, antenna type, beamwidth, and height
 4. Click **Calculate** to generate terrain-aware detection rings for all systems on that node
 5. Left-click the EP node icon on the map to rename or delete it
 
@@ -133,6 +148,8 @@ Specter supports two authentication modes depending on the deployment target.
 #### Hosted / HTTPS deployments — Clerk
 
 Public-facing deployments use [Clerk](https://clerk.com) for sign-in. Clerk handles the login UI and issues short-lived JWTs that the server verifies on every request — no server-side session storage required.
+
+Clerk authentication does not add server-side scenario storage. Logging out and back in may offer same-browser autosave recovery, but only if the browser still has the local recovery snapshot. It will not restore work on another device or browser unless the user saved and loaded a `.specter.json` file.
 
 | Variable | Description |
 |----------|-------------|

@@ -10,7 +10,7 @@
 </head>
 <body>
     <div id="sidebar">
-        <h3>SPECTER EW Planning Tool</h3>
+        <h3>SPECTER EW</h3>
         <button id="sidebar-close" aria-label="Close settings">&#10005;</button>
         <div class="control-group" style="border-left: 4px solid #ffffff;">
             <h3>Jump to Location</h3>
@@ -20,7 +20,9 @@
 
         <div class="control-group ea-only" style="border-left: 4px solid #2d7a2d;">
             <h3>Radio Information</h3>
-            <label>Frequency (MHz): <input type="number" id="freq_mhz" value="150"></label>
+            <div id="selected-node-status">No node selected. Editing defaults for new blank nodes.</div>
+            <label><span id="freq-label">Frequency (MHz)</span>: <input type="number" id="freq_mhz" value="150"></label>
+            <span id="freq-lock-note" class="locked-field-note" style="display:none">Frequency is inherited from the target radio context for this equipment type.</span>
         </div>
 
         <div class="control-group ea-only" style="padding: 10px 15px; border-left: 4px solid #ffaa00;">
@@ -114,8 +116,136 @@
     <div id="mobile-results">
         <span id="mobile-margin">--</span> dB &nbsp;&bull;&nbsp; <span id="mobile-effect">Place nodes...</span>
     </div>
-    <div id="workbench">
-        <div class="workbench-title"><span>WORKBENCH</span><div style="display:flex;gap:4px;align-items:center;"><button id="btn-ep-mode" class="ep-mode-btn" title="Switch to EP Mode">EP</button><button id="workbench-collapse-btn" class="minimize-btn" aria-label="Minimize workbench">&#9660;</button></div></div>
+        <div id="workbench">
+            <div class="workbench-title"><span>WORKBENCH</span><div style="display:flex;gap:4px;align-items:center;"><button id="btn-ep-mode" class="ep-mode-btn" title="Switch to EP Mode">EP</button><button id="workbench-collapse-btn" class="minimize-btn" aria-label="Minimize workbench">&#9660;</button></div></div>
+            <div class="workbench-tabs">
+            <button class="workbench-tab active" data-workbench-tab="operations">Ops</button>
+            <button class="workbench-tab" data-workbench-tab="library">Library</button>
+            <button class="workbench-tab" data-workbench-tab="builder">Builder</button>
+            <button class="workbench-tab" data-workbench-tab="scenario">Scenario</button>
+            <button class="workbench-tab" data-workbench-tab="about">About</button>
+        </div>
+        <div class="workbench-tab-panel" id="tab-about">
+            <div class="workbench-section" id="about-support-panel">
+                <div class="workbench-section-label">ABOUT / SUPPORT</div>
+                <div class="about-product">
+                    <strong>SPECTER EW</strong>
+                    <span id="about-app-version">Version {{ app_version }}</span>
+                </div>
+                <div class="about-info-row">
+                    <span>License</span>
+                    <strong>GNU AGPL-3.0</strong>
+                </div>
+                <div class="about-info-row">
+                    <span>Deployment</span>
+                    <strong id="about-deployment-mode">{{ deployment_mode }}</strong>
+                </div>
+                <p class="about-muted">
+                    Scenario persistence is file-based. Save portable .specter.json files for transfer or archive; browser autosave is local to this device and Clerk login does not provide cloud scenario storage.
+                </p>
+                <div class="about-link-grid">
+                    <a class="about-link-btn" href="{{ url_for('license_text') }}" target="_blank" rel="noopener">License</a>
+                    <a class="about-link-btn" href="https://github.com/XJabor/specter-ew" target="_blank" rel="noopener">Source</a>
+                    <a class="about-link-btn" href="https://github.com/XJabor/specter-ew#readme" target="_blank" rel="noopener">Docs</a>
+                    <a class="about-link-btn" href="mailto:contact@specter-ew.com">Support</a>
+                </div>
+                <div class="about-cta" id="commercial-license-cta">
+                    <strong>Commercial licensing</strong>
+                    <p>Need proprietary deployment rights, support, validation artifacts, or enterprise packaging? Contact <a href="mailto:licensing@specter-ew.com">licensing@specter-ew.com</a>.</p>
+                </div>
+                <div class="about-contact-list">
+                    <div><span>General support</span><a href="mailto:contact@specter-ew.com">contact@specter-ew.com</a></div>
+                    <div><span>Licensing</span><a href="mailto:licensing@specter-ew.com">licensing@specter-ew.com</a></div>
+                </div>
+                <p class="about-muted copyright-line">&copy; 2026 John E. Plaziak. Licensed under the GNU Affero General Public License v3.0. No warranty.</p>
+            </div>
+        </div>
+        <div class="workbench-tab-panel" id="tab-scenario">
+        <div class="workbench-section" id="scenario-section">
+            <div class="workbench-section-label">
+                SCENARIO
+                <span id="scenario-dirty-indicator">Saved</span>
+            </div>
+            <input type="text" id="scenario-name" class="scenario-name-input" maxlength="80" placeholder="Untitled scenario">
+            <div class="scenario-actions">
+                <button class="workbench-btn scenario-btn" id="btn-save-scenario" title="Download this scenario as a .specter.json file">Save Scenario</button>
+                <button class="workbench-btn scenario-btn" id="btn-save-copy" title="Download a copy without clearing unsaved changes">Save Copy</button>
+                <button class="workbench-btn scenario-btn" id="btn-load-scenario" title="Open a .specter.json scenario file">Load Scenario</button>
+                <button class="workbench-btn scenario-btn danger" id="btn-new-scenario" title="Clear the map and start a new scenario">New Scenario</button>
+            </div>
+            <input type="file" id="scenario-file-input" accept=".specter.json,application/json" style="display:none">
+            <div id="scenario-status"></div>
+        </div>
+        </div>
+        <div class="workbench-tab-panel" id="tab-library">
+            <div class="workbench-section">
+                <div class="workbench-section-label">LIBRARY</div>
+                <label class="workbench-label">Template
+                    <select id="library-template-select"></select>
+                </label>
+                <label class="workbench-label">Place As
+                    <select id="library-role-select">
+                        <option value="red">Enemy Node</option>
+                        <option value="blue">Friendly Node</option>
+                    </select>
+                </label>
+                <button class="workbench-btn" id="btn-place-library-node">Place Selected Template</button>
+                <button class="workbench-btn danger" id="btn-delete-library-template">Delete User Template</button>
+                <div id="library-template-details"></div>
+            </div>
+            <div class="workbench-section">
+                <div class="workbench-section-label">PACKS</div>
+                <button class="workbench-btn scenario-btn" id="btn-library-import">Import Library</button>
+                <button class="workbench-btn scenario-btn" id="btn-library-export">Export Library</button>
+                <input type="file" id="library-pack-input" accept=".json,application/json" style="display:none">
+                <div id="library-status"></div>
+            </div>
+        </div>
+        <div class="workbench-tab-panel" id="tab-builder">
+            <div class="workbench-section">
+                <div class="workbench-section-label">BUILDER</div>
+                <label class="workbench-label">Template Name <input type="text" id="builder-name" maxlength="80" placeholder="My radio"></label>
+                <label class="workbench-label">Equipment Type
+                    <select id="builder-equipment-type">
+                        <option value="radio">Radio</option>
+                        <option value="receiver">Receiver</option>
+                        <option value="jammer">Jammer</option>
+                    </select>
+                </label>
+                <label class="workbench-label">Compatible Roles
+                    <select id="builder-role-compatibility">
+                        <option value="both">Enemy and Friendly</option>
+                        <option value="enemy">Enemy only</option>
+                        <option value="friendly">Friendly only</option>
+                    </select>
+                </label>
+                <div class="builder-grid">
+                    <label><span id="builder-frequency-label">Freq MHz</span> <input type="number" id="builder-frequency" value="150" min="1" max="40000" step="0.001"><span id="builder-frequency-note" class="locked-field-note" style="display:none">Stored as context; not independently editable for this type yet.</span></label>
+                    <label>Power W <input type="number" id="builder-power" value="5" min="0.001" step="0.1"></label>
+                    <label>RX Sens dBm <input type="number" id="builder-rx-sensitivity" value="-90" min="-200" max="0" step="0.1"></label>
+                    <label>Ant Gain dBi <input type="number" id="builder-antenna-gain" value="0" step="0.5"></label>
+                    <label>Antenna
+                        <select id="builder-antenna-type">
+                            <option value="omni">Omni</option>
+                            <option value="directional">Directional</option>
+                        </select>
+                    </label>
+                    <label>Beamwidth <input type="number" id="builder-beamwidth" value="360" min="1" max="360"></label>
+                    <label>Height m <input type="number" id="builder-height" value="1" min="1" max="500" step="0.5"></label>
+                    <label>FH Tax
+                        <select id="builder-apply-fh">
+                            <option value="false">Off</option>
+                            <option value="true">On</option>
+                        </select>
+                    </label>
+                    <label>Channel kHz <input type="number" id="builder-channel-bw" value="25" min="0.001" step="1"></label>
+                    <label>Jammer kHz <input type="number" id="builder-jammer-bw" value="20000" min="0.001" step="100"></label>
+                </div>
+                <label class="workbench-label">Notes <textarea id="builder-notes" rows="3"></textarea></label>
+                <button class="workbench-btn" id="btn-builder-save">Save To Library</button>
+            </div>
+        </div>
+        <div class="workbench-tab-panel active" id="tab-operations">
         <div id="ea-workbench">
         <div class="workbench-section">
             <div class="workbench-section-label">PLACE NODES</div>
@@ -126,6 +256,7 @@
         <div class="workbench-section">
             <div class="workbench-section-label">QUICK ACTIONS</div>
             <button class="workbench-btn" id="btn-link-all-enemy" disabled>Link All Enemy Comms</button>
+            <div id="link-all-status"></div>
         </div>
         <div class="workbench-section">
             <div class="workbench-section-label">
@@ -171,10 +302,12 @@
                 <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportEpKML(true)" title="Export with system names and range labels">Export KML (w/ Labels)</button>
             </div>
         </div><!-- #ep-workbench -->
+        </div>
         <div id="mode-indicator">Pan / Select</div>
         <a href="{{ url_for('logout') }}" id="logout-btn">Logout</a>
         <div id="legal-notice">
             <span>&copy; 2026 John E. Plaziak. Licensed under the GNU Affero General Public License v3.0.</span><br>
+            <button type="button" id="btn-about-support">About / Support</button> &middot;
             <a href="{{ url_for('license_text') }}" target="_blank" rel="noopener">License</a> &middot;
             <a href="https://github.com/XJabor/specter-ew" target="_blank" rel="noopener">Source Code</a> &middot;
             No warranty.

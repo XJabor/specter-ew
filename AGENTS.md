@@ -11,6 +11,8 @@ Specter-EW is a tactical Electronic Warfare (EW) planning tool for calculating j
 
 Two authentication modes are supported: **Clerk** (JWT-based, for HTTPS/hosted deployments) enabled by `CLERK_PUBLISHABLE_KEY`, and **session-based** (for LAN deployments) enabled by `APP_CREDENTIALS`. The localhost loopback (`127.0.0.1` / `::1`) bypasses authentication entirely.
 
+Scenario persistence is file-based and browser-local only: users save/load portable `.specter.json` files from the Workbench, and autosave recovery uses `localStorage` on the current browser/device. Hosted Clerk login does not provide cloud scenario storage or cross-device resume.
+
 ## Running the Application
 
 ```bash
@@ -22,7 +24,7 @@ python3 app.py
 
 Access at `http://localhost:5000` or `http://<host-ip>:5000`.
 
-There are no build steps, test suites, or linters configured.
+There are no build steps or linters configured. Runtime smoke tests live under `tests/` and can be run with `python -m unittest discover -s tests`.
 
 ## Deployment & Environment Variables
 
@@ -57,15 +59,19 @@ There are no build steps, test suites, or linters configured.
 - `local_data.py` — Local geospatial data manager: startup scanner for DTED L2 and GeoTIFF imagery, DTED elevation sampler, imagery tile renderer, coverage checker, and data directory configuration
 - `antenna.py` — Directional antenna gain pattern, bearing calculations
 
-**Frontend** (`static/js/map_logic.js`, ~2,100 lines, vanilla JS):
+**Frontend** (`static/js/map_logic.js`, vanilla JS):
 - Leaflet.js map with OpenStreetMap and Esri Satellite tile layers
 - Interactive placement of red (enemy), blue (friendly), and black (marker) nodes
 - Black marker nodes are reference-only — no RF calculations, no links, no elevation fetch
+- Versioned `.specter.json` scenario save/load, dirty-state tracking, and browser-local autosave recovery via `localStorage`; scenario files persist serializable planning intent only, not Leaflet objects, cookies, auth data, local filesystem paths, or cached terrain/elevation responses
 - Link creation between red/blue nodes triggers RF calculations via API calls
+- Workbench tabs are ordered Ops, Library, Builder, Scenario. Ops is default. Library places node templates as red/blue nodes; Builder creates complete radio/receiver/jammer node templates. User templates persist in `localStorage`, import/export as JSON packs, and are embedded in `.specter.json` scenario exports. Built-ins live in `static/equipment_profiles.json`, are schema v2 node templates, are commercial/civilian only, and must not include military radios, generic examples, or built-in jammer presets.
+- Red and blue nodes carry node-attached `equipment` configs in scenario schema v3. Selecting a red/blue node loads that equipment into the sidebar; edits update the selected node. Receiver/jammer frequency fields are shown as locked reference/target context.
+- `Link Enemy Comms by Frequency` auto-links only compatible same-frequency enemy radio pairs (0.001 MHz tolerance) and skips mismatches/non-radio transmitters.
 - Workbench panel for managing multiple nodes simultaneously; toggles between EA and EP modes via the EP button in the workbench header
 - Permanent MGRS grid labels above all icons; inline MGRS input in every popup lets the user type a grid string and jump the icon to that location
 - Jammer footprint toggle on blue nodes: terrain-shaped cyan polygon showing per-bearing jammer coverage
-- EP (Electronic Protection) mode: green EP nodes (`epNodes[]`, IDs prefixed `EP`) each hold one or more named sub-systems; clicking Calculate fires sequential `/calculate_es_terrain` calls (one per system) and renders color-coded terrain rings; sidebar shows EP-specific parameters (terrain, enemy RX sensitivity) while hiding EA controls
+- EP (Electronic Protection) mode: green EP nodes (`epNodes[]`, IDs prefixed `EP`) each hold one or more named sub-systems; clicking Calculate fires sequential `/calculate_es_terrain` calls (one per system) and renders color-coded terrain rings; sidebar shows EP-specific parameters (terrain, enemy RX sensitivity) while hiding EA controls. EP node system cards support both manual `+ Add System` and Library-based `Add From Library`, copying template name/frequency/power/gain/antenna type/beamwidth/height into editable EP system rows.
 - Ring and footprint labels rendered as standalone `L.tooltip` instances positioned at the rightmost polygon vertex (not bound to the layer, so they don't re-anchor to the geometric center on map move); stored as `node.esLabel`, `node.fpLabel`, and `sys.label` and cleaned up alongside their ring layer; EP system labels are staggered 20 px vertically per system index to prevent stacking
 
 **Template** (`templates/index.html`): Single-page app; all JS/CSS loaded from `static/`.
@@ -82,8 +88,8 @@ There are no build steps, test suites, or linters configured.
   - `calculate_sensing_distance()` is the exact closed-form (or binary-search for SHF clutter) inverse of `calculate_path_loss()` for each branch
 - **Terrain correction across all bands**: `_egli_terrain_correction_db(terrain_type)` returns a flat additive penalty (rural/open 0 dB, light forest/suburban +8 dB, dense forest/urban +20 dB) applied to the Egli and upper-UHF FSPL branches. For SHF, `_shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)` adds an additional flat penalty when either antenna is below 5 m AGL in vegetated terrain (+5 dB light, +10 dB dense), capturing Fresnel-zone obstruction and canopy-entry absorption. All terrain type keywords use substring matching (`"dense"/"urban"`, `"suburb"/"light"`, fallthrough for open/rural) consistent across all model functions.
 - **Deygout multiple knife-edge diffraction**: `_deygout_loss_db()` in `elevation.py` recursively finds the dominant obstacle, computes ITU-R P.526 knife-edge loss, and recurses on the two sub-paths; the sum is added to NLOS path loss for all frequency bands. For SHF the value acts as a blockage penalty rather than a classical diffraction correction.
-- **No database**: all state is client-side (Leaflet map markers/layers); the backend is purely stateless calculation.
-- **Frequency-hopping tax**: applies a configurable dB penalty when hopping waveforms are selected.
+- **No database**: all active planning state is client-side and the backend is purely stateless calculation. Durable scenario persistence is portable `.specter.json` download/upload; autosave recovery is local to the browser/device and should not be treated as cloud save even when Clerk auth is active.
+- **Frequency-hopping tax**: node-attached in the frontend, not universal across the workspace. `calculate_ea` still accepts `apply_fh`, `enemy_bw_khz`, and `jammer_bw_khz`, but the frontend supplies those values per J/S pair from the red transmitter equipment and blue jammer equipment.
 - **Terrain type as model selector**: terrain type (free space, rural, light forest, dense forest) drives the propagation model branch (COST-231 urban/suburban/rural correction; SHF clutter coefficient) and applies flat or distance-proportional clutter penalties across all frequency bands.
 - **Directional antenna support**: nodes can be configured with azimuth and beamwidth; gain is reduced for off-boresight links using a Gaussian pattern approximation.
 - **Antenna height AGL**: per-node height (metres) adjusts the LOS/diffraction endpoint elevation AND gates the propagation model — tx_height ≥ 30 m is required to route to COST-231 Hata / Two-Ray. Default is 1.0 m (minimum accepted). The SHF sensing distance cap and the Egli/SHF radio horizon calculations all use the actual AGL heights.

@@ -55,6 +55,7 @@ def _runtime_root():
 
 BUNDLED_ROOT = _bundled_root()
 RUNTIME_ROOT = _runtime_root()
+APP_VERSION = 'release-1-dev'
 
 app = Flask(
     __name__,
@@ -100,6 +101,14 @@ limiter = Limiter(app=app, key_func=get_remote_address, default_limits=[])
 # automatically from the key so only one env var is needed.
 
 _CLERK_PK = os.environ.get('CLERK_PUBLISHABLE_KEY', '').strip()
+
+
+def _deployment_mode_label() -> str:
+    if _CLERK_PK:
+        return 'Clerk'
+    if os.environ.get('APP_CREDENTIALS', '').strip():
+        return 'Session login'
+    return 'Local/open'
 
 def _derive_clerk_frontend_api(pk: str) -> str:
     """Decode the Frontend API URL embedded in a Clerk publishable key."""
@@ -259,7 +268,9 @@ def set_security_headers(response):
 def index():
     return render_template('index.html',
                            clerk_publishable_key=_CLERK_PK,
-                           clerk_frontend_api=_CLERK_FRONTEND_API)
+                           clerk_frontend_api=_CLERK_FRONTEND_API,
+                           app_version=APP_VERSION,
+                           deployment_mode=_deployment_mode_label())
 
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("10 per minute")

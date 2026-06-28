@@ -96,6 +96,681 @@ let epNodeCounter = 0;
 let epModeActive  = false;
 
 // ============================================================
+// SCENARIO SAVE / LOAD
+// ============================================================
+
+const SCENARIO_SCHEMA_VERSION = 3;
+const SPECTER_APP_VERSION = 'release-1-dev';
+const PROFILE_PACK_STORAGE_KEY = 'specter-ew:equipment-profile-packs';
+const PROFILE_CATEGORIES = ['radio', 'receiver', 'jammer', 'antenna'];
+const PROFILE_NUMERIC_RANGES = {
+    frequency_mhz:      [1, 40000],
+    tx_power_w:         [0.001, 1000000],
+    antenna_gain_dbi:   [-60, 80],
+    rx_sensitivity_dbm: [-200, 0],
+    antenna_height_m:   [1, 500],
+    beamwidth_deg:      [1, 360],
+    channel_bw_khz:     [0.001, 10000000],
+    jammer_bw_khz:      [0.001, 10000000]
+};
+const SCENARIO_SETTING_IDS = [
+    'freq_mhz',
+    'fh_toggle',
+    'enemy_bw_khz',
+    'jammer_bw_khz',
+    'enemy_terrain',
+    'jammer_terrain',
+    'enemy_tx_w',
+    'enemy_tx_gain',
+    'enemy_rx_gain',
+    'jammer_tx_w',
+    'jammer_tx_gain',
+    'rx_sensitivity',
+    'friendly_rx_gain',
+    'lower_threshold',
+    'upper_threshold',
+    'ep_terrain',
+    'ep_rx_sensitivity'
+];
+
+let scenarioDirty = false;
+let scenarioLoading = false;
+let scenarioCreatedAt = new Date().toISOString();
+let scenarioUpdatedAt = scenarioCreatedAt;
+let scenarioAutosaveTimer = null;
+let scenarioRestorePrompted = false;
+let builtInProfilePack = null;
+let userProfilePacks = [];
+let profileLoadPromise = null;
+let selectedEquipmentNode = null; // { type: 'red'|'blue', id }
+let syncingSidebarFromNode = false;
+let pendingLibraryPlacement = null; // { team: 'red'|'blue', templateKey }
+
+function scenarioNow() {
+    return new Date().toISOString();
+}
+
+function getScenarioName() {
+    const input = document.getElementById('scenario-name');
+    return input ? input.value.trim() : '';
+}
+
+function setScenarioName(name) {
+    const input = document.getElementById('scenario-name');
+    if (input) input.value = name || '';
+}
+
+function scenarioStatus(message, isError = false) {
+    const el = document.getElementById('scenario-status');
+    if (!el) return;
+    el.style.color = isError ? '#ff7777' : '#aaa';
+    el.textContent = message || '';
+}
+
+function updateScenarioDirtyUi() {
+    const el = document.getElementById('scenario-dirty-indicator');
+    if (!el) return;
+    el.textContent = scenarioDirty ? 'Unsaved' : 'Saved';
+    el.classList.toggle('dirty', scenarioDirty);
+}
+
+function currentScenarioAutosaveKey() {
+    const clerkUserId = window.Clerk?.user?.id;
+    return clerkUserId
+        ? `specter-ew:scenario-autosave:${clerkUserId}`
+        : 'specter-ew:scenario-autosave';
+}
+
+function currentScenarioCleanKey() {
+    const clerkUserId = window.Clerk?.user?.id;
+    return clerkUserId
+        ? `specter-ew:scenario-clean:${clerkUserId}`
+        : 'specter-ew:scenario-clean';
+}
+
+function getLastCleanTime() {
+    try {
+        return localStorage.getItem(currentScenarioCleanKey()) || '';
+    } catch (e) {
+        return '';
+    }
+}
+
+function setLastCleanTime(value) {
+    try {
+        localStorage.setItem(currentScenarioCleanKey(), value);
+    } catch (e) {
+        /* localStorage may be unavailable in private contexts */
+    }
+}
+
+function markDirty(message) {
+    if (scenarioLoading) return;
+    scenarioDirty = true;
+    scenarioUpdatedAt = scenarioNow();
+    updateScenarioDirtyUi();
+    if (message) scenarioStatus(message);
+    scheduleAutosave();
+}
+
+function markClean(message) {
+    scenarioDirty = false;
+    scenarioUpdatedAt = scenarioNow();
+    updateScenarioDirtyUi();
+    setLastCleanTime(scenarioUpdatedAt);
+    try {
+        localStorage.removeItem(currentScenarioAutosaveKey());
+    } catch (e) {
+        /* ignore */
+    }
+    if (message) scenarioStatus(message);
+}
+
+function scheduleAutosave() {
+    if (scenarioLoading) return;
+    clearTimeout(scenarioAutosaveTimer);
+    scenarioAutosaveTimer = setTimeout(() => {
+        try {
+            const scenario = serializeScenario();
+            localStorage.setItem(currentScenarioAutosaveKey(), JSON.stringify({
+                saved_at: scenarioNow(),
+                scenario
+            }));
+        } catch (e) {
+            console.warn('Scenario autosave failed', e);
+        }
+    }, 700);
+}
+
+function latLngToPlain(latlng) {
+    return { lat: latlng.lat, lon: latlng.lng };
+}
+
+function nodeAntennaState(node) {
+    return {
+        antenna_type: node.antennaType || 'omni',
+        antenna_azimuth: Number(node.antennaAzimuth || 0),
+        antenna_beamwidth: Number(node.antennaBeamwidth || 90),
+        antenna_height_agl: Number(node.antennaHeightAgl || 1.0)
+    };
+}
+
+function settingsState() {
+    const settings = {};
+    SCENARIO_SETTING_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        settings[id] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    return settings;
+}
+
+function activeBaseLayerName() {
+    if (map.hasLayer(streetLayer)) return 'Streets';
+    return 'Satellite';
+}
+
+function serializeScenario() {
+    const center = map.getCenter();
+    const scenarioName = getScenarioName();
+    const now = scenarioNow();
+    return {
+        schema_version: SCENARIO_SCHEMA_VERSION,
+        app_version: SPECTER_APP_VERSION,
+        created_at: scenarioCreatedAt || now,
+        updated_at: now,
+        scenario_name: scenarioName,
+        map_view: {
+            center: latLngToPlain(center),
+            zoom: map.getZoom(),
+            base_layer: activeBaseLayerName(),
+            overlays: {
+                local_imagery: map.hasLayer(localImageryLayer)
+            }
+        },
+        settings: settingsState(),
+        nodes: {
+            red: redNodes.map(node => ({
+                id: node.id,
+                name: node.name,
+                location: latLngToPlain(node.marker.getLatLng()),
+                equipment: equipmentScenarioState(node, 'red'),
+                ...nodeAntennaState(node),
+                es_active: !!node.esActive
+            })),
+            blue: blueNodes.map(node => ({
+                id: node.id,
+                name: node.name,
+                location: latLngToPlain(node.marker.getLatLng()),
+                equipment: equipmentScenarioState(node, 'blue'),
+                ...nodeAntennaState(node),
+                footprint_active: !!node.footprintActive
+            })),
+            black: blackNodes.map(node => ({
+                id: node.id,
+                name: node.name,
+                location: latLngToPlain(node.marker.getLatLng())
+            })),
+            ep: epNodes.map(node => ({
+                id: node.id,
+                name: node.name,
+                location: latLngToPlain(node.marker.getLatLng()),
+                systems: node.systems.map(sys => ({
+                    id: sys.id,
+                    name: sys.name,
+                    freq_mhz: Number(sys.freqMhz),
+                    tx_power_w: Number(sys.txPowerW),
+                    tx_gain_dbi: Number(sys.txGainDbi),
+                    antenna_type: sys.antennaType || 'omni',
+                    antenna_azimuth: Number(sys.antennaAzimuth || 0),
+                    antenna_beamwidth: Number(sys.antennaBeamwidth || 360),
+                    antenna_height_agl: Number(sys.antennaHeightAgl || 1.0),
+                    color: sys.color,
+                    ring_active: !!(sys.layer || sys.polygonPoints)
+                }))
+            }))
+        },
+        links: {
+            enemy: enemyLinks.map(link => ({ tx_id: link.txId, rx_id: link.rxId })),
+            jamming: jammingLinks.map(link => ({ blue_id: link.blueId, rx_id: link.rxId }))
+        },
+        profile_library: scenarioProfileLibraryState(),
+        overlays: {
+            ep_mode_active: epModeActive,
+            overlap_checked: Array.from(overlapChecked),
+            overlap_visible: !!overlapLayer
+        }
+    };
+}
+
+function validateScenario(data) {
+    if (!data || typeof data !== 'object') throw new Error('Scenario file is not valid JSON.');
+    if (data.schema_version == null) throw new Error('Scenario is missing schema_version.');
+    if (Number(data.schema_version) > SCENARIO_SCHEMA_VERSION) {
+        throw new Error(`Scenario schema v${data.schema_version} is newer than this app supports.`);
+    }
+    if (!data.nodes || typeof data.nodes !== 'object') throw new Error('Scenario is missing nodes.');
+    if (!data.links || typeof data.links !== 'object') throw new Error('Scenario is missing links.');
+    ['red', 'blue', 'black', 'ep'].forEach(kind => {
+        const items = data.nodes[kind] || [];
+        if (!Array.isArray(items)) throw new Error(`Scenario nodes.${kind} must be an array.`);
+        items.forEach(item => {
+            if (!item.id || !item.location) throw new Error(`Scenario ${kind} node is missing id or location.`);
+            const lat = Number(item.location.lat);
+            const lon = Number(item.location.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+                throw new Error(`Scenario ${kind} node ${item.id} has an invalid location.`);
+            }
+        });
+    });
+    if (!Array.isArray(data.links.enemy || [])) throw new Error('Scenario links.enemy must be an array.');
+    if (!Array.isArray(data.links.jamming || [])) throw new Error('Scenario links.jamming must be an array.');
+    if (data.profile_library != null) {
+        if (!data.profile_library || typeof data.profile_library !== 'object') throw new Error('Scenario profile_library must be an object.');
+        if (!Array.isArray(data.profile_library.packs || [])) throw new Error('Scenario profile_library.packs must be an array.');
+        (data.profile_library.packs || []).forEach(pack => validateProfilePack(pack, { allowJammerProfiles: true }));
+    }
+    return true;
+}
+
+function migrateScenario(data) {
+    validateScenario(data);
+    if (Number(data.schema_version) === SCENARIO_SCHEMA_VERSION) return data;
+    if ([1, 2].includes(Number(data.schema_version))) {
+        const settings = data.settings || {};
+        const redEquipment = {
+            equipment_type: 'radio',
+            frequency_mhz: Number(settings.freq_mhz || 150),
+            tx_power_w: Number(settings.enemy_tx_w || 5),
+            rx_sensitivity_dbm: Number(settings.rx_sensitivity || -90),
+            antenna_gain_dbi: Number(settings.enemy_tx_gain || 0),
+            rx_gain_dbi: Number(settings.enemy_rx_gain || 0),
+            antenna_type: 'omni',
+            beamwidth_deg: 360,
+            antenna_height_m: 1,
+            apply_fh: !!settings.fh_toggle,
+            channel_bw_khz: Number(settings.enemy_bw_khz || 25),
+            jammer_bw_khz: Number(settings.jammer_bw_khz || 20000)
+        };
+        const blueEquipment = {
+            equipment_type: 'jammer',
+            frequency_mhz: Number(settings.freq_mhz || 150),
+            tx_power_w: Number(settings.jammer_tx_w || 20),
+            rx_sensitivity_dbm: Number(settings.rx_sensitivity || -90),
+            antenna_gain_dbi: Number(settings.jammer_tx_gain || 3),
+            rx_gain_dbi: Number(settings.friendly_rx_gain || 0),
+            antenna_type: 'omni',
+            beamwidth_deg: 360,
+            antenna_height_m: 1,
+            apply_fh: false,
+            channel_bw_khz: Number(settings.enemy_bw_khz || 25),
+            jammer_bw_khz: Number(settings.jammer_bw_khz || 20000)
+        };
+        return {
+            ...data,
+            schema_version: SCENARIO_SCHEMA_VERSION,
+            nodes: {
+                ...data.nodes,
+                red: (data.nodes?.red || []).map(node => ({ ...node, equipment: node.equipment || redEquipment })),
+                blue: (data.nodes?.blue || []).map(node => ({ ...node, equipment: node.equipment || blueEquipment }))
+            },
+            profile_library: data.profile_library || { packs: [] }
+        };
+    }
+    throw new Error(`Unsupported scenario schema v${data.schema_version}.`);
+}
+
+function setCounterFromIds(ids, prefix) {
+    return ids.reduce((max, id) => {
+        const match = String(id || '').match(new RegExp('^' + prefix + '(\\d+)$'));
+        return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+}
+
+function applyScenarioSettings(settings) {
+    Object.entries(settings || {}).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.type === 'checkbox') el.checked = !!value;
+        else el.value = value;
+    });
+    updateFrequencyHoppingControls();
+}
+
+function applyScenarioMapView(mapView) {
+    if (!mapView || !mapView.center) return;
+    const baseName = mapView.base_layer === 'Streets' ? 'Streets' : 'Satellite';
+    if (baseName === 'Streets') {
+        if (map.hasLayer(satelliteLayer)) map.removeLayer(satelliteLayer);
+        if (!map.hasLayer(streetLayer)) map.addLayer(streetLayer);
+    } else {
+        if (map.hasLayer(streetLayer)) map.removeLayer(streetLayer);
+        if (!map.hasLayer(satelliteLayer)) map.addLayer(satelliteLayer);
+    }
+    const wantsLocalImagery = !!mapView.overlays?.local_imagery;
+    if (wantsLocalImagery && !map.hasLayer(localImageryLayer)) map.addLayer(localImageryLayer);
+    if (!wantsLocalImagery && map.hasLayer(localImageryLayer)) map.removeLayer(localImageryLayer);
+    map.setView([Number(mapView.center.lat), Number(mapView.center.lon)], Number(mapView.zoom || map.getZoom()));
+}
+
+function makeRedNodeFromScenario(item) {
+    const ll = [Number(item.location.lat), Number(item.location.lon)];
+    const marker = L.marker(ll, { icon: redIcon, draggable: true }).addTo(map);
+    const node = {
+        id: item.id,
+        name: item.name || item.id,
+        marker,
+        esActive: !!item.es_active,
+        esCircle: null,
+        esLabel: null,
+        elevationM: null,
+        esPolygonPoints: null,
+        esRangeKm: null,
+        antennaType: item.antenna_type || 'omni',
+        antennaAzimuth: Number(item.antenna_azimuth || 0),
+        antennaBeamwidth: Number(item.antenna_beamwidth || 90),
+        antennaHeightAgl: Number(item.antenna_height_agl || 1.0)
+    };
+    applyEquipmentToNode(node, {
+        ...(item.equipment || {}),
+        antenna_type: item.antenna_type || item.equipment?.antenna_type,
+        beamwidth_deg: item.antenna_beamwidth || item.equipment?.beamwidth_deg,
+        antenna_height_m: item.antenna_height_agl || item.equipment?.antenna_height_m
+    }, 'red');
+    node.antennaAzimuth = Number(item.antenna_azimuth || 0);
+    marker.on('click', function() { handleNodeClick('red', node.id); });
+    marker.on('dragend', function() { fetchAndStoreElevation(node); markDirty('Node moved.'); recalculateAll(); });
+    marker.on('popupclose', function() { bindRedPopup(node.id); });
+    redNodes.push(node);
+    bindRedPopup(node.id);
+    fetchAndStoreElevation(node);
+}
+
+function makeBlueNodeFromScenario(item) {
+    const ll = [Number(item.location.lat), Number(item.location.lon)];
+    const marker = L.marker(ll, { icon: blueIcon, draggable: true }).addTo(map);
+    const node = {
+        id: item.id,
+        name: item.name || item.id,
+        marker,
+        elevationM: null,
+        antennaType: item.antenna_type || 'omni',
+        antennaAzimuth: Number(item.antenna_azimuth || 0),
+        antennaBeamwidth: Number(item.antenna_beamwidth || 90),
+        antennaHeightAgl: Number(item.antenna_height_agl || 1.0),
+        footprintActive: !!item.footprint_active,
+        footprintCircle: null,
+        fpLabel: null,
+        footprintPolygonPoints: null
+    };
+    applyEquipmentToNode(node, {
+        ...(item.equipment || {}),
+        antenna_type: item.antenna_type || item.equipment?.antenna_type,
+        beamwidth_deg: item.antenna_beamwidth || item.equipment?.beamwidth_deg,
+        antenna_height_m: item.antenna_height_agl || item.equipment?.antenna_height_m
+    }, 'blue');
+    node.antennaAzimuth = Number(item.antenna_azimuth || 0);
+    marker.on('click', function() { handleNodeClick('blue', node.id); });
+    marker.on('dragend', function() { fetchAndStoreElevation(node); markDirty('Node moved.'); recalculateAll(); scheduleFootprintUpdate(); });
+    marker.on('popupclose', function() { bindBluePopup(node.id); });
+    blueNodes.push(node);
+    bindBluePopup(node.id);
+    fetchAndStoreElevation(node);
+}
+
+function makeBlackNodeFromScenario(item) {
+    const ll = [Number(item.location.lat), Number(item.location.lon)];
+    const marker = L.marker(ll, { icon: blackIcon, draggable: true }).addTo(map);
+    const node = { id: item.id, name: item.name || item.id, marker };
+    marker.on('dragend', function() { markDirty('Marker moved.'); updateMGRSTooltips(); });
+    marker.on('popupclose', function() { bindBlackPopup(node.id); });
+    blackNodes.push(node);
+    bindBlackPopup(node.id);
+}
+
+function makeEpNodeFromScenario(item) {
+    const ll = [Number(item.location.lat), Number(item.location.lon)];
+    const icon = L.divIcon({
+        className: '',
+        html: '<div class="ep-marker-dot"></div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+    const marker = L.marker(ll, { icon, draggable: true }).addTo(map);
+    const node = {
+        id: item.id,
+        name: item.name || item.id,
+        lat: ll[0],
+        lon: ll[1],
+        marker,
+        systems: (item.systems || []).map((sys, idx) => ({
+            id: sys.id || item.id + '_S' + (idx + 1),
+            name: sys.name || 'System ' + (idx + 1),
+            freqMhz: Number(sys.freq_mhz || 150),
+            txPowerW: Number(sys.tx_power_w || 5),
+            txGainDbi: Number(sys.tx_gain_dbi || 0),
+            antennaType: sys.antenna_type || 'omni',
+            antennaAzimuth: Number(sys.antenna_azimuth || 0),
+            antennaBeamwidth: Number(sys.antenna_beamwidth || 360),
+            antennaHeightAgl: Number(sys.antenna_height_agl || 1.0),
+            color: sys.color || EP_COLORS[idx % EP_COLORS.length],
+            layer: null,
+            label: null,
+            polygonPoints: null,
+            rangeKm: null,
+            ringActive: !!sys.ring_active
+        }))
+    };
+    marker.on('dragend', function(e) {
+        node.lat = e.target.getLatLng().lat;
+        node.lon = e.target.getLatLng().lng;
+        clearEpNodeRings(node);
+        markDirty('EP node moved.');
+        updateMGRSTooltips();
+        updateEpWorkbench();
+    });
+    epNodes.push(node);
+    bindEpPopup(node.id);
+    marker.on('popupclose', function() { bindEpPopup(node.id); });
+}
+
+function resetScenarioState() {
+    setMode(null);
+    Object.values(_esAbortControllers).forEach(controller => controller.abort());
+    Object.keys(_esAbortControllers).forEach(id => delete _esAbortControllers[id]);
+    Object.values(_fpAbortControllers).forEach(controller => controller.abort());
+    Object.keys(_fpAbortControllers).forEach(id => delete _fpAbortControllers[id]);
+    redNodes.forEach(n => { map.removeLayer(n.marker); if (n.esCircle) map.removeLayer(n.esCircle); if (n.esLabel) map.removeLayer(n.esLabel); });
+    blueNodes.forEach(n => { map.removeLayer(n.marker); if (n.footprintCircle) map.removeLayer(n.footprintCircle); if (n.fpLabel) map.removeLayer(n.fpLabel); });
+    blackNodes.forEach(n => { map.removeLayer(n.marker); });
+    enemyLinks.forEach(l => map.removeLayer(l.line));
+    jammingLinks.forEach(l => map.removeLayer(l.line));
+    epNodes.forEach(n => {
+        n.systems.forEach(s => { if (s.layer) map.removeLayer(s.layer); if (s.label) map.removeLayer(s.label); });
+        map.removeLayer(n.marker);
+    });
+    redNodes = []; blueNodes = []; blackNodes = []; enemyLinks = []; jammingLinks = [];
+    redCounter = 0; blueCounter = 0; blackCounter = 0;
+    epNodes.length = 0; epNodeCounter = 0;
+    selectedLink = null;
+    selectedEquipmentNode = null;
+    const status = document.getElementById('selected-node-status');
+    if (status) status.textContent = 'No node selected. Editing defaults for new blank nodes.';
+    updateSidebarFrequencyLock('radio');
+    overlapChecked.clear();
+    clearOverlapLayer();
+    renderOverlapControls();
+    renderResults();
+    updateEpWorkbench();
+    updateMGRSTooltips();
+}
+
+async function loadScenario(data) {
+    const scenario = migrateScenario(data);
+    if (scenario.profile_library?.packs) {
+        mergeUserProfilePacks(scenario.profile_library.packs);
+    }
+    scenarioLoading = true;
+    try {
+        resetScenarioState();
+        scenarioCreatedAt = scenario.created_at || scenarioNow();
+        scenarioUpdatedAt = scenario.updated_at || scenarioCreatedAt;
+        setScenarioName(scenario.scenario_name || '');
+        applyScenarioSettings(scenario.settings || {});
+
+        (scenario.nodes?.red || []).forEach(makeRedNodeFromScenario);
+        (scenario.nodes?.blue || []).forEach(makeBlueNodeFromScenario);
+        (scenario.nodes?.black || []).forEach(makeBlackNodeFromScenario);
+        (scenario.nodes?.ep || []).forEach(makeEpNodeFromScenario);
+
+        redCounter = setCounterFromIds(redNodes.map(n => n.id), 'R');
+        blueCounter = setCounterFromIds(blueNodes.map(n => n.id), 'B');
+        blackCounter = setCounterFromIds(blackNodes.map(n => n.id), 'M');
+        epNodeCounter = setCounterFromIds(epNodes.map(n => n.id), 'EP');
+
+        (scenario.links?.enemy || []).forEach(link => {
+            if (findNode('red', link.tx_id) && findNode('red', link.rx_id)) createEnemyLink(link.tx_id, link.rx_id);
+        });
+        (scenario.links?.jamming || []).forEach(link => {
+            if (findNode('blue', link.blue_id) && findNode('red', link.rx_id)) createJammingLink(link.blue_id, link.rx_id);
+        });
+
+        const wantsEpMode = !!scenario.overlays?.ep_mode_active;
+        if (epModeActive !== wantsEpMode) toggleEpMode();
+        (scenario.overlays?.overlap_checked || []).forEach(id => overlapChecked.add(id));
+        applyScenarioMapView(scenario.map_view);
+        updateMGRSTooltips();
+        updateEpWorkbench();
+        renderOverlapControls();
+        recalculateAll();
+        const epNodesToCalculate = epNodes.filter(node => node.systems.some(sys => sys.ringActive));
+        for (const node of epNodesToCalculate) {
+            await calculateEpNode(node.id);
+        }
+        if (scenario.overlays?.overlap_visible) {
+            setTimeout(() => computeAndShowOverlap(true), 1200);
+        }
+    } finally {
+        scenarioLoading = false;
+    }
+    markClean('Scenario loaded.');
+}
+
+function scenarioIsEmpty() {
+    return redNodes.length === 0
+        && blueNodes.length === 0
+        && blackNodes.length === 0
+        && epNodes.length === 0
+        && enemyLinks.length === 0
+        && jammingLinks.length === 0;
+}
+
+function safeScenarioFilename(name) {
+    const base = (name || '').trim()
+        .replace(/[^a-z0-9._-]+/gi, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80);
+    if (base) return base + '.specter.json';
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
+    return `specter-${stamp}.specter.json`;
+}
+
+function downloadScenario(markAsSaved) {
+    try {
+        const scenario = serializeScenario();
+        const blob = new Blob([JSON.stringify(scenario, null, 2) + '\n'], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = safeScenarioFilename(scenario.scenario_name);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        if (markAsSaved) markClean('Scenario saved.');
+        else scenarioStatus('Scenario copy downloaded.');
+    } catch (e) {
+        scenarioStatus('Could not save scenario.', true);
+        alert('Could not save scenario: ' + e.message);
+    }
+}
+
+function restoreAutosaveIfPresent() {
+    if (scenarioRestorePrompted) return;
+    try {
+        const raw = localStorage.getItem(currentScenarioAutosaveKey());
+        if (!raw) return;
+        const recovery = JSON.parse(raw);
+        if (!recovery?.scenario || !recovery.saved_at) return;
+        const cleanAt = getLastCleanTime();
+        if (cleanAt && recovery.saved_at <= cleanAt) return;
+        scenarioRestorePrompted = true;
+        const label = recovery.scenario.scenario_name || 'Untitled scenario';
+        if (confirm(`Recover unsaved scenario "${label}" from ${new Date(recovery.saved_at).toLocaleString()}?`)) {
+            loadScenario(recovery.scenario);
+        } else {
+            localStorage.removeItem(currentScenarioAutosaveKey());
+        }
+    } catch (e) {
+        console.warn('Scenario autosave restore failed', e);
+    }
+}
+
+function initScenarioControls() {
+    const nameInput = document.getElementById('scenario-name');
+    const fileInput = document.getElementById('scenario-file-input');
+    document.getElementById('btn-save-scenario').addEventListener('click', () => downloadScenario(true));
+    document.getElementById('btn-save-copy').addEventListener('click', () => downloadScenario(false));
+    document.getElementById('btn-load-scenario').addEventListener('click', () => fileInput.click());
+    document.getElementById('btn-new-scenario').addEventListener('click', () => {
+        if ((scenarioDirty || !scenarioIsEmpty()) && !confirm('Clear the current scenario and start a new one?')) return;
+        scenarioLoading = true;
+        resetScenarioState();
+        setScenarioName('');
+        scenarioCreatedAt = scenarioNow();
+        scenarioLoading = false;
+        markClean('New scenario ready.');
+    });
+    nameInput.addEventListener('input', () => markDirty('Scenario renamed.'));
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+        fileInput.value = '';
+        if (!file) return;
+        if ((scenarioDirty || !scenarioIsEmpty()) && !confirm('Load this scenario and replace the current map?')) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+            try {
+                const data = JSON.parse(reader.result);
+                await loadScenario(data);
+            } catch (e) {
+                scenarioStatus('Scenario import failed.', true);
+                alert('Could not load scenario: ' + e.message);
+            }
+        };
+        reader.onerror = () => {
+            scenarioStatus('Could not read scenario file.', true);
+            alert('Could not read scenario file.');
+        };
+        reader.readAsText(file);
+    });
+    map.on('baselayerchange overlayadd overlayremove', () => markDirty('Map layer changed.'));
+    map.on('moveend zoomend', () => markDirty('Map view changed.'));
+    updateScenarioDirtyUi();
+    restoreAutosaveIfPresent();
+    setTimeout(restoreAutosaveIfPresent, 1600);
+}
+
+window.SpecterScenario = {
+    serializeScenario,
+    loadScenario,
+    validateScenario,
+    migrateScenario,
+    resetScenarioState,
+    markDirty,
+    markClean,
+    restoreAutosaveIfPresent
+};
+
+// ============================================================
 // MODE MANAGEMENT
 // ============================================================
 
@@ -110,6 +785,8 @@ const modeLabels = {
     null:           'Pan / Select',
     'place-red':    'Click map to place Enemy Node — ESC to cancel',
     'place-blue':   'Click map to place Friendly Node — ESC to cancel',
+    'place-library-red':  'Click map to place selected Enemy template - ESC to cancel',
+    'place-library-blue': 'Click map to place selected Friendly template - ESC to cancel',
     'place-black':  'Click map to place Marker — ESC to cancel',
     'link-enemy':   'Click the TX Enemy Node — ESC to cancel',
     'link-jammer':  'Click the target Enemy Node — ESC to cancel',
@@ -122,12 +799,13 @@ function setMode(newMode) {
 
     if (linkSource) highlightNode(linkSource.color, linkSource.id, false);
     activeMode = newMode;
+    if (newMode !== 'place-library-red' && newMode !== 'place-library-blue') pendingLibraryPlacement = null;
     linkSource = null;
 
     Object.values(modeBtnIds).forEach(id => document.getElementById(id).classList.remove('active'));
     if (newMode && modeBtnIds[newMode]) document.getElementById(modeBtnIds[newMode]).classList.add('active');
 
-    map.getContainer().style.cursor = (newMode === 'place-red' || newMode === 'place-blue' || newMode === 'place-black') ? 'crosshair' : '';
+    map.getContainer().style.cursor = (newMode === 'place-red' || newMode === 'place-blue' || newMode === 'place-library-red' || newMode === 'place-library-blue' || newMode === 'place-black') ? 'crosshair' : '';
     document.getElementById('mode-indicator').textContent = modeLabels[newMode] ?? 'Pan / Select';
 }
 
@@ -148,6 +826,798 @@ function findNode(color, id) {
 
 function escapeHtml(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ============================================================
+// EQUIPMENT PROFILE LIBRARY
+// ============================================================
+
+function profileStatus(message, isError = false) {
+    const el = document.getElementById('profile-library-status');
+    if (!el) return;
+    el.style.color = isError ? '#ff7777' : '#aaa';
+    el.textContent = message || '';
+}
+
+function normalizeProfileId(value) {
+    return String(value || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+}
+
+function assertFiniteRange(profile, field) {
+    if (profile[field] == null || profile[field] === '') return;
+    const value = Number(profile[field]);
+    const range = PROFILE_NUMERIC_RANGES[field];
+    if (!Number.isFinite(value) || value < range[0] || value > range[1]) {
+        throw new Error(`${profile.name || profile.id || 'Profile'} has invalid ${field}.`);
+    }
+    profile[field] = value;
+}
+
+function validateProfilePack(pack, options = {}) {
+    if (!pack || typeof pack !== 'object') throw new Error('Profile pack is not valid JSON.');
+    const schemaVersion = Number(pack.schema_version);
+    if (![1, 2].includes(schemaVersion)) throw new Error('Equipment library schema_version must be 1 or 2.');
+    if (!normalizeProfileId(pack.pack_id)) throw new Error('Profile pack is missing pack_id.');
+    if (!String(pack.pack_name || '').trim()) throw new Error('Profile pack is missing pack_name.');
+    const entries = Array.isArray(pack.templates) ? pack.templates : pack.profiles;
+    if (!Array.isArray(entries)) throw new Error('Equipment library templates must be an array.');
+
+    const seen = new Set();
+    const normalizedTemplates = entries.map(raw => {
+        if (!raw || typeof raw !== 'object') throw new Error('Template entries must be objects.');
+        const profile = { ...raw };
+        profile.id = normalizeProfileId(profile.id || profile.name);
+        profile.name = String(profile.name || profile.id).trim().slice(0, 100);
+        profile.equipment_type = String(profile.equipment_type || profile.category || 'radio').trim().toLowerCase();
+        profile.category = profile.equipment_type;
+        if (!profile.id || !profile.name) throw new Error('Every template needs an id and name.');
+        if (!PROFILE_CATEGORIES.includes(profile.equipment_type)) throw new Error(`${profile.name} has unsupported equipment type.`);
+        if (!options.allowJammerProfiles && profile.equipment_type === 'jammer') {
+            throw new Error('Built-in packs cannot include jammer templates.');
+        }
+        if (seen.has(profile.id)) throw new Error(`Duplicate template id ${profile.id}.`);
+        seen.add(profile.id);
+
+        Object.keys(PROFILE_NUMERIC_RANGES).forEach(field => assertFiniteRange(profile, field));
+        if (profile.antenna_type != null) {
+            profile.antenna_type = String(profile.antenna_type).toLowerCase() === 'directional' ? 'directional' : 'omni';
+        }
+        const roles = Array.isArray(profile.role_compatibility) ? profile.role_compatibility : ['enemy', 'friendly'];
+        profile.role_compatibility = roles
+            .map(role => String(role).toLowerCase())
+            .filter(role => role === 'enemy' || role === 'friendly');
+        if (profile.role_compatibility.length === 0) profile.role_compatibility = ['enemy', 'friendly'];
+        ['manufacturer', 'model', 'notes', 'source_url'].forEach(field => {
+            if (profile[field] != null) profile[field] = String(profile[field]).trim().slice(0, field === 'notes' ? 500 : 240);
+        });
+        return profile;
+    });
+    return {
+        schema_version: 2,
+        pack_id: normalizeProfileId(pack.pack_id),
+        pack_name: String(pack.pack_name).trim().slice(0, 100),
+        templates: normalizedTemplates,
+        profiles: normalizedTemplates
+    };
+}
+
+function loadUserProfilePacks() {
+    try {
+        const raw = localStorage.getItem(PROFILE_PACK_STORAGE_KEY);
+        const packs = raw ? JSON.parse(raw) : [];
+        userProfilePacks = Array.isArray(packs)
+            ? packs.map(pack => validateProfilePack(pack, { allowJammerProfiles: true }))
+            : [];
+    } catch (e) {
+        console.warn('Profile pack storage reset', e);
+        userProfilePacks = [];
+    }
+}
+
+function saveUserProfilePacks() {
+    try {
+        localStorage.setItem(PROFILE_PACK_STORAGE_KEY, JSON.stringify(userProfilePacks));
+    } catch (e) {
+        profileStatus('Could not persist profiles locally.', true);
+    }
+}
+
+function allProfilePacks() {
+    return builtInProfilePack ? [builtInProfilePack, ...userProfilePacks] : [...userProfilePacks];
+}
+
+function allProfiles(category = 'all') {
+    return allProfilePacks().flatMap(pack => pack.profiles.map(profile => ({
+        ...profile,
+        pack_id: pack.pack_id,
+        pack_name: pack.pack_name,
+        built_in: pack.pack_id === 'specter-builtins',
+        key: `${pack.pack_id}/${profile.id}`
+    }))).filter(profile => category === 'all' || profile.category === category);
+}
+
+function findProfile(key) {
+    return allProfiles('all').find(profile => profile.key === key);
+}
+
+function profileOptionsHtml(category, placeholder) {
+    const profiles = allProfiles(category);
+    const options = [`<option value="">${escapeHtml(placeholder || 'Select profile...')}</option>`];
+    profiles.forEach(profile => {
+        const label = profile.built_in ? profile.name : `${profile.name} (${profile.pack_name})`;
+        options.push(`<option value="${escapeHtml(profile.key)}">${escapeHtml(label)}</option>`);
+    });
+    return options.join('');
+}
+
+function setInputValue(id, value) {
+    if (value == null) return false;
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.value = value;
+    return true;
+}
+
+function applyProfileToSidebar(profile, target) {
+    if (!profile) return;
+    let changed = false;
+    if (target === 'ea-radio') {
+        changed = setInputValue('freq_mhz', profile.frequency_mhz) || changed;
+        changed = setInputValue('enemy_tx_w', profile.tx_power_w) || changed;
+        changed = setInputValue('enemy_tx_gain', profile.antenna_gain_dbi) || changed;
+        changed = setInputValue('enemy_rx_gain', profile.antenna_gain_dbi) || changed;
+        changed = setInputValue('rx_sensitivity', profile.rx_sensitivity_dbm) || changed;
+    } else if (target === 'ea-receiver') {
+        changed = setInputValue('freq_mhz', profile.frequency_mhz) || changed;
+        changed = setInputValue('rx_sensitivity', profile.rx_sensitivity_dbm) || changed;
+        changed = setInputValue('friendly_rx_gain', profile.antenna_gain_dbi) || changed;
+    } else if (target === 'ea-jammer') {
+        changed = setInputValue('freq_mhz', profile.frequency_mhz) || changed;
+        changed = setInputValue('jammer_tx_w', profile.tx_power_w) || changed;
+        changed = setInputValue('jammer_tx_gain', profile.antenna_gain_dbi) || changed;
+    }
+    if (changed) {
+        updateFrequencyHoppingControls();
+        markDirty('Profile applied.');
+        recalculateAll();
+    }
+}
+
+function applyProfileToNode(team, id, profile) {
+    const node = findNode(team, id);
+    if (!node || !profile) return;
+    if (profile.antenna_type) node.antennaType = profile.antenna_type;
+    if (profile.beamwidth_deg != null) node.antennaBeamwidth = Number(profile.beamwidth_deg);
+    if (profile.antenna_height_m != null) node.antennaHeightAgl = Number(profile.antenna_height_m);
+    if (profile.antenna_gain_dbi != null) {
+        if (team === 'red') {
+            setInputValue('enemy_tx_gain', profile.antenna_gain_dbi);
+            setInputValue('enemy_rx_gain', profile.antenna_gain_dbi);
+        } else if (team === 'blue') {
+            setInputValue('jammer_tx_gain', profile.antenna_gain_dbi);
+        }
+    }
+    if (team === 'red') bindRedPopup(id); else bindBluePopup(id);
+    node.marker.openPopup();
+    markDirty('Antenna profile applied.');
+    recalculateAll();
+}
+
+function applyProfileToEpSystem(nodeId, sysId, profile, target) {
+    const node = epNodes.find(n => n.id === nodeId);
+    const sys = node && node.systems.find(s => s.id === sysId);
+    if (!sys || !profile) return;
+    clearEpNodeRings(node);
+    if (target === 'radio') {
+        if (profile.frequency_mhz != null) sys.freqMhz = Number(profile.frequency_mhz);
+        if (profile.tx_power_w != null) sys.txPowerW = Number(profile.tx_power_w);
+        if (profile.antenna_gain_dbi != null) sys.txGainDbi = Number(profile.antenna_gain_dbi);
+    } else if (target === 'antenna') {
+        if (profile.antenna_type) sys.antennaType = profile.antenna_type;
+        if (profile.beamwidth_deg != null) sys.antennaBeamwidth = Number(profile.beamwidth_deg);
+        if (profile.antenna_height_m != null) sys.antennaHeightAgl = Number(profile.antenna_height_m);
+        if (profile.antenna_gain_dbi != null) sys.txGainDbi = Number(profile.antenna_gain_dbi);
+    }
+    updateEpWorkbench();
+    markDirty('EP profile applied.');
+}
+
+function renderProfileControls() {
+    const category = document.getElementById('profile-category-filter')?.value || 'radio';
+    const librarySelect = document.getElementById('profile-library-select');
+    if (librarySelect) librarySelect.innerHTML = profileOptionsHtml(category, 'Select profile...');
+    const deleteBtn = document.getElementById('btn-profile-delete');
+    const selectedProfile = findProfile(librarySelect?.value);
+    if (deleteBtn) deleteBtn.disabled = !selectedProfile || selectedProfile.built_in;
+
+    const radioSelect = document.getElementById('ea-radio-profile-select');
+    if (radioSelect) radioSelect.innerHTML = profileOptionsHtml('radio', 'Select radio...');
+    const receiverSelect = document.getElementById('ea-receiver-profile-select');
+    if (receiverSelect) receiverSelect.innerHTML = profileOptionsHtml('receiver', 'Select receiver...');
+    const jammerSelect = document.getElementById('ea-jammer-profile-select');
+    if (jammerSelect) jammerSelect.innerHTML = profileOptionsHtml('jammer', 'No built-in jammer profiles');
+    updateEpWorkbench();
+}
+
+function mergeUserProfilePacks(packs) {
+    if (!Array.isArray(packs)) return 0;
+    let count = 0;
+    packs.forEach(pack => {
+        const normalized = validateProfilePack(pack, { allowJammerProfiles: true });
+        if (normalized.pack_id === 'specter-builtins') {
+            throw new Error('Profile pack_id "specter-builtins" is reserved.');
+        }
+        const existingIdx = userProfilePacks.findIndex(p => p.pack_id === normalized.pack_id);
+        if (existingIdx >= 0) userProfilePacks[existingIdx] = normalized;
+        else userProfilePacks.push(normalized);
+        count++;
+    });
+    saveUserProfilePacks();
+    renderProfileControls();
+    renderLibraryControls();
+    return count;
+}
+
+function scenarioProfileLibraryState() {
+    return { packs: userProfilePacks };
+}
+
+function saveCurrentProfile() {
+    const category = document.getElementById('profile-category-filter')?.value;
+    if (!PROFILE_CATEGORIES.includes(category)) {
+        profileStatus('Choose a specific category first.', true);
+        return;
+    }
+    const name = prompt('Profile name:');
+    if (!name || !name.trim()) return;
+    const profile = {
+        id: normalizeProfileId(name),
+        name: name.trim(),
+        category,
+        notes: 'User-created profile'
+    };
+    if (category === 'radio') {
+        profile.frequency_mhz = Number(document.getElementById('freq_mhz').value);
+        profile.tx_power_w = Number(document.getElementById('enemy_tx_w').value);
+        profile.antenna_gain_dbi = Number(document.getElementById('enemy_tx_gain').value);
+        profile.rx_sensitivity_dbm = Number(document.getElementById('rx_sensitivity').value);
+    } else if (category === 'receiver') {
+        profile.frequency_mhz = Number(document.getElementById('freq_mhz').value);
+        profile.antenna_gain_dbi = Number(document.getElementById('friendly_rx_gain').value);
+        profile.rx_sensitivity_dbm = Number(document.getElementById('rx_sensitivity').value);
+    } else if (category === 'jammer') {
+        profile.frequency_mhz = Number(document.getElementById('freq_mhz').value);
+        profile.tx_power_w = Number(document.getElementById('jammer_tx_w').value);
+        profile.antenna_gain_dbi = Number(document.getElementById('jammer_tx_gain').value);
+    } else if (category === 'antenna') {
+        profile.antenna_gain_dbi = Number(document.getElementById('enemy_tx_gain').value);
+        profile.antenna_height_m = 1.5;
+        profile.antenna_type = 'omni';
+        profile.beamwidth_deg = 360;
+    }
+    const pack = userProfilePacks.find(p => p.pack_id === 'user-profiles') || {
+        schema_version: 1,
+        pack_id: 'user-profiles',
+        pack_name: 'User Profiles',
+        profiles: []
+    };
+    pack.profiles = pack.profiles.filter(p => p.id !== profile.id);
+    pack.profiles.push(profile);
+    const normalized = validateProfilePack(pack, { allowJammerProfiles: true });
+    const existingIdx = userProfilePacks.findIndex(p => p.pack_id === normalized.pack_id);
+    if (existingIdx >= 0) userProfilePacks[existingIdx] = normalized;
+    else userProfilePacks.push(normalized);
+    saveUserProfilePacks();
+    renderProfileControls();
+    markDirty('Profile library changed.');
+    profileStatus('Profile saved.');
+}
+
+function exportUserProfilePack() {
+    const pack = {
+        schema_version: 1,
+        pack_id: 'specter-exported-profiles',
+        pack_name: 'SPECTER Exported Profiles',
+        profiles: userProfilePacks.flatMap(pack => pack.profiles.map(profile => ({
+            ...profile,
+            id: normalizeProfileId(`${pack.pack_id}-${profile.id}`)
+        })))
+    };
+    try {
+        const normalized = validateProfilePack(pack, { allowJammerProfiles: true });
+        const blob = new Blob([JSON.stringify(normalized, null, 2) + '\n'], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'specter-equipment-profiles.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        profileStatus('Profile pack exported.');
+    } catch (e) {
+        profileStatus('No valid user profiles to export.', true);
+    }
+}
+
+function initProfileControls() {
+    if (profileLoadPromise) return profileLoadPromise;
+    loadUserProfilePacks();
+    profileLoadPromise = fetch('/static/equipment_profiles.json')
+        .then(r => {
+            if (!r.ok) throw new Error('Built-in profile pack could not be loaded.');
+            return r.json();
+        })
+        .then(pack => {
+            builtInProfilePack = validateProfilePack(pack, { allowJammerProfiles: false });
+            renderProfileControls();
+            profileStatus(`${allProfiles('all').length} profiles loaded.`);
+        })
+        .catch(e => {
+            console.warn('Profile library load failed', e);
+            renderProfileControls();
+            profileStatus('Built-in profiles unavailable.', true);
+        });
+
+    document.getElementById('profile-category-filter')?.addEventListener('change', renderProfileControls);
+    document.getElementById('profile-library-select')?.addEventListener('change', function() {
+        const profile = findProfile(this.value);
+        const deleteBtn = document.getElementById('btn-profile-delete');
+        if (deleteBtn) deleteBtn.disabled = !profile || profile.built_in;
+    });
+    document.getElementById('btn-profile-apply')?.addEventListener('click', function() {
+        const profile = findProfile(document.getElementById('profile-library-select')?.value);
+        if (!profile) return;
+        if (profile.category === 'radio') applyProfileToSidebar(profile, 'ea-radio');
+        else if (profile.category === 'receiver') applyProfileToSidebar(profile, 'ea-receiver');
+        else if (profile.category === 'jammer') applyProfileToSidebar(profile, 'ea-jammer');
+        else profileStatus('Select an antenna from a node popup or EP system.', true);
+    });
+    document.getElementById('btn-profile-save-current')?.addEventListener('click', saveCurrentProfile);
+    document.getElementById('btn-profile-delete')?.addEventListener('click', function() {
+        const profile = findProfile(document.getElementById('profile-library-select')?.value);
+        if (!profile || profile.built_in) return;
+        const pack = userProfilePacks.find(p => p.pack_id === profile.pack_id);
+        if (!pack) return;
+        pack.profiles = pack.profiles.filter(p => p.id !== profile.id);
+        userProfilePacks = userProfilePacks.filter(p => p.profiles.length > 0);
+        saveUserProfilePacks();
+        renderProfileControls();
+        markDirty('Profile library changed.');
+        profileStatus('Profile deleted.');
+    });
+    document.getElementById('btn-profile-export')?.addEventListener('click', exportUserProfilePack);
+    document.getElementById('btn-profile-import')?.addEventListener('click', () => document.getElementById('profile-pack-input')?.click());
+    document.getElementById('profile-pack-input')?.addEventListener('change', function() {
+        const file = this.files && this.files[0];
+        this.value = '';
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const pack = JSON.parse(reader.result);
+                mergeUserProfilePacks([pack]);
+                markDirty('Profile pack imported.');
+                profileStatus('Profile pack imported.');
+            } catch (e) {
+                profileStatus(e.message, true);
+                alert('Could not import profile pack: ' + e.message);
+            }
+        };
+        reader.readAsText(file);
+    });
+    document.querySelectorAll('[data-profile-apply]').forEach(select => {
+        select.addEventListener('change', function() {
+            const profile = findProfile(this.value);
+            if (profile) applyProfileToSidebar(profile, this.dataset.profileApply);
+            this.value = '';
+        });
+    });
+    return profileLoadPromise;
+}
+
+window.applyNodeAntennaProfile = function(team, id, key) {
+    const profile = findProfile(key);
+    if (profile) applyProfileToNode(team, id, profile);
+};
+
+window.applyEpProfile = function(nodeId, sysId, key, target) {
+    const profile = findProfile(key);
+    if (profile) applyProfileToEpSystem(nodeId, sysId, profile, target);
+};
+
+function allNodeTemplates(role = 'all') {
+    return allProfilePacks().flatMap(pack => (pack.templates || pack.profiles || []).map(template => ({
+        ...template,
+        pack_id: pack.pack_id,
+        pack_name: pack.pack_name,
+        built_in: pack.pack_id === 'specter-builtins',
+        key: `${pack.pack_id}/${template.id}`
+    }))).filter(template => {
+        if (template.equipment_type === 'antenna') return false;
+        if (role === 'all') return true;
+        const target = role === 'red' ? 'enemy' : 'friendly';
+        return (template.role_compatibility || ['enemy', 'friendly']).includes(target);
+    });
+}
+
+function findNodeTemplate(key) {
+    return allNodeTemplates('all').find(template => template.key === key);
+}
+
+function epSystemTemplateOptionsHtml() {
+    const templates = allNodeTemplates('all').filter(template => template.equipment_type !== 'jammer');
+    return ['<option value="">Select system...</option>'].concat(templates.map(template => {
+        const source = template.built_in ? 'Built-in' : template.pack_name;
+        return `<option value="${escapeHtml(template.key)}">${escapeHtml(template.name)} - ${escapeHtml(source)}</option>`;
+    })).join('');
+}
+
+function equipmentFromTemplate(template) {
+    return {
+        template_id: template?.key || '',
+        name: template?.name || '',
+        equipment_type: template?.equipment_type || 'radio',
+        frequency_mhz: Number(template?.frequency_mhz ?? 150),
+        tx_power_w: Number(template?.tx_power_w ?? 5),
+        rx_sensitivity_dbm: Number(template?.rx_sensitivity_dbm ?? -90),
+        antenna_gain_dbi: Number(template?.antenna_gain_dbi ?? 0),
+        rx_gain_dbi: Number(template?.rx_gain_dbi ?? template?.antenna_gain_dbi ?? 0),
+        antenna_type: template?.antenna_type || 'omni',
+        beamwidth_deg: Number(template?.beamwidth_deg ?? 360),
+        antenna_height_m: Number(template?.antenna_height_m ?? 1),
+        notes: template?.notes || '',
+        source_url: template?.source_url || ''
+    };
+}
+
+function currentFhDefaults() {
+    return {
+        apply_fh: !!document.getElementById('fh_toggle')?.checked,
+        channel_bw_khz: Number(document.getElementById('enemy_bw_khz')?.value || 25),
+        jammer_bw_khz: Number(document.getElementById('jammer_bw_khz')?.value || 20000)
+    };
+}
+
+function equipmentFromSidebar(type) {
+    const fh = currentFhDefaults();
+    if (type === 'blue') {
+        return {
+            template_id: '',
+            name: '',
+            equipment_type: 'jammer',
+            frequency_mhz: Number(document.getElementById('freq_mhz').value || 150),
+            tx_power_w: Number(document.getElementById('jammer_tx_w').value || 20),
+            rx_sensitivity_dbm: Number(document.getElementById('rx_sensitivity').value || -90),
+            antenna_gain_dbi: Number(document.getElementById('jammer_tx_gain').value || 0),
+            rx_gain_dbi: Number(document.getElementById('friendly_rx_gain').value || 0),
+            antenna_type: 'omni',
+            beamwidth_deg: 360,
+            antenna_height_m: 1,
+            apply_fh: false,
+            channel_bw_khz: fh.channel_bw_khz,
+            jammer_bw_khz: fh.jammer_bw_khz
+        };
+    }
+    return {
+        template_id: '',
+        name: '',
+        equipment_type: 'radio',
+        frequency_mhz: Number(document.getElementById('freq_mhz').value || 150),
+        tx_power_w: Number(document.getElementById('enemy_tx_w').value || 5),
+        rx_sensitivity_dbm: Number(document.getElementById('rx_sensitivity').value || -90),
+        antenna_gain_dbi: Number(document.getElementById('enemy_tx_gain').value || 0),
+        rx_gain_dbi: Number(document.getElementById('enemy_rx_gain').value || 0),
+        antenna_type: 'omni',
+        beamwidth_deg: 360,
+        antenna_height_m: 1,
+        apply_fh: fh.apply_fh,
+        channel_bw_khz: fh.channel_bw_khz,
+        jammer_bw_khz: fh.jammer_bw_khz
+    };
+}
+
+function normalizeEquipmentConfig(equipment, type = 'red') {
+    const defaults = equipmentFromSidebar(type);
+    const merged = { ...defaults, ...(equipment || {}) };
+    merged.equipment_type = PROFILE_CATEGORIES.includes(merged.equipment_type) ? merged.equipment_type : defaults.equipment_type;
+    merged.frequency_mhz = Number(merged.frequency_mhz || defaults.frequency_mhz);
+    merged.tx_power_w = Number(merged.tx_power_w || defaults.tx_power_w);
+    merged.rx_sensitivity_dbm = Number(merged.rx_sensitivity_dbm ?? defaults.rx_sensitivity_dbm);
+    merged.antenna_gain_dbi = Number(merged.antenna_gain_dbi ?? defaults.antenna_gain_dbi);
+    merged.rx_gain_dbi = Number(merged.rx_gain_dbi ?? merged.antenna_gain_dbi ?? defaults.rx_gain_dbi);
+    merged.antenna_type = merged.antenna_type === 'directional' ? 'directional' : 'omni';
+    merged.beamwidth_deg = Math.max(1, Math.min(360, Number(merged.beamwidth_deg || defaults.beamwidth_deg)));
+    merged.antenna_height_m = Math.max(1, Number(merged.antenna_height_m || defaults.antenna_height_m));
+    merged.apply_fh = !!merged.apply_fh;
+    merged.channel_bw_khz = Math.max(0.001, Number(merged.channel_bw_khz || defaults.channel_bw_khz || 25));
+    merged.jammer_bw_khz = Math.max(0.001, Number(merged.jammer_bw_khz || defaults.jammer_bw_khz || 20000));
+    return merged;
+}
+
+function applyEquipmentToNode(node, equipment, type) {
+    node.equipment = normalizeEquipmentConfig(equipment, type);
+    node.antennaType = node.equipment.antenna_type;
+    node.antennaBeamwidth = node.equipment.beamwidth_deg;
+    node.antennaHeightAgl = node.equipment.antenna_height_m;
+}
+
+function nodeEquipment(node, type) {
+    if (!node.equipment) applyEquipmentToNode(node, equipmentFromSidebar(type), type);
+    return node.equipment;
+}
+
+function equipmentScenarioState(node, type) {
+    return normalizeEquipmentConfig(nodeEquipment(node, type), type);
+}
+
+function frequencyLockedForEquipment(equipmentType) {
+    return equipmentType === 'receiver' || equipmentType === 'jammer';
+}
+
+function updateSidebarFrequencyLock(equipmentType) {
+    const input = document.getElementById('freq_mhz');
+    const label = document.getElementById('freq-label');
+    const note = document.getElementById('freq-lock-note');
+    if (!input || !label) return;
+    const locked = frequencyLockedForEquipment(equipmentType);
+    input.disabled = locked;
+    if (note) note.style.display = locked ? 'block' : 'none';
+    if (equipmentType === 'jammer') label.textContent = 'Target Frequency (MHz)';
+    else if (equipmentType === 'receiver') label.textContent = 'Reference Frequency (MHz)';
+    else label.textContent = 'Frequency (MHz)';
+}
+
+function updateBuilderFrequencyLock() {
+    const type = document.getElementById('builder-equipment-type')?.value || 'radio';
+    const input = document.getElementById('builder-frequency');
+    const label = document.getElementById('builder-frequency-label');
+    const note = document.getElementById('builder-frequency-note');
+    if (!input || !label) return;
+    const locked = frequencyLockedForEquipment(type);
+    input.disabled = locked;
+    if (note) note.style.display = locked ? 'block' : 'none';
+    if (type === 'jammer') label.textContent = 'Target MHz';
+    else if (type === 'receiver') label.textContent = 'Reference MHz';
+    else label.textContent = 'Freq MHz';
+}
+
+function populateSidebarFromNode(type, node) {
+    if (!node) return;
+    const equipment = nodeEquipment(node, type);
+    syncingSidebarFromNode = true;
+    document.getElementById('freq_mhz').value = equipment.frequency_mhz;
+    document.getElementById('rx_sensitivity').value = equipment.rx_sensitivity_dbm;
+    document.getElementById('fh_toggle').checked = !!equipment.apply_fh;
+    document.getElementById('enemy_bw_khz').value = equipment.channel_bw_khz;
+    document.getElementById('jammer_bw_khz').value = equipment.jammer_bw_khz;
+    updateFrequencyHoppingControls();
+    if (type === 'red') {
+        document.getElementById('enemy_tx_w').value = equipment.tx_power_w;
+        document.getElementById('enemy_tx_gain').value = equipment.antenna_gain_dbi;
+        document.getElementById('enemy_rx_gain').value = equipment.rx_gain_dbi;
+    } else {
+        document.getElementById('jammer_tx_w').value = equipment.tx_power_w;
+        document.getElementById('jammer_tx_gain').value = equipment.antenna_gain_dbi;
+        document.getElementById('friendly_rx_gain').value = equipment.rx_gain_dbi;
+    }
+    syncingSidebarFromNode = false;
+    updateSidebarFrequencyLock(equipment.equipment_type);
+    const status = document.getElementById('selected-node-status');
+    if (status) status.textContent = `Editing ${type === 'red' ? 'Enemy' : 'Friendly'} ${node.name}: ${equipment.name || equipment.equipment_type}`;
+}
+
+function selectEquipmentNode(type, id) {
+    const node = findNode(type, id);
+    if (!node || (type !== 'red' && type !== 'blue')) return;
+    selectedEquipmentNode = { type, id };
+    populateSidebarFromNode(type, node);
+}
+
+function syncSelectedNodeFromSidebar(changedId) {
+    if (syncingSidebarFromNode || !selectedEquipmentNode) return false;
+    const node = findNode(selectedEquipmentNode.type, selectedEquipmentNode.id);
+    if (!node) return false;
+    const equipment = nodeEquipment(node, selectedEquipmentNode.type);
+    if (changedId === 'freq_mhz') {
+        if (frequencyLockedForEquipment(equipment.equipment_type)) return false;
+        equipment.frequency_mhz = Number(document.getElementById('freq_mhz').value || equipment.frequency_mhz);
+    }
+    if (changedId === 'rx_sensitivity') equipment.rx_sensitivity_dbm = Number(document.getElementById('rx_sensitivity').value || equipment.rx_sensitivity_dbm);
+    if (changedId === 'fh_toggle') equipment.apply_fh = !!document.getElementById('fh_toggle').checked;
+    if (changedId === 'enemy_bw_khz') equipment.channel_bw_khz = Math.max(0.001, Number(document.getElementById('enemy_bw_khz').value || equipment.channel_bw_khz));
+    if (changedId === 'jammer_bw_khz') equipment.jammer_bw_khz = Math.max(0.001, Number(document.getElementById('jammer_bw_khz').value || equipment.jammer_bw_khz));
+    if (selectedEquipmentNode.type === 'red') {
+        if (changedId === 'enemy_tx_w') equipment.tx_power_w = Number(document.getElementById('enemy_tx_w').value || equipment.tx_power_w);
+        if (changedId === 'enemy_tx_gain') equipment.antenna_gain_dbi = Number(document.getElementById('enemy_tx_gain').value || equipment.antenna_gain_dbi);
+        if (changedId === 'enemy_rx_gain') equipment.rx_gain_dbi = Number(document.getElementById('enemy_rx_gain').value || equipment.rx_gain_dbi);
+    } else {
+        if (changedId === 'jammer_tx_w') equipment.tx_power_w = Number(document.getElementById('jammer_tx_w').value || equipment.tx_power_w);
+        if (changedId === 'jammer_tx_gain') equipment.antenna_gain_dbi = Number(document.getElementById('jammer_tx_gain').value || equipment.antenna_gain_dbi);
+        if (changedId === 'friendly_rx_gain') equipment.rx_gain_dbi = Number(document.getElementById('friendly_rx_gain').value || equipment.rx_gain_dbi);
+    }
+    applyEquipmentToNode(node, equipment, selectedEquipmentNode.type);
+    if (selectedEquipmentNode.type === 'red') bindRedPopup(node.id); else bindBluePopup(node.id);
+    return true;
+}
+
+function renderLibraryControls() {
+    const role = document.getElementById('library-role-select')?.value || 'red';
+    const select = document.getElementById('library-template-select');
+    if (!select) return;
+    const previous = select.value;
+    const templates = allNodeTemplates(role);
+    select.innerHTML = ['<option value="">Select template...</option>'].concat(templates.map(template => {
+        const source = template.built_in ? 'Built-in' : template.pack_name;
+        return `<option value="${escapeHtml(template.key)}">${escapeHtml(template.name)} - ${escapeHtml(source)}</option>`;
+    })).join('');
+    if (templates.some(t => t.key === previous)) select.value = previous;
+    renderLibraryDetails();
+}
+
+function renderLibraryDetails() {
+    const template = findNodeTemplate(document.getElementById('library-template-select')?.value);
+    const details = document.getElementById('library-template-details');
+    const deleteBtn = document.getElementById('btn-delete-library-template');
+    if (deleteBtn) deleteBtn.disabled = !template || template.built_in;
+    if (!details) return;
+    if (!template) {
+        details.textContent = 'Select a template to place it on the map.';
+        return;
+    }
+    details.innerHTML = `${escapeHtml(template.equipment_type)} | ${escapeHtml(template.frequency_mhz || '')} MHz | ${escapeHtml(template.tx_power_w || '')} W<br>${escapeHtml(template.notes || '')}`;
+}
+
+function saveUserLibrary() {
+    saveUserProfilePacks();
+    renderLibraryControls();
+}
+
+function scenarioProfileLibraryState() {
+    return { packs: userProfilePacks.map(pack => ({ ...pack, profiles: undefined })) };
+}
+
+function saveBuilderTemplate() {
+    const name = document.getElementById('builder-name').value.trim();
+    if (!name) {
+        libraryStatus('Template name is required.', true);
+        return;
+    }
+    const roleValue = document.getElementById('builder-role-compatibility').value;
+    const roles = roleValue === 'enemy' ? ['enemy'] : roleValue === 'friendly' ? ['friendly'] : ['enemy', 'friendly'];
+    const template = {
+        id: normalizeProfileId(name),
+        name,
+        role_compatibility: roles,
+        equipment_type: document.getElementById('builder-equipment-type').value,
+        frequency_mhz: Number(document.getElementById('builder-frequency').value),
+        tx_power_w: Number(document.getElementById('builder-power').value),
+        rx_sensitivity_dbm: Number(document.getElementById('builder-rx-sensitivity').value),
+        antenna_gain_dbi: Number(document.getElementById('builder-antenna-gain').value),
+        antenna_type: document.getElementById('builder-antenna-type').value,
+        beamwidth_deg: Number(document.getElementById('builder-beamwidth').value),
+        antenna_height_m: Number(document.getElementById('builder-height').value),
+        apply_fh: document.getElementById('builder-apply-fh').value === 'true',
+        channel_bw_khz: Number(document.getElementById('builder-channel-bw').value),
+        jammer_bw_khz: Number(document.getElementById('builder-jammer-bw').value),
+        notes: document.getElementById('builder-notes').value.trim()
+    };
+    const pack = userProfilePacks.find(p => p.pack_id === 'user-node-templates') || {
+        schema_version: 2,
+        pack_id: 'user-node-templates',
+        pack_name: 'User Node Templates',
+        templates: [],
+        profiles: []
+    };
+    pack.templates = (pack.templates || []).filter(t => t.id !== template.id);
+    pack.templates.push(template);
+    const normalized = validateProfilePack(pack, { allowJammerProfiles: true });
+    const idx = userProfilePacks.findIndex(p => p.pack_id === normalized.pack_id);
+    if (idx >= 0) userProfilePacks[idx] = normalized;
+    else userProfilePacks.push(normalized);
+    saveUserLibrary();
+    markDirty('Library template saved.');
+    libraryStatus('Template saved.');
+}
+
+function libraryStatus(message, isError = false) {
+    const el = document.getElementById('library-status');
+    if (!el) return;
+    el.style.color = isError ? '#ff7777' : '#aaa';
+    el.textContent = message || '';
+}
+
+function startLibraryPlacement() {
+    const templateKey = document.getElementById('library-template-select')?.value;
+    const role = document.getElementById('library-role-select')?.value || 'red';
+    const template = findNodeTemplate(templateKey);
+    if (!template) {
+        libraryStatus('Select a template first.', true);
+        return;
+    }
+    pendingLibraryPlacement = { team: role, templateKey };
+    setMode(role === 'red' ? 'place-library-red' : 'place-library-blue');
+    libraryStatus(`Click the map to place ${template.name}.`);
+}
+
+function exportUserLibrary() {
+    const pack = {
+        schema_version: 2,
+        pack_id: 'specter-exported-node-templates',
+        pack_name: 'SPECTER Exported Node Templates',
+        templates: userProfilePacks.flatMap(pack => (pack.templates || []).map(template => ({
+            ...template,
+            id: normalizeProfileId(`${pack.pack_id}-${template.id}`)
+        })))
+    };
+    try {
+        const normalized = validateProfilePack(pack, { allowJammerProfiles: true });
+        const blob = new Blob([JSON.stringify({ ...normalized, profiles: undefined }, null, 2) + '\n'], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'specter-node-library.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        libraryStatus('Library exported.');
+    } catch (e) {
+        libraryStatus('No user templates to export.', true);
+    }
+}
+
+function initEquipmentLibraryControls() {
+    initProfileControls();
+    document.querySelectorAll('.workbench-tab').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.workbench-tab').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.workbench-tab-panel').forEach(panel => panel.classList.remove('active'));
+            this.classList.add('active');
+            document.getElementById(`tab-${this.dataset.workbenchTab}`)?.classList.add('active');
+        });
+    });
+    document.getElementById('btn-about-support')?.addEventListener('click', () => {
+        document.querySelector('.workbench-tab[data-workbench-tab="about"]')?.click();
+    });
+    document.getElementById('library-role-select')?.addEventListener('change', renderLibraryControls);
+    document.getElementById('library-template-select')?.addEventListener('change', renderLibraryDetails);
+    document.getElementById('builder-equipment-type')?.addEventListener('change', updateBuilderFrequencyLock);
+    document.getElementById('btn-place-library-node')?.addEventListener('click', startLibraryPlacement);
+    document.getElementById('btn-builder-save')?.addEventListener('click', saveBuilderTemplate);
+    document.getElementById('btn-library-export')?.addEventListener('click', exportUserLibrary);
+    document.getElementById('btn-library-import')?.addEventListener('click', () => document.getElementById('library-pack-input')?.click());
+    document.getElementById('library-pack-input')?.addEventListener('change', function() {
+        const file = this.files && this.files[0];
+        this.value = '';
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const pack = JSON.parse(reader.result);
+                mergeUserProfilePacks([pack]);
+                renderLibraryControls();
+                markDirty('Library imported.');
+                libraryStatus('Library imported.');
+            } catch (e) {
+                libraryStatus(e.message, true);
+            }
+        };
+        reader.readAsText(file);
+    });
+    document.getElementById('btn-delete-library-template')?.addEventListener('click', function() {
+        const template = findNodeTemplate(document.getElementById('library-template-select')?.value);
+        if (!template || template.built_in) return;
+        const pack = userProfilePacks.find(p => p.pack_id === template.pack_id);
+        if (!pack) return;
+        pack.templates = (pack.templates || []).filter(t => t.id !== template.id);
+        pack.profiles = pack.templates;
+        userProfilePacks = userProfilePacks.filter(p => (p.templates || []).length > 0);
+        saveUserLibrary();
+        markDirty('Library template deleted.');
+        libraryStatus('Template deleted.');
+    });
+    profileLoadPromise?.then(renderLibraryControls);
+    updateBuilderFrequencyLock();
+    updateSidebarFrequencyLock('radio');
 }
 
 function makeEdgeLabel(polygonPoints, centerLat, centerLon, radiusM, text, offsetPx = [0, 0]) {
@@ -175,23 +1645,38 @@ function highlightNode(color, id, on) {
 // NODE PLACEMENT
 // ============================================================
 
-function placeRedNode(latlng) {
+function libraryNodeName(template, fallbackId) {
+    const base = String(template?.name || fallbackId).slice(0, 20);
+    const existing = new Set([...redNodes, ...blueNodes].map(n => n.name));
+    if (!existing.has(base)) return base;
+    for (let i = 2; i < 100; i++) {
+        const candidate = `${base.slice(0, 17)} ${i}`.slice(0, 20);
+        if (!existing.has(candidate)) return candidate;
+    }
+    return fallbackId;
+}
+
+function placeRedNode(latlng, template = null) {
     redCounter++;
     const id = 'R' + redCounter;
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('red', id); });
     const node = { id, name: id, marker, esActive: false, esCircle: null, esLabel: null, elevationM: null,
                    antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0 };
-    marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); });
+    if (template) node.name = libraryNodeName(template, id);
+    applyEquipmentToNode(node, template ? equipmentFromTemplate(template) : equipmentFromSidebar('red'), 'red');
+    marker.on('dragend', function() { fetchAndStoreElevation(node); markDirty('Node moved.'); recalculateAll(); });
     marker.on('popupclose', function() { bindRedPopup(id); });
     redNodes.push(node);
     bindRedPopup(id);
     updateMGRSTooltips();
     updateLinkAllBtn();
     fetchAndStoreElevation(node);
+    selectEquipmentNode('red', id);
+    markDirty('Enemy node added.');
 }
 
-function placeBlueNode(latlng) {
+function placeBlueNode(latlng, template = null) {
     blueCounter++;
     const id = 'B' + blueCounter;
     const marker = L.marker(latlng, { icon: blueIcon, draggable: true }).addTo(map);
@@ -199,12 +1684,16 @@ function placeBlueNode(latlng) {
     const node = { id, name: id, marker, elevationM: null,
                    antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0,
                    footprintActive: false, footprintCircle: null, fpLabel: null, footprintPolygonPoints: null };
-    marker.on('dragend', function() { fetchAndStoreElevation(node); recalculateAll(); scheduleFootprintUpdate(); });
+    if (template) node.name = libraryNodeName(template, id);
+    applyEquipmentToNode(node, template ? equipmentFromTemplate(template) : equipmentFromSidebar('blue'), 'blue');
+    marker.on('dragend', function() { fetchAndStoreElevation(node); markDirty('Node moved.'); recalculateAll(); scheduleFootprintUpdate(); });
     marker.on('popupclose', function() { bindBluePopup(id); });
     blueNodes.push(node);
     bindBluePopup(id);
     updateMGRSTooltips();
     fetchAndStoreElevation(node);
+    selectEquipmentNode('blue', id);
+    markDirty('Friendly node added.');
 }
 
 function placeBlackNode(latlng) {
@@ -212,11 +1701,12 @@ function placeBlackNode(latlng) {
     const id = 'M' + blackCounter;
     const marker = L.marker(latlng, { icon: blackIcon, draggable: true }).addTo(map);
     const node = { id, name: id, marker };
-    marker.on('dragend', function() { updateMGRSTooltips(); });
+    marker.on('dragend', function() { markDirty('Marker moved.'); updateMGRSTooltips(); });
     marker.on('popupclose', function() { bindBlackPopup(id); });
     blackNodes.push(node);
     bindBlackPopup(id);
     updateMGRSTooltips();
+    markDirty('Marker added.');
 }
 
 // ============================================================
@@ -328,6 +1818,7 @@ function renameNode(type, id) {
     node.marker.openPopup();
     updateMGRSTooltips();
     renderResults();
+    markDirty('Node renamed.');
 }
 
 // ============================================================
@@ -338,9 +1829,11 @@ window.setNodeAntennaType = function(team, id, value) {
     const node = findNode(team, id);
     if (!node) return;
     node.antennaType = value;
+    nodeEquipment(node, team).antenna_type = value;
     // Rebind popup so the directional sub-section shows/hides correctly
     if (team === 'red') bindRedPopup(id); else bindBluePopup(id);
     node.marker.openPopup();
+    markDirty('Antenna settings changed.');
     recalculateAll();
 };
 
@@ -348,6 +1841,7 @@ window.setNodeAntennaAzimuth = function(team, id, value) {
     const node = findNode(team, id);
     if (!node) return;
     node.antennaAzimuth = ((parseFloat(value) || 0) % 360 + 360) % 360;
+    markDirty('Antenna settings changed.');
     // recalculateAll is triggered by onchange on the input (fires on blur/enter)
 };
 
@@ -355,6 +1849,8 @@ window.setNodeAntennaBeamwidth = function(team, id, value) {
     const node = findNode(team, id);
     if (!node) return;
     node.antennaBeamwidth = Math.max(1, Math.min(360, parseFloat(value) || 90));
+    nodeEquipment(node, team).beamwidth_deg = node.antennaBeamwidth;
+    markDirty('Antenna settings changed.');
     // recalculateAll is triggered by onchange on the input (fires on blur/enter)
 };
 
@@ -362,6 +1858,8 @@ window.setNodeAntennaHeight = function(team, id, value) {
     const node = findNode(team, id);
     if (!node) return;
     node.antennaHeightAgl = Math.max(1.0, parseFloat(value) || 1.0);
+    nodeEquipment(node, team).antenna_height_m = node.antennaHeightAgl;
+    markDirty('Antenna settings changed.');
     // recalculateAll is triggered by onchange on the input (fires on blur/enter)
 };
 
@@ -381,16 +1879,21 @@ window.moveNodeToMGRS = function(type, id, value) {
         updateMGRSTooltips();
         if (type === 'red') {
             fetchAndStoreElevation(node);
+            markDirty('Node moved.');
             recalculateAll();
         } else if (type === 'blue') {
             fetchAndStoreElevation(node);
+            markDirty('Node moved.');
             recalculateAll();
             scheduleFootprintUpdate();
         } else if (type === 'ep') {
             node.lat = lat;
             node.lon = lng;
             clearEpNodeRings(node);
+            markDirty('EP node moved.');
             updateEpWorkbench();
+        } else {
+            markDirty('Marker moved.');
         }
         node.marker.closePopup();
         if (type === 'red') bindRedPopup(id);
@@ -469,6 +1972,8 @@ function handleNodeClick(color, id) {
             createJammingLink(blueId, id);
             setMode(null);
         }
+    } else if (color === 'red' || color === 'blue') {
+        selectEquipmentNode(color, id);
     }
     // In normal mode (activeMode === null), Leaflet's bindPopup opens the popup automatically
 }
@@ -500,6 +2005,7 @@ function createEnemyLink(txId, rxId) {
     });
 
     enemyLinks.push({ id: linkId, txId, rxId, line });
+    markDirty('Enemy link added.');
     recalculateAll();
 }
 
@@ -526,6 +2032,7 @@ function createJammingLink(blueId, rxId) {
     });
 
     jammingLinks.push({ id: linkId, blueId, rxId, line, results: null });
+    markDirty('Jamming link added.');
     recalculateAll();
 }
 
@@ -535,6 +2042,7 @@ function createJammingLink(blueId, rxId) {
 
 window.removeNode = function(color, id) {
     map.closePopup();
+    if (selectedEquipmentNode?.type === color && selectedEquipmentNode?.id === id) selectedEquipmentNode = null;
     if (color === 'red') {
         const node = findNode('red', id);
         if (node) {
@@ -549,6 +2057,7 @@ window.removeNode = function(color, id) {
         enemyLinks  = enemyLinks.filter(l => l.txId !== id && l.rxId !== id);
         jammingLinks.filter(l => l.rxId === id).forEach(l => map.removeLayer(l.line));
         jammingLinks = jammingLinks.filter(l => l.rxId !== id);
+        markDirty('Enemy node removed.');
     } else if (color === 'blue') {
         const node = findNode('blue', id);
         if (node) {
@@ -559,11 +2068,18 @@ window.removeNode = function(color, id) {
         blueNodes = blueNodes.filter(n => n.id !== id);
         jammingLinks.filter(l => l.blueId === id).forEach(l => map.removeLayer(l.line));
         jammingLinks = jammingLinks.filter(l => l.blueId !== id);
+        markDirty('Friendly node removed.');
     } else if (color === 'black') {
         const node = findNode('black', id);
         if (node) map.removeLayer(node.marker);
         blackNodes = blackNodes.filter(n => n.id !== id);
+        markDirty('Marker removed.');
         return;
+    }
+    if (!selectedEquipmentNode) {
+        const status = document.getElementById('selected-node-status');
+        if (status) status.textContent = 'No node selected. Editing defaults for new blank nodes.';
+        updateSidebarFrequencyLock('radio');
     }
     recalculateAll();
 };
@@ -573,6 +2089,7 @@ function removeEnemyLink(linkId) {
     const link = enemyLinks.find(l => l.id === linkId);
     if (link) map.removeLayer(link.line);
     enemyLinks = enemyLinks.filter(l => l.id !== linkId);
+    markDirty('Enemy link removed.');
     recalculateAll();
 }
 
@@ -581,6 +2098,7 @@ function removeJammingLink(linkId) {
     const link = jammingLinks.find(l => l.id === linkId);
     if (link) map.removeLayer(link.line);
     jammingLinks = jammingLinks.filter(l => l.id !== linkId);
+    markDirty('Jamming link removed.');
     renderResults();
 }
 
@@ -723,13 +2241,30 @@ function recalculateAll() {
     const done = () => { if (--pending === 0) renderResults(); };
 
     tasks.forEach(({ jLink, eLink, i, jammerDistKm, enemyDistKm }) => {
-        const payload = { ...params, enemy_dist_km: enemyDistKm, jammer_dist_km: jammerDistKm };
-
         // Include node coordinates so the backend can perform elevation-aware LOS analysis
         // and bearing-based directional antenna gain calculations
         const blue = findNode('blue', jLink.blueId);
         const rx   = findNode('red',  jLink.rxId);
         const tx   = findNode('red',  eLink.txId);
+        const txEq = tx ? nodeEquipment(tx, 'red') : {};
+        const rxEq = rx ? nodeEquipment(rx, 'red') : {};
+        const blueEq = blue ? nodeEquipment(blue, 'blue') : {};
+        const payload = {
+            ...params,
+            freq_mhz: txEq.frequency_mhz ?? params.freq_mhz,
+            enemy_tx_w: txEq.tx_power_w ?? params.enemy_tx_w,
+            enemy_tx_gain: txEq.antenna_gain_dbi ?? params.enemy_tx_gain,
+            enemy_rx_gain: rxEq.rx_gain_dbi ?? rxEq.antenna_gain_dbi ?? params.enemy_rx_gain,
+            apply_fh: !!txEq.apply_fh,
+            enemy_bw_khz: txEq.channel_bw_khz ?? params.enemy_bw_khz,
+            jammer_tx_w: blueEq.tx_power_w ?? params.jammer_tx_w,
+            jammer_tx_gain: blueEq.antenna_gain_dbi ?? params.jammer_tx_gain,
+            jammer_bw_khz: blueEq.jammer_bw_khz ?? params.jammer_bw_khz,
+            rx_sensitivity: rxEq.rx_sensitivity_dbm ?? params.rx_sensitivity,
+            friendly_rx_gain: blueEq.rx_gain_dbi ?? params.friendly_rx_gain,
+            enemy_dist_km: enemyDistKm,
+            jammer_dist_km: jammerDistKm
+        };
         if (blue && rx && tx) {
             const bll = blue.marker.getLatLng();
             const rll = rx.marker.getLatLng();
@@ -742,18 +2277,18 @@ function recalculateAll() {
             payload.tx_lon     = tll.lng;
 
             // Per-node antenna parameters
-            payload.tx_antenna_type      = tx.antennaType;
+            payload.tx_antenna_type      = txEq.antenna_type || tx.antennaType;
             payload.tx_azimuth_deg       = tx.antennaAzimuth;
-            payload.tx_beamwidth_deg     = tx.antennaBeamwidth;
-            payload.rx_antenna_type      = rx.antennaType;
+            payload.tx_beamwidth_deg     = txEq.beamwidth_deg || tx.antennaBeamwidth;
+            payload.rx_antenna_type      = rxEq.antenna_type || rx.antennaType;
             payload.rx_azimuth_deg       = rx.antennaAzimuth;
-            payload.rx_beamwidth_deg     = rx.antennaBeamwidth;
-            payload.jammer_antenna_type  = blue.antennaType;
+            payload.rx_beamwidth_deg     = rxEq.beamwidth_deg || rx.antennaBeamwidth;
+            payload.jammer_antenna_type  = blueEq.antenna_type || blue.antennaType;
             payload.jammer_azimuth_deg   = blue.antennaAzimuth;
-            payload.jammer_beamwidth_deg = blue.antennaBeamwidth;
-            payload.tx_antenna_height_m     = tx.antennaHeightAgl;
-            payload.rx_antenna_height_m     = rx.antennaHeightAgl;
-            payload.jammer_antenna_height_m = blue.antennaHeightAgl;
+            payload.jammer_beamwidth_deg = blueEq.beamwidth_deg || blue.antennaBeamwidth;
+            payload.tx_antenna_height_m     = txEq.antenna_height_m || tx.antennaHeightAgl;
+            payload.rx_antenna_height_m     = rxEq.antenna_height_m || rx.antennaHeightAgl;
+            payload.jammer_antenna_height_m = blueEq.antenna_height_m || blue.antennaHeightAgl;
         }
 
         fetch('/calculate_ea', {
@@ -900,6 +2435,7 @@ window.handleOverlapCheck = function(checkbox) {
     }
     clearOverlapLayer();
     document.getElementById('btn-show-overlap').disabled = overlapChecked.size < 2;
+    markDirty('Overlap selection changed.');
 };
 
 function circleToPolygon(lat, lng, radiusKm, n = 36) {
@@ -915,7 +2451,7 @@ function circleToPolygon(lat, lng, radiusKm, n = 36) {
     return pts;
 }
 
-function computeAndShowOverlap() {
+function computeAndShowOverlap(suppressDirty = false) {
     clearOverlapLayer();
     const statusEl = document.getElementById('overlap-status');
 
@@ -952,6 +2488,7 @@ function computeAndShowOverlap() {
         if (clearBtn) clearBtn.style.display = 'block';
         const cornersBtn = document.getElementById('btn-toggle-corners');
         if (cornersBtn) cornersBtn.style.display = 'block';
+        if (!suppressDirty) markDirty('Overlap overlay updated.');
     })
     .catch(() => { if (statusEl) statusEl.textContent = 'Error computing overlap.'; });
 }
@@ -967,6 +2504,7 @@ window.toggleNodeES = function(id) {
     if (!node.esActive) { node.esPolygonPoints = null; node.esRangeKm = null; clearOverlapLayer(); }
     map.closePopup();
     bindRedPopup(id);
+    markDirty('Detection ring toggled.');
     updateESCircles();
     renderOverlapControls();
 };
@@ -1010,14 +2548,19 @@ async function updateESCircles() {
     // Open-Topo-Data public API rate limit (1 req/sec) when multiple nodes are active.
     for (const node of activeESNodes) {
         const ll = node.marker.getLatLng();
+        const eq = nodeEquipment(node, 'red');
         const payload = {
             ...esParams,
+            freq_mhz:            eq.frequency_mhz,
+            enemy_tx_w:          eq.tx_power_w,
+            enemy_tx_gain:       eq.antenna_gain_dbi,
+            rx_sensitivity:      eq.rx_sensitivity_dbm,
             enemy_lat:           ll.lat,
             enemy_lon:           ll.lng,
-            tx_antenna_type:     node.antennaType,
+            tx_antenna_type:     eq.antenna_type || node.antennaType,
             tx_azimuth_deg:      node.antennaAzimuth,
-            tx_beamwidth_deg:    node.antennaBeamwidth,
-            tx_antenna_height_m: node.antennaHeightAgl,
+            tx_beamwidth_deg:    eq.beamwidth_deg || node.antennaBeamwidth,
+            tx_antenna_height_m: eq.antenna_height_m || node.antennaHeightAgl,
         };
 
         try {
@@ -1078,6 +2621,7 @@ window.toggleNodeFootprint = function(id) {
     }
     map.closePopup();
     bindBluePopup(id);
+    markDirty('Jammer footprint toggled.');
     if (node.footprintActive) scheduleFootprintUpdate();
 };
 
@@ -1111,14 +2655,19 @@ async function updateJammerFootprints() {
 
     for (const node of activeNodes) {
         const ll = node.marker.getLatLng();
+        const eq = nodeEquipment(node, 'blue');
         const payload = {
             ...fpParams,
+            freq_mhz:              eq.frequency_mhz,
+            jammer_tx_w:           eq.tx_power_w,
+            jammer_tx_gain:        eq.antenna_gain_dbi,
+            rx_sensitivity:        eq.rx_sensitivity_dbm,
             jammer_lat:            ll.lat,
             jammer_lon:            ll.lng,
-            jammer_antenna_type:   node.antennaType,
+            jammer_antenna_type:   eq.antenna_type || node.antennaType,
             jammer_azimuth_deg:    node.antennaAzimuth,
-            jammer_beamwidth_deg:  node.antennaBeamwidth,
-            jammer_antenna_height_m: node.antennaHeightAgl,
+            jammer_beamwidth_deg:  eq.beamwidth_deg || node.antennaBeamwidth,
+            jammer_antenna_height_m: eq.antenna_height_m || node.antennaHeightAgl,
         };
 
         try {
@@ -1341,6 +2890,7 @@ function toggleEpMode() {
     btn.classList.toggle('active', epModeActive);
     btn.title = epModeActive ? 'Switch to EA/ES Mode' : 'Switch to EP Mode';
     if (epModeActive) setMode(null);
+    markDirty('Mode changed.');
 }
 document.getElementById('btn-ep-mode').addEventListener('click', toggleEpMode);
 
@@ -1360,6 +2910,7 @@ function placeEpNode(latlng) {
         node.lat = e.target.getLatLng().lat;
         node.lon = e.target.getLatLng().lng;
         clearEpNodeRings(node);
+        markDirty('EP node moved.');
         updateMGRSTooltips();
         updateEpWorkbench();
     });
@@ -1367,6 +2918,7 @@ function placeEpNode(latlng) {
     marker.on('popupclose', function() { bindEpPopup(id); });
     updateMGRSTooltips();
     updateEpWorkbench();
+    markDirty('EP node added.');
 }
 
 function bindEpPopup(id) {
@@ -1398,6 +2950,7 @@ window.removeEpNode = function(nodeId) {
     map.removeLayer(node.marker);
     epNodes.splice(idx, 1);
     updateEpWorkbench();
+    markDirty('EP node removed.');
 };
 
 window.addSystemToEpNode = function(nodeId) {
@@ -1421,6 +2974,34 @@ window.addSystemToEpNode = function(nodeId) {
         rangeKm:          null
     });
     updateEpWorkbench();
+    markDirty('EP system added.');
+};
+
+window.addLibrarySystemToEpNode = function(nodeId) {
+    const node = epNodes.find(n => n.id === nodeId);
+    const select = document.getElementById(`ep-library-select-${nodeId}`);
+    const template = select && findNodeTemplate(select.value);
+    if (!node || !template) return;
+    const sysIdx = node.systems.length;
+    node.systems.push({
+        id:               nodeId + '_S' + (sysIdx + 1),
+        name:             template.name || ('System ' + (sysIdx + 1)),
+        freqMhz:          Number(template.frequency_mhz || 150),
+        txPowerW:         Number(template.tx_power_w || 5),
+        txGainDbi:        Number(template.antenna_gain_dbi || 0),
+        antennaType:      template.antenna_type || 'omni',
+        antennaAzimuth:   0,
+        antennaBeamwidth: Number(template.beamwidth_deg || 360),
+        antennaHeightAgl: Number(template.antenna_height_m || 1.0),
+        color:            EP_COLORS[sysIdx % EP_COLORS.length],
+        layer:            null,
+        label:            null,
+        polygonPoints:    null,
+        rangeKm:          null
+    });
+    clearEpNodeRings(node);
+    updateEpWorkbench();
+    markDirty('EP library system added.');
 };
 
 window.removeSystemFromEpNode = function(nodeId, sysId) {
@@ -1428,30 +3009,33 @@ window.removeSystemFromEpNode = function(nodeId, sysId) {
     if (!node) return;
     const sys = node.systems.find(s => s.id === sysId);
     if (sys && sys.layer) map.removeLayer(sys.layer);
+    if (sys && sys.label) map.removeLayer(sys.label);
     node.systems = node.systems.filter(s => s.id !== sysId);
     updateEpWorkbench();
+    markDirty('EP system removed.');
 };
 
 window.epUpdateNodeName = function(nodeId, val) {
     const node = epNodes.find(n => n.id === nodeId);
-    if (node) { node.name = val; updateMGRSTooltips(); }
+    if (node) { node.name = val; updateMGRSTooltips(); markDirty('EP node renamed.'); }
 };
 
 window.epUpdateSysName = function(nodeId, sysId, val) {
     const node = epNodes.find(n => n.id === nodeId);
     const sys  = node && node.systems.find(s => s.id === sysId);
-    if (sys) sys.name = val;
+    if (sys) { sys.name = val; markDirty('EP system renamed.'); }
 };
 
 window.epUpdateSysParam = function(nodeId, sysId, param, val) {
     const node = epNodes.find(n => n.id === nodeId);
     const sys  = node && node.systems.find(s => s.id === sysId);
-    if (sys) sys[param] = val;
+    if (sys) { sys[param] = val; markDirty('EP system changed.'); }
 };
 
 window.calculateEpNode = async function(nodeId) {
     const node = epNodes.find(n => n.id === nodeId);
     if (!node || node.systems.length === 0) return;
+    markDirty('EP rings updated.');
 
     const terrain = document.getElementById('ep_terrain').value;
     const rxSens  = parseFloat(document.getElementById('ep_rx_sensitivity').value);
@@ -1524,6 +3108,12 @@ function updateEpWorkbench() {
                     onclick="this.select()" title="Click to rename node">
                 <button class="ep-node-delete-btn" onclick="removeEpNode('${node.id}')" title="Remove node">✕</button>
             </div>
+            <div class="ep-library-row">
+                <select id="ep-library-select-${node.id}">
+                    ${epSystemTemplateOptionsHtml()}
+                </select>
+                <button class="workbench-btn" onclick="addLibrarySystemToEpNode('${node.id}')">Add From Library</button>
+            </div>
             ${node.systems.length === 0
                 ? '<p class="results-empty" style="margin:2px 0 4px 0;font-size:11px;">No systems — click + Add System.</p>'
                 : node.systems.map(sys => `
@@ -1566,6 +3156,14 @@ function updateEpWorkbench() {
 map.on('click', function(e) {
     if      (activeMode === 'place-red')   placeRedNode(e.latlng);
     else if (activeMode === 'place-blue')  placeBlueNode(e.latlng);
+    else if (activeMode === 'place-library-red' || activeMode === 'place-library-blue') {
+        const template = findNodeTemplate(pendingLibraryPlacement?.templateKey);
+        if (!template) return;
+        if (activeMode === 'place-library-red') placeRedNode(e.latlng, template);
+        else placeBlueNode(e.latlng, template);
+        pendingLibraryPlacement = null;
+        setMode(null);
+    }
     else if (activeMode === 'place-black') placeBlackNode(e.latlng);
     else if (activeMode === 'place-ep')    placeEpNode(e.latlng);
 });
@@ -1574,61 +3172,76 @@ map.on('click', function(e) {
 // LINK ALL / UNLINK ALL
 // ============================================================
 
+const ENEMY_LINK_FREQ_TOLERANCE_MHZ = 0.001;
+
+function nodeCanTransmitComms(node) {
+    return nodeEquipment(node, 'red').equipment_type === 'radio';
+}
+
+function enemyCommsFrequenciesMatch(a, b) {
+    const aFreq = Number(nodeEquipment(a, 'red').frequency_mhz);
+    const bFreq = Number(nodeEquipment(b, 'red').frequency_mhz);
+    return Number.isFinite(aFreq)
+        && Number.isFinite(bFreq)
+        && Math.abs(aFreq - bFreq) <= ENEMY_LINK_FREQ_TOLERANCE_MHZ;
+}
+
+function compatibleEnemyCommsPairs() {
+    const pairs = [];
+    redNodes.forEach(tx => {
+        redNodes.forEach(rx => {
+            if (tx.id === rx.id) return;
+            if (!nodeCanTransmitComms(tx)) return;
+            if (!enemyCommsFrequenciesMatch(tx, rx)) return;
+            pairs.push({ tx, rx });
+        });
+    });
+    return pairs;
+}
+
 function allCommsLinked() {
-    if (redNodes.length < 2) return false;
-    for (const a of redNodes) {
-        for (const b of redNodes) {
-            if (a.id === b.id) continue;
-            if (!enemyLinks.find(l => l.txId === a.id && l.rxId === b.id)) return false;
-        }
-    }
-    return true;
+    const pairs = compatibleEnemyCommsPairs();
+    return pairs.length > 0 && pairs.every(({ tx, rx }) => enemyLinks.find(l => l.txId === tx.id && l.rxId === rx.id));
 }
 
 function updateLinkAllBtn() {
     const btn = document.getElementById('btn-link-all-enemy');
-    const canLink = redNodes.length >= 2;
+    const canLink = compatibleEnemyCommsPairs().length > 0;
     btn.disabled = !canLink;
     if (canLink && allCommsLinked()) {
-        btn.textContent = 'Unlink All Enemy Comms';
+        btn.textContent = 'Unlink Enemy Comms';
         btn.classList.add('unlink-btn');
     } else {
-        btn.textContent = 'Link All Enemy Comms';
+        btn.textContent = 'Link Enemy Comms by Frequency';
         btn.classList.remove('unlink-btn');
     }
 }
 
 function linkAllEnemyComms() {
-    redNodes.forEach(a => {
-        redNodes.forEach(b => {
-            if (a.id === b.id) return;
-            const linkId = a.id + '-' + b.id;
-            if (enemyLinks.find(l => l.id === linkId)) return;
-
-            const dist = a.marker.getLatLng().distanceTo(b.marker.getLatLng()) / 1000;
-            const line = L.polyline(
-                [a.marker.getLatLng(), b.marker.getLatLng()],
-                { color: 'red', dashArray: '5, 5' }
-            ).bindTooltip(dist.toFixed(2) + ' km', {
-                permanent: true, direction: 'center', className: 'dist-label'
-            }).addTo(map);
-
-            line.on('click', function(e) {
-                L.DomEvent.stopPropagation(e);
-                if (activeMode) return;
-                removeEnemyLink(linkId);
-            });
-
-            enemyLinks.push({ id: linkId, txId: a.id, rxId: b.id, line });
-        });
+    const pairs = compatibleEnemyCommsPairs();
+    let created = 0;
+    pairs.forEach(({ tx, rx }) => {
+        if (enemyLinks.find(l => l.txId === tx.id && l.rxId === rx.id)) return;
+        createEnemyLink(tx.id, rx.id);
+        created++;
     });
-    recalculateAll();
+    const candidateCount = redNodes.reduce((total, tx) => {
+        if (!nodeCanTransmitComms(tx)) return total;
+        return total + redNodes.filter(rx => rx.id !== tx.id).length;
+    }, 0);
+    const skipped = Math.max(0, candidateCount - pairs.length);
+    const status = document.getElementById('link-all-status');
+    if (status) status.textContent = `Linked ${created} matching pair(s). Skipped ${skipped} incompatible pair(s).`;
+    updateLinkAllBtn();
 }
 
 function unlinkAllEnemyComms() {
     if (selectedLink?.type === 'enemy') selectedLink = null;
     enemyLinks.forEach(l => map.removeLayer(l.line));
     enemyLinks = [];
+    const status = document.getElementById('link-all-status');
+    if (status) status.textContent = '';
+    markDirty('Enemy links removed.');
     recalculateAll();
 }
 
@@ -1654,7 +3267,10 @@ document.getElementById('btn-minimize-links').addEventListener('click', function
 });
 
 document.getElementById('btn-show-overlap').addEventListener('click', computeAndShowOverlap);
-document.getElementById('btn-clear-overlap').addEventListener('click', clearOverlapLayer);
+document.getElementById('btn-clear-overlap').addEventListener('click', function() {
+    clearOverlapLayer();
+    markDirty('Overlap overlay cleared.');
+});
 document.getElementById('btn-toggle-corners').addEventListener('click', toggleCornerMarkers);
 
 // ============================================================
@@ -1662,25 +3278,8 @@ document.getElementById('btn-toggle-corners').addEventListener('click', toggleCo
 // ============================================================
 
 document.getElementById('clear-nodes-btn').addEventListener('click', function() {
-    setMode(null);
-    redNodes.forEach(n => { map.removeLayer(n.marker); if (n.esCircle) map.removeLayer(n.esCircle); if (n.esLabel) map.removeLayer(n.esLabel); });
-    blueNodes.forEach(n => { map.removeLayer(n.marker); if (n.footprintCircle) map.removeLayer(n.footprintCircle); if (n.fpLabel) map.removeLayer(n.fpLabel); });
-    blackNodes.forEach(n => { map.removeLayer(n.marker); });
-    enemyLinks.forEach(l => map.removeLayer(l.line));
-    jammingLinks.forEach(l => map.removeLayer(l.line));
-    epNodes.forEach(n => {
-        n.systems.forEach(s => { if (s.layer) map.removeLayer(s.layer); if (s.label) map.removeLayer(s.label); });
-        map.removeLayer(n.marker);
-    });
-    redNodes = []; blueNodes = []; blackNodes = []; enemyLinks = []; jammingLinks = [];
-    redCounter = 0; blueCounter = 0; blackCounter = 0;
-    epNodes.length = 0; epNodeCounter = 0;
-    selectedLink = null;
-    overlapChecked.clear();
-    clearOverlapLayer();
-    renderOverlapControls();
-    renderResults();
-    updateEpWorkbench();
+    resetScenarioState();
+    markDirty('Scenario cleared.');
 });
 
 // ============================================================
@@ -1719,7 +3318,12 @@ new CenterControl().addTo(map);
 // ============================================================
 
 document.querySelectorAll('input, select').forEach(element => {
-    element.addEventListener('change', recalculateAll);
+    element.addEventListener('change', function() {
+        if (this.closest('#workbench')) return;
+        markDirty('Settings changed.');
+        syncSelectedNodeFromSidebar(this.id);
+        recalculateAll();
+    });
 });
 
 // ============================================================
@@ -1760,12 +3364,20 @@ document.getElementById('workbench-collapse-btn').addEventListener('click', func
 // FH TOGGLE
 // ============================================================
 
-document.getElementById('fh_toggle').addEventListener('change', function() {
-    const displayState = this.checked ? 'block' : 'none';
+function updateFrequencyHoppingControls() {
+    const displayState = document.getElementById('fh_toggle').checked ? 'block' : 'none';
     document.getElementById('enemy_bw_container').style.display = displayState;
     document.getElementById('jammer_bw_container').style.display = displayState;
+}
+
+document.getElementById('fh_toggle').addEventListener('change', function() {
+    updateFrequencyHoppingControls();
+    syncSelectedNodeFromSidebar('fh_toggle');
     recalculateAll();
 });
+updateFrequencyHoppingControls();
+initEquipmentLibraryControls();
+initScenarioControls();
 
 // ============================================================
 // JUMP TO LOCATION
