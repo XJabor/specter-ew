@@ -1,4 +1,30 @@
 -----
+27JUN26 Codex
+
+- Added scenario save/load so operators can download their planning work as a portable `.specter.json` file and reopen it later
+- Scenario files now preserve map view, RF settings, nodes, links, EP systems, and which overlays should be recalculated after loading
+- Added Save Scenario, Save Copy, Load Scenario, New Scenario, scenario naming, and an unsaved-changes indicator to the Workbench
+- Added browser-local autosave recovery for unsaved work on the same device, without adding server-side storage
+- Clarified in the documentation that hosted login does not provide cloud scenario sync; users should save a `.specter.json` file to keep or transfer work
+- Added a small automated check that the new scenario controls render on the main page
+- Added a Workbench Library tab for placing saved equipment templates as enemy or friendly nodes
+- Added a Builder tab for creating custom radio, receiver, and jammer templates without adding a backend database
+- Built-in templates are limited to sourced civilian/commercial radios; no generic devices, military radios, or jammer presets are included
+- Each red or blue node now keeps its own equipment settings, so selecting a node loads that node's radio or jammer details into the sidebar
+- Enemy auto-linking now connects matching-frequency radio nets instead of blindly linking every enemy node
+- Frequency-hopping settings now belong to individual radios and jammers instead of applying across the whole workspace
+- Receiver and jammer frequency fields are locked for now to avoid suggesting frequency-mismatch behavior that is not modeled yet
+- EP mode can add systems manually or populate them from Library templates for faster setup
+- Scenario exports now preserve node equipment and custom Library templates for portable planning files
+- Added an in-app About / Support Workbench tab with version, license, source, documentation, support, and commercial licensing links
+- The About / Support panel now shows the current deployment mode without exposing secrets or environment details
+- Added a footer shortcut to open the About / Support panel from the main map screen
+- Shortened visible product labels from "SPECTER EW Planning Tool" to "SPECTER EW" where the extra wording was unnecessary
+- Added automated checks for the new About / Support panel and deployment-mode labels
+- Updated README, AGENTS, and CLAUDE guidance to match the new equipment-library workflow
+
+-----
+-----
 22JUN26 Codex
 
 - Reworked the login page with a dark, high-contrast theme using the new blue, Spectrum Red, Aconite Violet, and Orange Yellow palette
