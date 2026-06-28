@@ -128,6 +128,8 @@ class RuntimeOptionsTests(unittest.TestCase):
             b'id="builder-name"',
             b'id="btn-builder-save"',
             b'id="selected-node-status"',
+            b'id="footprint_rx_sensitivity"',
+            b'Reference Receiver Threshold',
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, response.data)
@@ -221,9 +223,18 @@ class RuntimeOptionsTests(unittest.TestCase):
         script = (
             Path(__file__).resolve().parents[1] / 'static' / 'js' / 'map_logic.js'
         ).read_text(encoding='utf-8')
-        self.assertIn('const SCENARIO_SCHEMA_VERSION = 3;', script)
+        self.assertIn('const SCENARIO_SCHEMA_VERSION = 4;', script)
         self.assertIn('profile_library: scenarioProfileLibraryState()', script)
         self.assertIn('mergeUserProfilePacks(scenario.profile_library.packs)', script)
+        self.assertIn('sensor_active: !!node.sensorActive', script)
+        self.assertIn('es_active: !!node.esActive', script)
+        self.assertIn('window.toggleNodeES = function(id)', script)
+        self.assertIn('window.toggleNodeSensorCoverage', script)
+        self.assertIn('receiver_capable: true', script)
+        self.assertIn('DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM = -100', script)
+        self.assertIn("document.getElementById('footprint-rx-sensitivity-row')", script)
+        self.assertIn("footprintRow.style.display = jammerCapable ? '' : 'none'", script)
+        self.assertIn("document.getElementById('footprint_rx_sensitivity').value", script)
         self.assertIn('[1, 2].includes(Number(data.schema_version))', script)
         self.assertIn('equipment: equipmentScenarioState(node,', script)
 

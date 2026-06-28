@@ -35,7 +35,7 @@
       "beamwidth_deg": 360,
       "antenna_height_m": 1,
       "notes": "Civilian dual-band handheld. Frequency/power are editable planning defaults.",
-      "source_url": "https://baofengtech.com/product/uv-82hp/"
+      "source_url": "https://baofengtech.com/product/bf-f8hp/"
     },
     {
       "id": "btech-dmr-6x2-pro-vhf",
@@ -52,7 +52,7 @@
       "beamwidth_deg": 360,
       "antenna_height_m": 1,
       "notes": "Civilian analog/DMR handheld. Frequency/power are editable planning defaults.",
-      "source_url": "https://baofengtech.com/product/uv-82hp/"
+      "source_url": "https://baofengtech.com/product/dmr-6x2pro/"
     },
     {
       "id": "anytone-at-d878uvii-plus-vhf",

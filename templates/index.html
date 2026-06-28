@@ -68,8 +68,9 @@
             </div>
             
             <hr style="border-top: 1px solid #555; margin: 15px 0;">
-            <label>Sensor Rx Sensitivity (dBm): <input type="number" id="rx_sensitivity" value="-90"></label>
-            <label>Sensor Rx Ant Gain (dBi): <input type="number" id="friendly_rx_gain" value="0"></label>
+            <label id="rx-sensitivity-row"><span id="rx-sensitivity-label">Sensor Rx Sensitivity (dBm)</span>: <input type="number" id="rx_sensitivity" value="-100"></label>
+            <label id="friendly-rx-gain-row"><span id="friendly-rx-gain-label">Sensor Rx Ant Gain (dBi)</span>: <input type="number" id="friendly_rx_gain" value="0"></label>
+            <label id="footprint-rx-sensitivity-row">Reference Receiver Threshold (dBm): <input type="number" id="footprint_rx_sensitivity" value="-90"></label>
         </div>
 
         <div class="control-group ea-only" style="border-left: 4px solid #aaaaaa;">

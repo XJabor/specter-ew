@@ -59,8 +59,8 @@ const blackIcon = new L.Icon({
 // DATA STRUCTURES
 // ============================================================
 
-let redNodes    = [];   // { id, marker, esActive, esCircle }
-let blueNodes   = [];   // { id, marker }
+let redNodes    = [];   // { id, marker }
+let blueNodes   = [];   // { id, marker, sensorActive, sensorCoverages }
 let blackNodes  = [];   // { id, name, marker } — reference-only markers
 let enemyLinks  = [];   // { id, txId, rxId, line }
 let jammingLinks = [];  // { id, blueId, rxId, line, result }
@@ -71,6 +71,7 @@ let selectedLink = null; // { type: 'enemy'|'jammer', enemyLinkId, jammingLinkId
 let redCounter   = 0;
 let blueCounter  = 0;
 let blackCounter = 0;
+let selectedSensorNodeId = null;
 
 let overlapLayer        = null;   // L.polygon | L.layerGroup | null — yellow intersection overlay
 let overlapChecked      = new Set(); // node IDs selected in the overlap checklist
@@ -99,8 +100,9 @@ let epModeActive  = false;
 // SCENARIO SAVE / LOAD
 // ============================================================
 
-const SCENARIO_SCHEMA_VERSION = 3;
+const SCENARIO_SCHEMA_VERSION = 4;
 const SPECTER_APP_VERSION = 'release-1-dev';
+const DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM = -100;
 const PROFILE_PACK_STORAGE_KEY = 'specter-ew:equipment-profile-packs';
 const PROFILE_CATEGORIES = ['radio', 'receiver', 'jammer', 'antenna'];
 const PROFILE_NUMERIC_RANGES = {
@@ -125,6 +127,7 @@ const SCENARIO_SETTING_IDS = [
     'enemy_rx_gain',
     'jammer_tx_w',
     'jammer_tx_gain',
+    'footprint_rx_sensitivity',
     'rx_sensitivity',
     'friendly_rx_gain',
     'lower_threshold',
@@ -304,7 +307,8 @@ function serializeScenario() {
                 location: latLngToPlain(node.marker.getLatLng()),
                 equipment: equipmentScenarioState(node, 'blue'),
                 ...nodeAntennaState(node),
-                footprint_active: !!node.footprintActive
+                footprint_active: !!node.footprintActive,
+                sensor_active: !!node.sensorActive
             })),
             black: blackNodes.map(node => ({
                 id: node.id,
@@ -376,6 +380,18 @@ function validateScenario(data) {
 function migrateScenario(data) {
     validateScenario(data);
     if (Number(data.schema_version) === SCENARIO_SCHEMA_VERSION) return data;
+    if (Number(data.schema_version) === 3) {
+        return {
+            ...data,
+            schema_version: SCENARIO_SCHEMA_VERSION,
+            nodes: {
+                ...data.nodes,
+                red: (data.nodes?.red || []).map(node => ({ ...node, es_active: !!node.es_active })),
+                blue: (data.nodes?.blue || []).map(node => ({ ...node, sensor_active: !!node.sensor_active }))
+            },
+            profile_library: data.profile_library || { packs: [] }
+        };
+    }
     if ([1, 2].includes(Number(data.schema_version))) {
         const settings = data.settings || {};
         const redEquipment = {
@@ -388,6 +404,7 @@ function migrateScenario(data) {
             antenna_type: 'omni',
             beamwidth_deg: 360,
             antenna_height_m: 1,
+            receiver_capable: false,
             apply_fh: !!settings.fh_toggle,
             channel_bw_khz: Number(settings.enemy_bw_khz || 25),
             jammer_bw_khz: Number(settings.jammer_bw_khz || 20000)
@@ -402,6 +419,7 @@ function migrateScenario(data) {
             antenna_type: 'omni',
             beamwidth_deg: 360,
             antenna_height_m: 1,
+            receiver_capable: true,
             apply_fh: false,
             channel_bw_khz: Number(settings.enemy_bw_khz || 25),
             jammer_bw_khz: Number(settings.jammer_bw_khz || 20000)
@@ -411,8 +429,8 @@ function migrateScenario(data) {
             schema_version: SCENARIO_SCHEMA_VERSION,
             nodes: {
                 ...data.nodes,
-                red: (data.nodes?.red || []).map(node => ({ ...node, equipment: node.equipment || redEquipment })),
-                blue: (data.nodes?.blue || []).map(node => ({ ...node, equipment: node.equipment || blueEquipment }))
+                red: (data.nodes?.red || []).map(node => ({ ...node, es_active: !!node.es_active, equipment: node.equipment || redEquipment })),
+                blue: (data.nodes?.blue || []).map(node => ({ ...node, sensor_active: false, equipment: node.equipment || blueEquipment }))
             },
             profile_library: data.profile_library || { packs: [] }
         };
@@ -466,6 +484,7 @@ function makeRedNodeFromScenario(item) {
         elevationM: null,
         esPolygonPoints: null,
         esRangeKm: null,
+        esSensorName: null,
         antennaType: item.antenna_type || 'omni',
         antennaAzimuth: Number(item.antenna_azimuth || 0),
         antennaBeamwidth: Number(item.antenna_beamwidth || 90),
@@ -498,6 +517,8 @@ function makeBlueNodeFromScenario(item) {
         antennaAzimuth: Number(item.antenna_azimuth || 0),
         antennaBeamwidth: Number(item.antenna_beamwidth || 90),
         antennaHeightAgl: Number(item.antenna_height_agl || 1.0),
+        sensorActive: !!item.sensor_active,
+        sensorCoverages: [],
         footprintActive: !!item.footprint_active,
         footprintCircle: null,
         fpLabel: null,
@@ -580,8 +601,17 @@ function resetScenarioState() {
     Object.keys(_esAbortControllers).forEach(id => delete _esAbortControllers[id]);
     Object.values(_fpAbortControllers).forEach(controller => controller.abort());
     Object.keys(_fpAbortControllers).forEach(id => delete _fpAbortControllers[id]);
-    redNodes.forEach(n => { map.removeLayer(n.marker); if (n.esCircle) map.removeLayer(n.esCircle); if (n.esLabel) map.removeLayer(n.esLabel); });
-    blueNodes.forEach(n => { map.removeLayer(n.marker); if (n.footprintCircle) map.removeLayer(n.footprintCircle); if (n.fpLabel) map.removeLayer(n.fpLabel); });
+    redNodes.forEach(n => {
+        map.removeLayer(n.marker);
+        if (n.esCircle) map.removeLayer(n.esCircle);
+        if (n.esLabel) map.removeLayer(n.esLabel);
+    });
+    blueNodes.forEach(n => {
+        map.removeLayer(n.marker);
+        clearSensorCoverage(n);
+        if (n.footprintCircle) map.removeLayer(n.footprintCircle);
+        if (n.fpLabel) map.removeLayer(n.fpLabel);
+    });
     blackNodes.forEach(n => { map.removeLayer(n.marker); });
     enemyLinks.forEach(l => map.removeLayer(l.line));
     jammingLinks.forEach(l => map.removeLayer(l.line));
@@ -594,9 +624,10 @@ function resetScenarioState() {
     epNodes.length = 0; epNodeCounter = 0;
     selectedLink = null;
     selectedEquipmentNode = null;
+    selectedSensorNodeId = null;
     const status = document.getElementById('selected-node-status');
     if (status) status.textContent = 'No node selected. Editing defaults for new blank nodes.';
-    updateSidebarFrequencyLock('radio');
+    updateDefaultSidebarContext();
     overlapChecked.clear();
     clearOverlapLayer();
     renderOverlapControls();
@@ -882,6 +913,7 @@ function validateProfilePack(pack, options = {}) {
         if (profile.antenna_type != null) {
             profile.antenna_type = String(profile.antenna_type).toLowerCase() === 'directional' ? 'directional' : 'omni';
         }
+        profile.receiver_capable = !!profile.receiver_capable;
         const roles = Array.isArray(profile.role_compatibility) ? profile.role_compatibility : ['enemy', 'friendly'];
         profile.role_compatibility = roles
             .map(role => String(role).toLowerCase())
@@ -1252,6 +1284,29 @@ function epSystemTemplateOptionsHtml() {
     })).join('');
 }
 
+function isReceiverCapableEquipment(equipment) {
+    if (!equipment) return false;
+    return equipment.equipment_type === 'receiver'
+        || equipment.equipment_type === 'radio'
+        || !!equipment.receiver_capable;
+}
+
+function isReceiverCapableNode(node, type = 'blue') {
+    return isReceiverCapableEquipment(nodeEquipment(node, type));
+}
+
+function isJammerEquipment(equipment) {
+    return equipment?.equipment_type === 'jammer';
+}
+
+function isJammerNode(node, type = 'blue') {
+    return isJammerEquipment(nodeEquipment(node, type));
+}
+
+function frequenciesCompatible(a, b) {
+    return Math.abs(Number(a) - Number(b)) <= 0.001;
+}
+
 function equipmentFromTemplate(template) {
     return {
         template_id: template?.key || '',
@@ -1265,6 +1320,7 @@ function equipmentFromTemplate(template) {
         antenna_type: template?.antenna_type || 'omni',
         beamwidth_deg: Number(template?.beamwidth_deg ?? 360),
         antenna_height_m: Number(template?.antenna_height_m ?? 1),
+        receiver_capable: !!template?.receiver_capable,
         notes: template?.notes || '',
         source_url: template?.source_url || ''
     };
@@ -1287,12 +1343,13 @@ function equipmentFromSidebar(type) {
             equipment_type: 'jammer',
             frequency_mhz: Number(document.getElementById('freq_mhz').value || 150),
             tx_power_w: Number(document.getElementById('jammer_tx_w').value || 20),
-            rx_sensitivity_dbm: Number(document.getElementById('rx_sensitivity').value || -90),
+            rx_sensitivity_dbm: Number(document.getElementById('rx_sensitivity').value || DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM),
             antenna_gain_dbi: Number(document.getElementById('jammer_tx_gain').value || 0),
             rx_gain_dbi: Number(document.getElementById('friendly_rx_gain').value || 0),
             antenna_type: 'omni',
             beamwidth_deg: 360,
             antenna_height_m: 1,
+            receiver_capable: true,
             apply_fh: false,
             channel_bw_khz: fh.channel_bw_khz,
             jammer_bw_khz: fh.jammer_bw_khz
@@ -1310,6 +1367,7 @@ function equipmentFromSidebar(type) {
         antenna_type: 'omni',
         beamwidth_deg: 360,
         antenna_height_m: 1,
+        receiver_capable: false,
         apply_fh: fh.apply_fh,
         channel_bw_khz: fh.channel_bw_khz,
         jammer_bw_khz: fh.jammer_bw_khz
@@ -1328,6 +1386,7 @@ function normalizeEquipmentConfig(equipment, type = 'red') {
     merged.antenna_type = merged.antenna_type === 'directional' ? 'directional' : 'omni';
     merged.beamwidth_deg = Math.max(1, Math.min(360, Number(merged.beamwidth_deg || defaults.beamwidth_deg)));
     merged.antenna_height_m = Math.max(1, Number(merged.antenna_height_m || defaults.antenna_height_m));
+    merged.receiver_capable = !!merged.receiver_capable;
     merged.apply_fh = !!merged.apply_fh;
     merged.channel_bw_khz = Math.max(0.001, Number(merged.channel_bw_khz || defaults.channel_bw_khz || 25));
     merged.jammer_bw_khz = Math.max(0.001, Number(merged.jammer_bw_khz || defaults.jammer_bw_khz || 20000));
@@ -1339,6 +1398,16 @@ function applyEquipmentToNode(node, equipment, type) {
     node.antennaType = node.equipment.antenna_type;
     node.antennaBeamwidth = node.equipment.beamwidth_deg;
     node.antennaHeightAgl = node.equipment.antenna_height_m;
+    if (type === 'blue' && !isReceiverCapableEquipment(node.equipment)) {
+        node.sensorActive = false;
+        clearSensorCoverage(node);
+    }
+    if (type === 'blue' && !isJammerEquipment(node.equipment)) {
+        node.footprintActive = false;
+        if (node.footprintCircle) { map.removeLayer(node.footprintCircle); node.footprintCircle = null; }
+        if (node.fpLabel) { map.removeLayer(node.fpLabel); node.fpLabel = null; }
+        node.footprintPolygonPoints = null;
+    }
 }
 
 function nodeEquipment(node, type) {
@@ -1381,6 +1450,33 @@ function updateBuilderFrequencyLock() {
     else label.textContent = 'Freq MHz';
 }
 
+function updateReceiverFieldLabels(type, equipment) {
+    const sensitivityRow = document.getElementById('rx-sensitivity-row');
+    const sensitivityLabel = document.getElementById('rx-sensitivity-label');
+    const gainRow = document.getElementById('friendly-rx-gain-row');
+    const gainLabel = document.getElementById('friendly-rx-gain-label');
+    const footprintRow = document.getElementById('footprint-rx-sensitivity-row');
+    const receiverCapable = type === 'red' || isReceiverCapableEquipment(equipment);
+    const jammerCapable = type === 'blue' && isJammerEquipment(equipment);
+
+    if (sensitivityRow) sensitivityRow.style.display = receiverCapable ? '' : 'none';
+    if (gainRow) gainRow.style.display = receiverCapable && type === 'blue' ? '' : 'none';
+    if (footprintRow) footprintRow.style.display = jammerCapable ? '' : 'none';
+    if (sensitivityLabel) {
+        sensitivityLabel.textContent = type === 'red' ? 'Target Rx Sensitivity (dBm)' : 'Sensor Rx Sensitivity (dBm)';
+    }
+    if (gainLabel) {
+        gainLabel.textContent = type === 'red' ? 'Target Rx Ant Gain (dBi)' : 'Sensor Rx Ant Gain (dBi)';
+    }
+}
+
+function updateDefaultSidebarContext() {
+    updateSidebarFrequencyLock('radio');
+    updateReceiverFieldLabels('blue', { equipment_type: 'jammer', receiver_capable: true });
+    const sensitivity = document.getElementById('rx_sensitivity');
+    if (sensitivity) sensitivity.value = DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM;
+}
+
 function populateSidebarFromNode(type, node) {
     if (!node) return;
     const equipment = nodeEquipment(node, type);
@@ -1402,6 +1498,7 @@ function populateSidebarFromNode(type, node) {
     }
     syncingSidebarFromNode = false;
     updateSidebarFrequencyLock(equipment.equipment_type);
+    updateReceiverFieldLabels(type, equipment);
     const status = document.getElementById('selected-node-status');
     if (status) status.textContent = `Editing ${type === 'red' ? 'Enemy' : 'Friendly'} ${node.name}: ${equipment.name || equipment.equipment_type}`;
 }
@@ -1410,6 +1507,7 @@ function selectEquipmentNode(type, id) {
     const node = findNode(type, id);
     if (!node || (type !== 'red' && type !== 'blue')) return;
     selectedEquipmentNode = { type, id };
+    if (type === 'blue' && isReceiverCapableNode(node, 'blue')) selectedSensorNodeId = id;
     populateSidebarFromNode(type, node);
 }
 
@@ -1617,7 +1715,7 @@ function initEquipmentLibraryControls() {
     });
     profileLoadPromise?.then(renderLibraryControls);
     updateBuilderFrequencyLock();
-    updateSidebarFrequencyLock('radio');
+    updateDefaultSidebarContext();
 }
 
 function makeEdgeLabel(polygonPoints, centerLat, centerLon, radiusM, text, offsetPx = [0, 0]) {
@@ -1661,7 +1759,8 @@ function placeRedNode(latlng, template = null) {
     const id = 'R' + redCounter;
     const marker = L.marker(latlng, { icon: redIcon, draggable: true }).addTo(map);
     marker.on('click', function() { handleNodeClick('red', id); });
-    const node = { id, name: id, marker, esActive: false, esCircle: null, esLabel: null, elevationM: null,
+    const node = { id, name: id, marker, esActive: false, esCircle: null, esLabel: null,
+                   esPolygonPoints: null, esRangeKm: null, esSensorName: null, elevationM: null,
                    antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0 };
     if (template) node.name = libraryNodeName(template, id);
     applyEquipmentToNode(node, template ? equipmentFromTemplate(template) : equipmentFromSidebar('red'), 'red');
@@ -1683,6 +1782,7 @@ function placeBlueNode(latlng, template = null) {
     marker.on('click', function() { handleNodeClick('blue', id); });
     const node = { id, name: id, marker, elevationM: null,
                    antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0,
+                   sensorActive: false, sensorCoverages: [],
                    footprintActive: false, footprintCircle: null, fpLabel: null, footprintPolygonPoints: null };
     if (template) node.name = libraryNodeName(template, id);
     applyEquipmentToNode(node, template ? equipmentFromTemplate(template) : equipmentFromSidebar('blue'), 'blue');
@@ -1765,10 +1865,17 @@ function bindBluePopup(id) {
     const node = findNode('blue', id);
     if (!node) return;
     const fpLabel = node.footprintActive ? '🚫 Hide Jammer Footprint' : '📡 Show Jammer Footprint';
+    const jammerButton = isJammerNode(node, 'blue')
+        ? `<button onclick="startJammingLink('${id}')">⚡ Link to Target</button><br>
+        <button onclick="toggleNodeFootprint('${id}')">${fpLabel}</button><br>`
+        : '';
+    const sensorButton = isReceiverCapableNode(node, 'blue')
+        ? `<button onclick="toggleNodeSensorCoverage('${id}')">${node.sensorActive ? '🚫 Hide Sensor Coverage' : '📡 Show Sensor Coverage'}</button><br>`
+        : '';
     node.marker.bindPopup(
         `<b>Friendly Node ${node.name}</b><br>
-        <button onclick="startJammingLink('${id}')">⚡ Link to Target</button><br>
-        <button onclick="toggleNodeFootprint('${id}')">${fpLabel}</button><br>
+        ${sensorButton}
+        ${jammerButton}
         <button onclick="renameNode('blue','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('blue','${id}')">🗑️ Remove Node</button>` +
         mgrsInputSection('blue', id, node) +
@@ -1932,6 +2039,8 @@ window.startEnemyLink = function(txId) {
 };
 
 window.startJammingLink = function(blueId) {
+    const node = findNode('blue', blueId);
+    if (!node || !isJammerNode(node, 'blue')) return;
     map.closePopup();
     setMode('link-jammer');
     linkSource = { color: 'blue', id: blueId };
@@ -2015,6 +2124,7 @@ function createJammingLink(blueId, rxId) {
 
     const blue = findNode('blue', blueId);
     const rx   = findNode('red',  rxId);
+    if (!blue || !rx || !isJammerNode(blue, 'blue')) return;
     const dist = blue.marker.getLatLng().distanceTo(rx.marker.getLatLng()) / 1000;
 
     const line = L.polyline(
@@ -2050,6 +2160,7 @@ window.removeNode = function(color, id) {
             if (node.esCircle) map.removeLayer(node.esCircle);
             if (node.esLabel) map.removeLayer(node.esLabel);
         }
+        clearSensorCoverageForRed(id);
         redNodes = redNodes.filter(n => n.id !== id);
         clearOverlapLayer();
         renderOverlapControls();
@@ -2062,10 +2173,12 @@ window.removeNode = function(color, id) {
         const node = findNode('blue', id);
         if (node) {
             map.removeLayer(node.marker);
+            clearSensorCoverage(node);
             if (node.footprintCircle) map.removeLayer(node.footprintCircle);
             if (node.fpLabel) map.removeLayer(node.fpLabel);
         }
         blueNodes = blueNodes.filter(n => n.id !== id);
+        if (selectedSensorNodeId === id) selectedSensorNodeId = null;
         jammingLinks.filter(l => l.blueId === id).forEach(l => map.removeLayer(l.line));
         jammingLinks = jammingLinks.filter(l => l.blueId !== id);
         markDirty('Friendly node removed.');
@@ -2079,7 +2192,7 @@ window.removeNode = function(color, id) {
     if (!selectedEquipmentNode) {
         const status = document.getElementById('selected-node-status');
         if (status) status.textContent = 'No node selected. Editing defaults for new blank nodes.';
-        updateSidebarFrequencyLock('radio');
+        updateDefaultSidebarContext();
     }
     recalculateAll();
 };
@@ -2174,7 +2287,7 @@ function updateDistanceWarning() {
             return tx && tx.marker.getLatLng().distanceTo(rx.marker.getLatLng()) / 1000 > 50;
         });
     });
-    const esOver = redNodes.some(n => n.esActive && n.esRangeKm != null && n.esRangeKm > 50);
+    const esOver = activeSensorCoverages().some(item => item.coverage.rangeKm != null && item.coverage.rangeKm > 50);
     document.getElementById('distance-warning').style.display = (jammingOver || esOver) ? 'block' : 'none';
 }
 
@@ -2196,7 +2309,7 @@ function recalculateAll() {
     updateLinkAllBtn();
 
     if (jammingLinks.length === 0) {
-        document.getElementById('distance-warning').style.display = 'none';
+        updateDistanceWarning();
         renderResults();
         return;
     }
@@ -2353,6 +2466,39 @@ async function fetchAndStoreElevation(node) {
     updateMGRSTooltips();
 }
 
+function clearSensorCoverage(node, redId = null) {
+    if (!node || !Array.isArray(node.sensorCoverages)) return;
+    node.sensorCoverages = node.sensorCoverages.filter(coverage => {
+        const shouldRemove = redId == null || coverage.redId === redId;
+        if (shouldRemove) {
+            if (coverage.layer) map.removeLayer(coverage.layer);
+            if (coverage.label) map.removeLayer(coverage.label);
+        }
+        return !shouldRemove;
+    });
+}
+
+function clearSensorCoverageForRed(redId) {
+    blueNodes.forEach(node => clearSensorCoverage(node, redId));
+}
+
+function activeSensorCoverages() {
+    const blueCoverages = blueNodes.flatMap(node => (node.sensorCoverages || []).map(coverage => ({ sensor: node, coverage })));
+    const redCoverages = redNodes
+        .filter(node => node.esActive && node.esPolygonPoints)
+        .map(node => ({
+            sensor: { id: `red-ring-${node.id}`, name: node.esSensorName || 'Sensor' },
+            coverage: {
+                redId: node.id,
+                rangeKm: node.esRangeKm,
+                polygonPoints: node.esPolygonPoints,
+                layer: node.esCircle,
+                label: node.esLabel
+            }
+        }));
+    return blueCoverages.concat(redCoverages);
+}
+
 // ============================================================
 // OVERLAP ANALYSIS
 // ============================================================
@@ -2401,7 +2547,7 @@ function renderOverlapControls() {
     const showBtn   = document.getElementById('btn-show-overlap');
     if (!checklist || !showBtn) return;
 
-    const eligible = redNodes.filter(n => n.esActive && n.esPolygonPoints);
+    const eligible = activeSensorCoverages().filter(item => item.coverage.polygonPoints);
 
     if (eligible.length === 0) {
         checklist.innerHTML = '<p class="results-empty">No active detection rings.</p>';
@@ -2411,16 +2557,18 @@ function renderOverlapControls() {
 
     // Prune stale IDs no longer eligible
     overlapChecked.forEach(id => {
-        if (!eligible.find(n => n.id === id)) overlapChecked.delete(id);
+        if (!eligible.find(item => `${item.sensor.id}:${item.coverage.redId}` === id)) overlapChecked.delete(id);
     });
 
     let html = '';
-    eligible.forEach(n => {
-        const checked = overlapChecked.has(n.id) ? 'checked' : '';
+    eligible.forEach(item => {
+        const id = `${item.sensor.id}:${item.coverage.redId}`;
+        const tx = findNode('red', item.coverage.redId);
+        const checked = overlapChecked.has(id) ? 'checked' : '';
         html += `<div class="overlap-node-row">
-            <input type="checkbox" id="ov-chk-${n.id}" value="${n.id}" ${checked}
+            <input type="checkbox" id="ov-chk-${id}" value="${id}" ${checked}
                 onchange="handleOverlapCheck(this)">
-            <label for="ov-chk-${n.id}">${n.name}</label>
+            <label for="ov-chk-${id}">${item.sensor.name} / ${tx ? tx.name : item.coverage.redId}</label>
         </div>`;
     });
     checklist.innerHTML = html;
@@ -2455,7 +2603,8 @@ function computeAndShowOverlap(suppressDirty = false) {
     clearOverlapLayer();
     const statusEl = document.getElementById('overlap-status');
 
-    const selected = redNodes.filter(n => overlapChecked.has(n.id) && n.esPolygonPoints);
+    const selected = activeSensorCoverages()
+        .filter(item => overlapChecked.has(`${item.sensor.id}:${item.coverage.redId}`) && item.coverage.polygonPoints);
     if (selected.length < 2) {
         if (statusEl) statusEl.textContent = 'Select at least 2 nodes.';
         return;
@@ -2465,7 +2614,7 @@ function computeAndShowOverlap(suppressDirty = false) {
     fetch('/compute_overlap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ polygons: selected.map(n => n.esPolygonPoints) })
+        body: JSON.stringify({ polygons: selected.map(item => item.coverage.polygonPoints) })
     })
     .then(r => r.json())
     .then(data => {
@@ -2609,6 +2758,240 @@ async function updateESCircles() {
 // JAMMER FOOTPRINT
 // ============================================================
 
+window.toggleNodeSensorCoverage = function(id) {
+    const node = findNode('blue', id);
+    if (!node || !isReceiverCapableNode(node, 'blue')) return;
+    node.sensorActive = !node.sensorActive;
+    if (!node.sensorActive) {
+        clearSensorCoverage(node);
+        clearOverlapLayer();
+    }
+    map.closePopup();
+    bindBluePopup(id);
+    markDirty('Sensor coverage toggled.');
+    updateESCircles();
+    renderOverlapControls();
+};
+
+window.toggleNodeES = function(id) {
+    const node = findNode('red', id);
+    if (!node) return;
+    node.esActive = !node.esActive;
+    if (!node.esActive) {
+        if (node.esCircle) { map.removeLayer(node.esCircle); node.esCircle = null; }
+        if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
+        node.esPolygonPoints = null;
+        node.esRangeKm = null;
+        node.esSensorName = null;
+        clearOverlapLayer();
+    }
+    map.closePopup();
+    bindRedPopup(id);
+    markDirty('Detection ring toggled.');
+    updateESCircles();
+    renderOverlapControls();
+};
+
+function compatibleRedTransmitters(sensorEq) {
+    return redNodes.filter(node => {
+        const eq = nodeEquipment(node, 'red');
+        if (eq.equipment_type === 'receiver') return false;
+        return frequenciesCompatible(eq.frequency_mhz, sensorEq.frequency_mhz);
+    });
+}
+
+async function updateBlueSensorCoverages() {
+    blueNodes.forEach(node => {
+        if (!node.sensorActive || !isReceiverCapableNode(node, 'blue')) {
+            clearSensorCoverage(node);
+            if (node.sensorActive && !isReceiverCapableNode(node, 'blue')) node.sensorActive = false;
+        }
+    });
+
+    const activeSensors = blueNodes.filter(node => node.sensorActive && isReceiverCapableNode(node, 'blue'));
+    if (activeSensors.length === 0) {
+        renderOverlapControls();
+        updateDistanceWarning();
+        return;
+    }
+
+    activeSensors.forEach(node => {
+        if (_esAbortControllers[node.id]) _esAbortControllers[node.id].abort();
+        _esAbortControllers[node.id] = new AbortController();
+        clearSensorCoverage(node);
+    });
+
+    const esParams = {
+        enemy_terrain: document.getElementById('enemy_terrain').value
+    };
+
+    for (const sensor of activeSensors) {
+        const sensorEq = nodeEquipment(sensor, 'blue');
+        const transmitters = compatibleRedTransmitters(sensorEq);
+        for (const txNode of transmitters) {
+            const ll = txNode.marker.getLatLng();
+            const txEq = nodeEquipment(txNode, 'red');
+            const payload = {
+                ...esParams,
+                freq_mhz:            txEq.frequency_mhz,
+                enemy_tx_w:          txEq.tx_power_w,
+                enemy_tx_gain:       txEq.antenna_gain_dbi,
+                rx_sensitivity:      sensorEq.rx_sensitivity_dbm,
+                friendly_rx_gain:    sensorEq.rx_gain_dbi,
+                enemy_lat:           ll.lat,
+                enemy_lon:           ll.lng,
+                tx_antenna_type:     txEq.antenna_type || txNode.antennaType,
+                tx_azimuth_deg:      txNode.antennaAzimuth,
+                tx_beamwidth_deg:    txEq.beamwidth_deg || txNode.antennaBeamwidth,
+                tx_antenna_height_m: txEq.antenna_height_m || txNode.antennaHeightAgl,
+            };
+
+            try {
+                const r = await fetch('/calculate_es_terrain', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: _esAbortControllers[sensor.id].signal
+                });
+                const data = await r.json();
+                if (data.status !== 'success') continue;
+
+                const coverage = {
+                    redId: txNode.id,
+                    rangeKm: data.base_range_km,
+                    polygonPoints: data.polygon_points || null,
+                    layer: null,
+                    label: null
+                };
+                const label = `${sensor.name} detects ${txNode.name}: ~${data.base_range_km.toFixed(1)} km`;
+
+                if (data.polygon_points) {
+                    coverage.layer = L.polygon(data.polygon_points, {
+                        color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
+                    }).addTo(map);
+                    coverage.label = makeEdgeLabel(data.polygon_points, null, null, null, label);
+                } else {
+                    coverage.polygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
+                    const radiusMeters = data.base_range_km * 1000;
+                    coverage.layer = L.circle(ll, {
+                        color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
+                    }).addTo(map);
+                    coverage.label = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
+                }
+
+                sensor.sensorCoverages.push(coverage);
+            } catch (e) {
+                if (e.name !== 'AbortError') { /* network error - leave coverage empty */ }
+            }
+        }
+    }
+
+    renderOverlapControls();
+    updateDistanceWarning();
+}
+
+function selectedSensorReference() {
+    const selected = selectedSensorNodeId ? findNode('blue', selectedSensorNodeId) : null;
+    if (selected && isReceiverCapableNode(selected, 'blue')) {
+        const eq = nodeEquipment(selected, 'blue');
+        return {
+            name: selected.name,
+            rxSensitivityDbm: eq.rx_sensitivity_dbm,
+            rxGainDbi: eq.rx_gain_dbi
+        };
+    }
+    return {
+        name: 'Generic Friendly Sensor',
+        rxSensitivityDbm: DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM,
+        rxGainDbi: Number(document.getElementById('friendly_rx_gain')?.value || 0)
+    };
+}
+
+async function updateRedDetectionRings() {
+    redNodes.forEach(node => {
+        if (!node.esActive) {
+            if (node.esCircle) { map.removeLayer(node.esCircle); node.esCircle = null; }
+            if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
+            node.esPolygonPoints = null;
+            node.esRangeKm = null;
+            node.esSensorName = null;
+        }
+    });
+
+    const activeNodes = redNodes.filter(node => node.esActive);
+    if (activeNodes.length === 0) return;
+
+    activeNodes.forEach(node => {
+        if (_esAbortControllers[node.id]) _esAbortControllers[node.id].abort();
+        _esAbortControllers[node.id] = new AbortController();
+    });
+
+    const sensor = selectedSensorReference();
+    const esParams = {
+        enemy_terrain: document.getElementById('enemy_terrain').value
+    };
+
+    for (const node of activeNodes) {
+        const ll = node.marker.getLatLng();
+        const eq = nodeEquipment(node, 'red');
+        const payload = {
+            ...esParams,
+            freq_mhz:            eq.frequency_mhz,
+            enemy_tx_w:          eq.tx_power_w,
+            enemy_tx_gain:       eq.antenna_gain_dbi,
+            rx_sensitivity:      sensor.rxSensitivityDbm,
+            friendly_rx_gain:    sensor.rxGainDbi,
+            enemy_lat:           ll.lat,
+            enemy_lon:           ll.lng,
+            tx_antenna_type:     eq.antenna_type || node.antennaType,
+            tx_azimuth_deg:      node.antennaAzimuth,
+            tx_beamwidth_deg:    eq.beamwidth_deg || node.antennaBeamwidth,
+            tx_antenna_height_m: eq.antenna_height_m || node.antennaHeightAgl,
+        };
+
+        try {
+            const r = await fetch('/calculate_es_terrain', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: _esAbortControllers[node.id].signal
+            });
+            const data = await r.json();
+            if (data.status !== 'success') continue;
+
+            node.esRangeKm = data.base_range_km;
+            node.esSensorName = sensor.name;
+            if (node.esCircle) map.removeLayer(node.esCircle);
+            if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
+
+            const label = `${sensor.name} detects ${node.name}: ~${data.base_range_km.toFixed(1)} km`;
+            if (data.polygon_points) {
+                node.esPolygonPoints = data.polygon_points;
+                node.esCircle = L.polygon(data.polygon_points, {
+                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
+                }).addTo(map);
+                node.esLabel = makeEdgeLabel(data.polygon_points, null, null, null, label);
+            } else {
+                node.esPolygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
+                const radiusMeters = data.base_range_km * 1000;
+                node.esCircle = L.circle(ll, {
+                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
+                }).addTo(map);
+                node.esLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
+            }
+        } catch (e) {
+            if (e.name !== 'AbortError') { /* network error - leave existing ring in place */ }
+        }
+    }
+}
+
+async function updateESCircles() {
+    await updateRedDetectionRings();
+    await updateBlueSensorCoverages();
+    renderOverlapControls();
+    updateDistanceWarning();
+}
+
 window.toggleNodeFootprint = function(id) {
     const node = findNode('blue', id);
     if (!node) return;
@@ -2632,11 +3015,12 @@ function scheduleFootprintUpdate() {
 
 async function updateJammerFootprints() {
     blueNodes.forEach(n => {
+        if (n.footprintActive && !isJammerNode(n, 'blue')) n.footprintActive = false;
         if (!n.footprintActive && n.footprintCircle) { map.removeLayer(n.footprintCircle); n.footprintCircle = null; }
         if (!n.footprintActive && n.fpLabel) { map.removeLayer(n.fpLabel); n.fpLabel = null; }
     });
 
-    const activeNodes = blueNodes.filter(n => n.footprintActive);
+    const activeNodes = blueNodes.filter(n => n.footprintActive && isJammerNode(n, 'blue'));
     if (activeNodes.length === 0) return;
 
     activeNodes.forEach(node => {
@@ -2649,8 +3033,8 @@ async function updateJammerFootprints() {
         jammer_terrain:   document.getElementById('jammer_terrain').value,
         jammer_tx_w:      document.getElementById('jammer_tx_w').value,
         jammer_tx_gain:   document.getElementById('jammer_tx_gain').value,
-        rx_sensitivity:   document.getElementById('rx_sensitivity').value,
-        friendly_rx_gain: document.getElementById('friendly_rx_gain').value,
+        rx_sensitivity:   document.getElementById('footprint_rx_sensitivity').value,
+        friendly_rx_gain: 0,
     };
 
     for (const node of activeNodes) {
@@ -2661,7 +3045,7 @@ async function updateJammerFootprints() {
             freq_mhz:              eq.frequency_mhz,
             jammer_tx_w:           eq.tx_power_w,
             jammer_tx_gain:        eq.antenna_gain_dbi,
-            rx_sensitivity:        eq.rx_sensitivity_dbm,
+            rx_sensitivity:        fpParams.rx_sensitivity,
             jammer_lat:            ll.lat,
             jammer_lon:            ll.lng,
             jammer_antenna_type:   eq.antenna_type || node.antennaType,
@@ -3295,7 +3679,7 @@ const CenterControl = L.Control.extend({
         L.DomEvent.on(btn, 'click', function() {
             const allNodes = [...redNodes, ...blueNodes, ...blackNodes, ...epNodes];
             if (allNodes.length === 0) return;
-            const circles = redNodes.filter(n => n.esCircle).map(n => n.esCircle);
+            const circles = activeSensorCoverages().filter(item => item.coverage.layer).map(item => item.coverage.layer);
             const bounds = L.latLngBounds([]);
             allNodes.forEach(n => bounds.extend(n.marker.getLatLng()));
             circles.forEach(c => bounds.extend(c.getBounds()));
@@ -3586,13 +3970,14 @@ function exportKML(includeLabels) {
 
     // --- ES Detection Rings ---
     lines.push('  <Folder><name>ES Detection Rings</name>');
-    for (const node of redNodes) {
-        if (!node.esActive || !node.esPolygonPoints || node.esPolygonPoints.length < 3) continue;
+    for (const { sensor, coverage } of activeSensorCoverages()) {
+        if (!coverage.polygonPoints || coverage.polygonPoints.length < 3) continue;
+        const tx = findNode('red', coverage.redId);
         // esPolygonPoints is [[lat,lng],...]; KML needs lng,lat,alt; close the ring
-        const pts = [...node.esPolygonPoints, node.esPolygonPoints[0]];
+        const pts = [...coverage.polygonPoints, coverage.polygonPoints[0]];
         const coordStr = pts.map(pt => `${pt[1]},${pt[0]},0`).join(' ');
         lines.push('    <Placemark>');
-        lines.push(`      <name>${escapeXml(node.name)} Detection</name>`);
+        lines.push(`      <name>${escapeXml(sensor.name + ' detects ' + (tx ? tx.name : coverage.redId))}</name>`);
         lines.push('      <styleUrl>#esPoly</styleUrl>');
         lines.push('      <Polygon><tessellate>1</tessellate>');
         lines.push('        <outerBoundaryIs><LinearRing>');
@@ -3600,10 +3985,10 @@ function exportKML(includeLabels) {
         lines.push('        </LinearRing></outerBoundaryIs>');
         lines.push('      </Polygon>');
         lines.push('    </Placemark>');
-        if (includeLabels && node.esRangeKm != null) {
-            const ll = node.marker.getLatLng();
+        if (includeLabels && coverage.rangeKm != null) {
+            const ll = tx ? tx.marker.getLatLng() : sensor.marker.getLatLng();
             lines.push('    <Placemark>');
-            lines.push(`      <name>Detection: ~${node.esRangeKm.toFixed(1)} km</name>`);
+            lines.push(`      <name>Detection: ~${coverage.rangeKm.toFixed(1)} km</name>`);
             lines.push('      <styleUrl>#linkLabel</styleUrl>');
             lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
             lines.push('    </Placemark>');
