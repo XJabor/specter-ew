@@ -88,6 +88,23 @@ let _fpDebounceTimer       = null;
 const _fpAbortControllers  = {};
 
 // ============================================================
+// SHARED RING HELPERS
+// ============================================================
+
+// Style shared by ES detection rings (red) and jammer footprints (cyan)
+const RING_COLORS = {
+    es:     { color: 'red',     fillColor: '#f03',    fillOpacity: 0.1  },
+    jammer: { color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12 },
+};
+
+// Remove Leaflet layers stored on an object and null the references
+function removeLayerRef(obj, ...keys) {
+    keys.forEach(key => {
+        if (obj[key]) { map.removeLayer(obj[key]); obj[key] = null; }
+    });
+}
+
+// ============================================================
 // EP MODE DATA
 // ============================================================
 
@@ -1090,10 +1107,6 @@ function mergeUserProfilePacks(packs) {
     return count;
 }
 
-function scenarioProfileLibraryState() {
-    return { packs: userProfilePacks };
-}
-
 function saveCurrentProfile() {
     const category = document.getElementById('profile-category-filter')?.value;
     if (!PROFILE_CATEGORIES.includes(category)) {
@@ -1404,8 +1417,8 @@ function applyEquipmentToNode(node, equipment, type) {
     }
     if (type === 'blue' && !isJammerEquipment(node.equipment)) {
         node.footprintActive = false;
-        if (node.footprintCircle) { map.removeLayer(node.footprintCircle); node.footprintCircle = null; }
-        if (node.fpLabel) { map.removeLayer(node.fpLabel); node.fpLabel = null; }
+        removeLayerRef(node, 'footprintCircle');
+        removeLayerRef(node, 'fpLabel');
         node.footprintPolygonPoints = null;
     }
 }
@@ -2668,8 +2681,7 @@ function scheduleESUpdate() {
 async function updateESCircles() {
     // Remove circles for any node that is no longer active
     redNodes.forEach(n => {
-        if (!n.esActive && n.esCircle) { map.removeLayer(n.esCircle); n.esCircle = null; }
-        if (!n.esActive && n.esLabel) { map.removeLayer(n.esLabel); n.esLabel = null; }
+        if (!n.esActive) removeLayerRef(n, 'esCircle', 'esLabel');
     });
 
     const activeESNodes = redNodes.filter(n => n.esActive);
@@ -2724,14 +2736,14 @@ async function updateESCircles() {
 
             node.esRangeKm = data.base_range_km;
             if (node.esCircle) map.removeLayer(node.esCircle);
-            if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
+            removeLayerRef(node, 'esLabel');
 
             if (data.polygon_points) {
                 // Terrain-aware detection polygon
                 node.esPolygonPoints = data.polygon_points;
                 const label = `Detection: ~${data.base_range_km.toFixed(1)} km (terrain)`;
                 node.esCircle = L.polygon(data.polygon_points, {
-                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
+                    ...RING_COLORS.es, weight: 1
                 }).addTo(map);
                 node.esLabel = makeEdgeLabel(data.polygon_points, null, null, null, label);
             } else {
@@ -2740,7 +2752,7 @@ async function updateESCircles() {
                 const radiusMeters = data.base_range_km * 1000;
                 const label = `Detection: ${data.base_range_km.toFixed(2)} km`;
                 node.esCircle = L.circle(ll, {
-                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
+                    ...RING_COLORS.es, radius: radiusMeters
                 }).addTo(map);
                 node.esLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
             }
@@ -2778,8 +2790,8 @@ window.toggleNodeES = function(id) {
     if (!node) return;
     node.esActive = !node.esActive;
     if (!node.esActive) {
-        if (node.esCircle) { map.removeLayer(node.esCircle); node.esCircle = null; }
-        if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
+        removeLayerRef(node, 'esCircle');
+        removeLayerRef(node, 'esLabel');
         node.esPolygonPoints = null;
         node.esRangeKm = null;
         node.esSensorName = null;
@@ -2867,14 +2879,14 @@ async function updateBlueSensorCoverages() {
 
                 if (data.polygon_points) {
                     coverage.layer = L.polygon(data.polygon_points, {
-                        color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
+                        ...RING_COLORS.es, weight: 1
                     }).addTo(map);
                     coverage.label = makeEdgeLabel(data.polygon_points, null, null, null, label);
                 } else {
                     coverage.polygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
                     const radiusMeters = data.base_range_km * 1000;
                     coverage.layer = L.circle(ll, {
-                        color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
+                        ...RING_COLORS.es, radius: radiusMeters
                     }).addTo(map);
                     coverage.label = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
                 }
@@ -2910,8 +2922,8 @@ function selectedSensorReference() {
 async function updateRedDetectionRings() {
     redNodes.forEach(node => {
         if (!node.esActive) {
-            if (node.esCircle) { map.removeLayer(node.esCircle); node.esCircle = null; }
-            if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
+            removeLayerRef(node, 'esCircle');
+            removeLayerRef(node, 'esLabel');
             node.esPolygonPoints = null;
             node.esRangeKm = null;
             node.esSensorName = null;
@@ -2962,20 +2974,20 @@ async function updateRedDetectionRings() {
             node.esRangeKm = data.base_range_km;
             node.esSensorName = sensor.name;
             if (node.esCircle) map.removeLayer(node.esCircle);
-            if (node.esLabel) { map.removeLayer(node.esLabel); node.esLabel = null; }
+            removeLayerRef(node, 'esLabel');
 
             const label = `${sensor.name} detects ${node.name}: ~${data.base_range_km.toFixed(1)} km`;
             if (data.polygon_points) {
                 node.esPolygonPoints = data.polygon_points;
                 node.esCircle = L.polygon(data.polygon_points, {
-                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, weight: 1
+                    ...RING_COLORS.es, weight: 1
                 }).addTo(map);
                 node.esLabel = makeEdgeLabel(data.polygon_points, null, null, null, label);
             } else {
                 node.esPolygonPoints = circleToPolygon(ll.lat, ll.lng, data.base_range_km);
                 const radiusMeters = data.base_range_km * 1000;
                 node.esCircle = L.circle(ll, {
-                    color: 'red', fillColor: '#f03', fillOpacity: 0.1, radius: radiusMeters
+                    ...RING_COLORS.es, radius: radiusMeters
                 }).addTo(map);
                 node.esLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
             }
@@ -3000,7 +3012,7 @@ window.toggleNodeFootprint = function(id) {
         map.removeLayer(node.footprintCircle);
         node.footprintCircle = null;
         node.footprintPolygonPoints = null;
-        if (node.fpLabel) { map.removeLayer(node.fpLabel); node.fpLabel = null; }
+        removeLayerRef(node, 'fpLabel');
     }
     map.closePopup();
     bindBluePopup(id);
@@ -3016,8 +3028,7 @@ function scheduleFootprintUpdate() {
 async function updateJammerFootprints() {
     blueNodes.forEach(n => {
         if (n.footprintActive && !isJammerNode(n, 'blue')) n.footprintActive = false;
-        if (!n.footprintActive && n.footprintCircle) { map.removeLayer(n.footprintCircle); n.footprintCircle = null; }
-        if (!n.footprintActive && n.fpLabel) { map.removeLayer(n.fpLabel); n.fpLabel = null; }
+        if (!n.footprintActive) removeLayerRef(n, 'footprintCircle', 'fpLabel');
     });
 
     const activeNodes = blueNodes.filter(n => n.footprintActive && isJammerNode(n, 'blue'));
@@ -3065,13 +3076,13 @@ async function updateJammerFootprints() {
             if (data.status !== 'success') continue;
 
             if (node.footprintCircle) map.removeLayer(node.footprintCircle);
-            if (node.fpLabel) { map.removeLayer(node.fpLabel); node.fpLabel = null; }
+            removeLayerRef(node, 'fpLabel');
 
             if (data.polygon_points) {
                 node.footprintPolygonPoints = data.polygon_points;
                 const label = `Jammer Coverage: ~${data.base_range_km.toFixed(1)} km (terrain)`;
                 node.footprintCircle = L.polygon(data.polygon_points, {
-                    color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12, weight: 1
+                    ...RING_COLORS.jammer, weight: 1
                 }).addTo(map);
                 node.fpLabel = makeEdgeLabel(data.polygon_points, null, null, null, label);
             } else {
@@ -3079,7 +3090,7 @@ async function updateJammerFootprints() {
                 const radiusMeters = data.base_range_km * 1000;
                 const label = `Jammer Coverage: ${data.base_range_km.toFixed(2)} km`;
                 node.footprintCircle = L.circle(ll, {
-                    color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12, radius: radiusMeters
+                    ...RING_COLORS.jammer, radius: radiusMeters
                 }).addTo(map);
                 node.fpLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
             }
@@ -3319,8 +3330,7 @@ function bindEpPopup(id) {
 
 function clearEpNodeRings(node) {
     node.systems.forEach(s => {
-        if (s.layer) { map.removeLayer(s.layer); s.layer = null; }
-        if (s.label) { map.removeLayer(s.label); s.label = null; }
+        removeLayerRef(s, 'layer', 'label');
         s.rangeKm       = null;
         s.polygonPoints = null;
     });
@@ -3392,8 +3402,7 @@ window.removeSystemFromEpNode = function(nodeId, sysId) {
     const node = epNodes.find(n => n.id === nodeId);
     if (!node) return;
     const sys = node.systems.find(s => s.id === sysId);
-    if (sys && sys.layer) map.removeLayer(sys.layer);
-    if (sys && sys.label) map.removeLayer(sys.label);
+    if (sys) removeLayerRef(sys, 'layer', 'label');
     node.systems = node.systems.filter(s => s.id !== sysId);
     updateEpWorkbench();
     markDirty('EP system removed.');

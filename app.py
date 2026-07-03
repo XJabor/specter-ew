@@ -17,9 +17,10 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
-from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, destination_point, get_elevation_profiles_batch
+from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight
+from core.footprint import compute_terrain_footprint
 import core.local_data as _local_data
-from core.local_data import scan_local_data, get_imagery_for_tile, render_tile_png, is_locally_covered, get_status
+from core.local_data import scan_local_data, get_imagery_for_tile, render_tile_png, get_status
 from core.antenna import bearing_deg, directional_gain_db
 from shapely.geometry import Polygon, MultiPolygon
 
@@ -146,63 +147,25 @@ def _verify_clerk_session(token: str) -> dict:
         options={"verify_aud": False},
     )
 
-def _walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m):
-    """
-    Find the detection/sensing range by walking the elevation profile outward.
+def _validate_latlon(lat_pairs, lon_pairs):
+    """Range-check optional coordinate values. Each pair is (value, label);
+    None values are skipped. Returns an error message or None."""
+    for lat_val, label in lat_pairs:
+        if lat_val is not None and not (-90 <= float(lat_val) <= 90):
+            return f'Invalid latitude: {label}.'
+    for lon_val, label in lon_pairs:
+        if lon_val is not None and not (-180 <= float(lon_val) <= 180):
+            return f'Invalid longitude: {label}.'
+    return None
 
-    For each sample at distance d_i, evaluates path loss using only the
-    sub-profile from TX to that point.  Returns the interpolated distance
-    where cumulative path loss first exceeds the link budget.
 
-    Deygout diffraction is only applied when terrain physically rises above the
-    straight TX-to-sample line of sight (i.e. a genuine terrain obstacle).
-    Earth bulge alone does not trigger Deygout because empirical models like
-    Egli already capture Earth-curvature effects in their measured rolloff; adding
-    Deygout on top would double-count Earth curvature and shrink flat-terrain
-    rings by ~10× relative to the simple sensing-distance calculation.
-    """
-    max_loss = eirp + rx_gain - rx_sensitivity
-    prev_d   = 0.0
-    prev_pl  = 0.0
-
-    for i in range(1, len(profile)):
-        d_i = profile[i]['distance_km']
-        if d_i <= 0:
-            continue
-        sub = profile[:i + 1]
-
-        # Check whether any terrain sample (ignoring Earth bulge) rises above
-        # the straight geometric LOS line.  If not, Earth curvature is the only
-        # "obstacle" and the empirical model already handles it.
-        h_tx = sub[0]['elevation_m'] + tx_height_m
-        h_rx = sub[-1]['elevation_m']   # notional ground-level receiver
-        terrain_blocked = any(
-            pt['elevation_m'] > h_tx + (h_rx - h_tx) * (pt['distance_km'] / d_i) + 1.0
-            for pt in sub[1:-1]
-            if 0 < pt['distance_km'] < d_i
-        )
-
-        if terrain_blocked:
-            los    = check_line_of_sight(sub, freq_mhz, tx_height_m, 0.0)
-            diff_db  = los['diffraction_loss_db']
-            is_los   = los['is_los']
-        else:
-            diff_db = 0.0
-            is_los  = True  # let the empirical model handle Earth curvature
-
-        pl_i = calculate_path_loss(
-            d_i, freq_mhz, terrain, diff_db, tx_height_m, 0.0, is_los
-        )
-        if pl_i > max_loss:
-            if prev_d <= 0:
-                return max(0.05, d_i / 2.0)
-            frac = (max_loss - prev_pl) / max(pl_i - prev_pl, 1e-9)
-            frac = max(0.0, min(1.0, frac))
-            return prev_d + frac * (d_i - prev_d)
-        prev_pl = pl_i
-        prev_d  = d_i
-
-    return profile[-1]['distance_km']
+def _require_positive(pairs):
+    """Each pair is (value, message). Returns the message of the first
+    non-positive value, or None when all values are positive."""
+    for value, message in pairs:
+        if value <= 0:
+            return message
+    return None
 
 
 def _ea_profile_samples(distance_km):
@@ -340,14 +303,17 @@ def calculate_ea():
         enemy_bw_khz = float(data.get('enemy_bw_khz', 25))
         jammer_bw_khz = float(data.get('jammer_bw_khz', 25))
 
-        if freq_mhz <= 0:
-            return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
-        if enemy_tx_w <= 0 or jammer_tx_w <= 0:
-            return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
-        if enemy_dist_km <= 0 or jammer_dist_km <= 0:
-            return jsonify({'status': 'error', 'message': 'Distance must be greater than zero.'})
-        if enemy_bw_khz <= 0 or jammer_bw_khz <= 0:
-            return jsonify({'status': 'error', 'message': 'Bandwidth must be greater than zero.'})
+        error = _require_positive([
+            (freq_mhz, 'Frequency must be greater than zero.'),
+            (enemy_tx_w, 'Transmit power must be greater than zero.'),
+            (jammer_tx_w, 'Transmit power must be greater than zero.'),
+            (enemy_dist_km, 'Distance must be greater than zero.'),
+            (jammer_dist_km, 'Distance must be greater than zero.'),
+            (enemy_bw_khz, 'Bandwidth must be greater than zero.'),
+            (jammer_bw_khz, 'Bandwidth must be greater than zero.'),
+        ])
+        if error:
+            return jsonify({'status': 'error', 'message': error})
 
         # Optional elevation-aware LOS analysis
         jammer_los = None
@@ -379,12 +345,12 @@ def calculate_ea():
         tx_lat     = data.get('tx_lat')
         tx_lon     = data.get('tx_lon')
 
-        for lat_val, label in [(jammer_lat, 'jammer_lat'), (rx_lat, 'rx_lat'), (tx_lat, 'tx_lat')]:
-            if lat_val is not None and not (-90 <= float(lat_val) <= 90):
-                return jsonify({'status': 'error', 'message': f'Invalid latitude: {label}.'})
-        for lon_val, label in [(jammer_lon, 'jammer_lon'), (rx_lon, 'rx_lon'), (tx_lon, 'tx_lon')]:
-            if lon_val is not None and not (-180 <= float(lon_val) <= 180):
-                return jsonify({'status': 'error', 'message': f'Invalid longitude: {label}.'})
+        error = _validate_latlon(
+            [(jammer_lat, 'jammer_lat'), (rx_lat, 'rx_lat'), (tx_lat, 'tx_lat')],
+            [(jammer_lon, 'jammer_lon'), (rx_lon, 'rx_lon'), (tx_lon, 'tx_lon')],
+        )
+        if error:
+            return jsonify({'status': 'error', 'message': error})
 
         if all(v is not None for v in [jammer_lat, jammer_lon, rx_lat, rx_lon]):
             try:
@@ -506,10 +472,12 @@ def calculate_es():
         rx_sensitivity = float(data.get('rx_sensitivity', -90))
         rx_gain = float(data.get('friendly_rx_gain', 0))
 
-        if freq_mhz <= 0:
-            return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
-        if enemy_tx_w <= 0:
-            return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
+        error = _require_positive([
+            (freq_mhz, 'Frequency must be greater than zero.'),
+            (enemy_tx_w, 'Transmit power must be greater than zero.'),
+        ])
+        if error:
+            return jsonify({'status': 'error', 'message': error})
 
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
         enemy_eirp = calculate_eirp(enemy_tx_dbm, enemy_tx_gain)
@@ -548,82 +516,22 @@ def calculate_es_terrain():
         tx_beamwidth_deg = float(data.get('tx_beamwidth_deg', 90))
         tx_antenna_height_m = float(data.get('tx_antenna_height_m', 0))
 
-        if freq_mhz <= 0:
-            return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
-        if enemy_tx_w <= 0:
-            return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
-        if not (-90 <= enemy_lat <= 90):
-            return jsonify({'status': 'error', 'message': 'Invalid latitude: enemy_lat.'})
-        if not (-180 <= enemy_lon <= 180):
-            return jsonify({'status': 'error', 'message': 'Invalid longitude: enemy_lon.'})
-        if not (1 <= num_bearings <= 360):
-            return jsonify({'status': 'error', 'message': 'num_bearings must be between 1 and 360.'})
+        error = _require_positive([
+            (freq_mhz, 'Frequency must be greater than zero.'),
+            (enemy_tx_w, 'Transmit power must be greater than zero.'),
+        ]) or _validate_latlon([(enemy_lat, 'enemy_lat')], [(enemy_lon, 'enemy_lon')])
+        if error is None and not (1 <= num_bearings <= 360):
+            error = 'num_bearings must be between 1 and 360.'
+        if error:
+            return jsonify({'status': 'error', 'message': error})
 
-        enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
-
-        def eirp_at_bearing(b):
-            """Returns EIRP (dBm) toward bearing b, accounting for directional TX pattern."""
-            if tx_antenna_type == 'directional':
-                gain = directional_gain_db(enemy_tx_gain, tx_azimuth_deg, b, tx_beamwidth_deg)
-            else:
-                gain = enemy_tx_gain
-            return calculate_eirp(enemy_tx_dbm, gain)
-
-        # On-boresight (peak) range used for the tooltip label and initial path endpoints.
-        # LOS (Two-Ray) is used for the label — it matches what flat terrain will actually show.
-        # Profile endpoints use the larger of LOS and NLOS so elevation data always extends
-        # to the furthest possible detection distance regardless of actual terrain.
-        peak_eirp     = eirp_at_bearing(tx_azimuth_deg if tx_antenna_type == 'directional' else 0)
-        base_range_km = calculate_sensing_distance(
-            peak_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity,
-            tx_height_m=tx_antenna_height_m, is_los=True
+        result = compute_terrain_footprint(
+            enemy_lat, enemy_lon, enemy_tx_w, enemy_tx_gain,
+            tx_antenna_type, tx_azimuth_deg, tx_beamwidth_deg,
+            tx_antenna_height_m, freq_mhz, sensor_terrain,
+            rx_gain, rx_sensitivity, log_label='calculate_es_terrain',
         )
-        proj_range_km = max(
-            base_range_km,
-            calculate_sensing_distance(
-                peak_eirp, freq_mhz, sensor_terrain, rx_gain, rx_sensitivity,
-                tx_height_m=tx_antenna_height_m, is_los=False
-            )
-        )
-
-        # Use higher resolution when all terrain data is served from local DTED (no rate limits).
-        # Fall back to API-safe values (36 bearings, 11 samples) when the online API is needed.
-        if is_locally_covered(enemy_lat, enemy_lon, proj_range_km):
-            num_bearings = 72
-            num_samples  = 25
-        else:
-            num_bearings = 36
-            num_samples  = 11
-
-        # Build one endpoint per bearing at the projection range
-        bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
-        paths = []
-        for bearing in bearings:
-            end_lat, end_lon = destination_point(enemy_lat, enemy_lon, bearing, proj_range_km)
-            paths.append((enemy_lat, enemy_lon, end_lat, end_lon))
-
-        polygon_points = None
-        try:
-            profiles = get_elevation_profiles_batch(paths, num_samples=num_samples)
-            polygon_points = []
-            for bearing, profile in zip(bearings, profiles):
-                eirp = eirp_at_bearing(bearing)
-                range_km = _walk_profile_to_range(
-                    profile, freq_mhz, sensor_terrain,
-                    eirp, rx_gain, rx_sensitivity, tx_antenna_height_m
-                )
-                range_km = max(range_km, 0.05)
-                pt_lat, pt_lon = destination_point(enemy_lat, enemy_lon, bearing, range_km)
-                polygon_points.append([pt_lat, pt_lon])
-        except Exception as e:
-            app.logger.warning("calculate_es_terrain: elevation API failed, falling back to circle: %s", e)
-            polygon_points = None
-
-        return jsonify({
-            'status': 'success',
-            'base_range_km': base_range_km,
-            'polygon_points': polygon_points,
-        })
+        return jsonify({'status': 'success', **result})
     except Exception as e:
         app.logger.error("calculate_es_terrain error: %s", e)
         return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
@@ -656,74 +564,22 @@ def calculate_jammer_footprint():
         jammer_beamwidth_deg = float(data.get('jammer_beamwidth_deg', 90))
         jammer_antenna_height_m = float(data.get('jammer_antenna_height_m', 0))
 
-        if freq_mhz <= 0:
-            return jsonify({'status': 'error', 'message': 'Frequency must be greater than zero.'})
-        if jammer_tx_w <= 0:
-            return jsonify({'status': 'error', 'message': 'Transmit power must be greater than zero.'})
-        if not (-90 <= jammer_lat <= 90):
-            return jsonify({'status': 'error', 'message': 'Invalid latitude: jammer_lat.'})
-        if not (-180 <= jammer_lon <= 180):
-            return jsonify({'status': 'error', 'message': 'Invalid longitude: jammer_lon.'})
-        if not (1 <= num_bearings <= 360):
-            return jsonify({'status': 'error', 'message': 'num_bearings must be between 1 and 360.'})
+        error = _require_positive([
+            (freq_mhz, 'Frequency must be greater than zero.'),
+            (jammer_tx_w, 'Transmit power must be greater than zero.'),
+        ]) or _validate_latlon([(jammer_lat, 'jammer_lat')], [(jammer_lon, 'jammer_lon')])
+        if error is None and not (1 <= num_bearings <= 360):
+            error = 'num_bearings must be between 1 and 360.'
+        if error:
+            return jsonify({'status': 'error', 'message': error})
 
-        jammer_tx_dbm = watts_to_dbm(jammer_tx_w)
-
-        def eirp_at_bearing(b):
-            if jammer_antenna_type == 'directional':
-                gain = directional_gain_db(jammer_tx_gain, jammer_azimuth_deg, b, jammer_beamwidth_deg)
-            else:
-                gain = jammer_tx_gain
-            return calculate_eirp(jammer_tx_dbm, gain)
-
-        peak_eirp     = eirp_at_bearing(jammer_azimuth_deg if jammer_antenna_type == 'directional' else 0)
-        base_range_km = calculate_sensing_distance(
-            peak_eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity,
-            tx_height_m=jammer_antenna_height_m, is_los=True
+        result = compute_terrain_footprint(
+            jammer_lat, jammer_lon, jammer_tx_w, jammer_tx_gain,
+            jammer_antenna_type, jammer_azimuth_deg, jammer_beamwidth_deg,
+            jammer_antenna_height_m, freq_mhz, jammer_terrain,
+            rx_gain, rx_sensitivity, log_label='calculate_jammer_footprint',
         )
-        proj_range_km = max(
-            base_range_km,
-            calculate_sensing_distance(
-                peak_eirp, freq_mhz, jammer_terrain, rx_gain, rx_sensitivity,
-                tx_height_m=jammer_antenna_height_m, is_los=False
-            )
-        )
-
-        if is_locally_covered(jammer_lat, jammer_lon, proj_range_km):
-            num_bearings = 72
-            num_samples  = 25
-        else:
-            num_bearings = 36
-            num_samples  = 11
-
-        bearings = [360.0 * i / num_bearings for i in range(num_bearings)]
-        paths = []
-        for bearing in bearings:
-            end_lat, end_lon = destination_point(jammer_lat, jammer_lon, bearing, proj_range_km)
-            paths.append((jammer_lat, jammer_lon, end_lat, end_lon))
-
-        polygon_points = None
-        try:
-            profiles = get_elevation_profiles_batch(paths, num_samples=num_samples)
-            polygon_points = []
-            for bearing, profile in zip(bearings, profiles):
-                eirp = eirp_at_bearing(bearing)
-                range_km = _walk_profile_to_range(
-                    profile, freq_mhz, jammer_terrain,
-                    eirp, rx_gain, rx_sensitivity, jammer_antenna_height_m
-                )
-                range_km = max(range_km, 0.05)
-                pt_lat, pt_lon = destination_point(jammer_lat, jammer_lon, bearing, range_km)
-                polygon_points.append([pt_lat, pt_lon])
-        except Exception as e:
-            app.logger.warning("calculate_jammer_footprint: elevation API failed, falling back to circle: %s", e)
-            polygon_points = None
-
-        return jsonify({
-            'status': 'success',
-            'base_range_km': base_range_km,
-            'polygon_points': polygon_points,
-        })
+        return jsonify({'status': 'success', **result})
     except Exception as e:
         app.logger.error("calculate_jammer_footprint error: %s", e)
         return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
