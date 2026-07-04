@@ -319,7 +319,16 @@
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
-    <script src="/static/js/map_logic.js"></script>
+    <!-- Load order is load-bearing: scenario_schema and map_core declare the shared
+         globals; app_init (last) runs all event wiring and bootstrap calls. -->
+    <script src="/static/js/scenario_schema.js"></script>
+    <script src="/static/js/map_core.js"></script>
+    <script src="/static/js/equipment_library.js"></script>
+    <script src="/static/js/nodes_links.js"></script>
+    <script src="/static/js/rings_results.js"></script>
+    <script src="/static/js/ep_mode.js"></script>
+    <script src="/static/js/scenario_io.js"></script>
+    <script src="/static/js/app_init.js"></script>
     {% if clerk_publishable_key %}
     <script
         data-clerk-publishable-key="{{ clerk_publishable_key }}"

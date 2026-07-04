@@ -137,6 +137,21 @@ class CalculateESTests(CalcEndpointTestCase):
                 self.assertEqual(data['status'], 'error')
                 self.assertIn(fragment, data['message'])
 
+    def test_omitted_rx_sensitivity_uses_api_default(self):
+        """Direct API callers may omit rx_sensitivity; the -90 dBm default is
+        part of the public contract (the frontend always sends it explicitly)."""
+        payload = {
+            'freq_mhz': 150,
+            'enemy_terrain': 'free space',
+            'enemy_tx_w': 5,
+            'enemy_tx_gain': 0,
+            'friendly_rx_gain': 0,
+        }
+        defaulted = self.post('/calculate_es', payload)
+        explicit = self.post('/calculate_es', dict(payload, rx_sensitivity=-90))
+        self.assertEqual(defaulted['status'], 'success')
+        self.assertEqual(defaulted['radius_km'], explicit['radius_km'])
+
 
 class TerrainRingTestMixin:
     """Shared assertions for the two terrain-aware footprint endpoints."""
