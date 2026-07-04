@@ -219,10 +219,27 @@ class RuntimeOptionsTests(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(data['pack_id'], 'specter-builtins')
 
-    def test_frontend_scenario_profile_hooks_are_present(self):
-        script = (
-            Path(__file__).resolve().parents[1] / 'static' / 'js' / 'map_logic.js'
+    def test_frontend_scripts_load_in_dependency_order(self):
+        """The classic-script split shares top-level let/const via the global
+        lexical scope; scenario_schema/map_core must load first and app_init
+        (all wiring) last, or load-time TDZ errors break the whole page."""
+        html = (
+            Path(__file__).resolve().parents[1] / 'templates' / 'index.html'
         ).read_text(encoding='utf-8')
+        expected = [
+            'scenario_schema.js', 'map_core.js', 'equipment_library.js',
+            'nodes_links.js', 'rings_results.js', 'ep_mode.js',
+            'scenario_io.js', 'app_init.js',
+        ]
+        positions = [html.find(f'/static/js/{name}') for name in expected]
+        self.assertNotIn(-1, positions, 'missing frontend script tag')
+        self.assertEqual(positions, sorted(positions), 'script tags out of order')
+
+    def test_frontend_scenario_profile_hooks_are_present(self):
+        js_dir = Path(__file__).resolve().parents[1] / 'static' / 'js'
+        script = '\n'.join(
+            p.read_text(encoding='utf-8') for p in sorted(js_dir.glob('*.js'))
+        )
         self.assertIn('const SCENARIO_SCHEMA_VERSION = 4;', script)
         self.assertIn('profile_library: scenarioProfileLibraryState()', script)
         self.assertIn('mergeUserProfilePacks(scenario.profile_library.packs)', script)

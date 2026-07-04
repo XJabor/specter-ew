@@ -177,6 +177,60 @@ def _ea_profile_samples(distance_km):
     return 96
 
 
+# API-level fallback only: the frontend always sends rx_sensitivity explicitly
+# (node equipment value, the -100 dBm generic-sensor constant, or the -90 dBm
+# footprint/EP form defaults), so this default is reachable only by direct API callers.
+DEFAULT_RX_SENSITIVITY_DBM = -90
+
+
+def _json_error(message):
+    return jsonify({'status': 'error', 'message': message})
+
+
+def _parse_antenna(data, prefix, default_beamwidth=90):
+    """Per-node antenna parameters for a 'tx' / 'rx' / 'jammer' prefix.
+    Returns (antenna_type, azimuth_deg, beamwidth_deg, height_m); omni defaults."""
+    return (data.get(f'{prefix}_antenna_type', 'omni'),
+            float(data.get(f'{prefix}_azimuth_deg', 0)),
+            float(data.get(f'{prefix}_beamwidth_deg', default_beamwidth)),
+            float(data.get(f'{prefix}_antenna_height_m', 0)))
+
+
+def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
+    """Shared body of /calculate_es_terrain (prefix='enemy', antenna_prefix='tx')
+    and /calculate_jammer_footprint (both 'jammer'): parse the prefixed link
+    parameters, validate, and compute the terrain-shaped coverage polygon."""
+    freq_mhz       = float(data.get('freq_mhz', 150))
+    terrain        = data.get(f'{prefix}_terrain', 'free space')
+    tx_w           = float(data.get(f'{prefix}_tx_w', 5))
+    tx_gain        = float(data.get(f'{prefix}_tx_gain', 0))
+    rx_sensitivity = float(data.get('rx_sensitivity', DEFAULT_RX_SENSITIVITY_DBM))
+    rx_gain        = float(data.get('friendly_rx_gain', 0))
+    lat            = float(data[f'{prefix}_lat'])
+    lon            = float(data[f'{prefix}_lon'])
+    num_bearings   = int(data.get('num_bearings', 36))
+
+    antenna_type, azimuth_deg, beamwidth_deg, antenna_height_m = \
+        _parse_antenna(data, antenna_prefix)
+
+    error = _require_positive([
+        (freq_mhz, 'Frequency must be greater than zero.'),
+        (tx_w, 'Transmit power must be greater than zero.'),
+    ]) or _validate_latlon([(lat, f'{prefix}_lat')], [(lon, f'{prefix}_lon')])
+    if error is None and not (1 <= num_bearings <= 360):
+        error = 'num_bearings must be between 1 and 360.'
+    if error:
+        return _json_error(error)
+
+    result = compute_terrain_footprint(
+        lat, lon, tx_w, tx_gain,
+        antenna_type, azimuth_deg, beamwidth_deg,
+        antenna_height_m, freq_mhz, terrain,
+        rx_gain, rx_sensitivity, log_label=log_label,
+    )
+    return jsonify({'status': 'success', **result})
+
+
 @app.before_request
 def check_auth():
     # 1. Allow local machine bypass — check the actual connection IP, not the Host header.
@@ -313,7 +367,7 @@ def calculate_ea():
             (jammer_bw_khz, 'Bandwidth must be greater than zero.'),
         ])
         if error:
-            return jsonify({'status': 'error', 'message': error})
+            return _json_error(error)
 
         # Optional elevation-aware LOS analysis
         jammer_los = None
@@ -321,22 +375,16 @@ def calculate_ea():
         terrain_warnings = []
 
         # Per-node antenna parameters (all default to omni if absent)
-        tx_antenna_type      = data.get('tx_antenna_type', 'omni')
-        tx_azimuth_deg       = float(data.get('tx_azimuth_deg', 0))
-        tx_beamwidth_deg     = float(data.get('tx_beamwidth_deg', 90))
-        rx_antenna_type      = data.get('rx_antenna_type', 'omni')
-        rx_azimuth_deg       = float(data.get('rx_azimuth_deg', 0))
-        rx_beamwidth_deg     = float(data.get('rx_beamwidth_deg', 90))
-        jammer_antenna_type  = data.get('jammer_antenna_type', 'omni')
-        jammer_azimuth_deg   = float(data.get('jammer_azimuth_deg', 0))
-        jammer_beamwidth_deg = float(data.get('jammer_beamwidth_deg', 90))
-        tx_antenna_height_m     = float(data.get('tx_antenna_height_m', 0))
-        rx_antenna_height_m     = float(data.get('rx_antenna_height_m', 0))
-        jammer_antenna_height_m = float(data.get('jammer_antenna_height_m', 0))
+        tx_antenna_type, tx_azimuth_deg, tx_beamwidth_deg, tx_antenna_height_m = \
+            _parse_antenna(data, 'tx')
+        rx_antenna_type, rx_azimuth_deg, rx_beamwidth_deg, rx_antenna_height_m = \
+            _parse_antenna(data, 'rx')
+        jammer_antenna_type, jammer_azimuth_deg, jammer_beamwidth_deg, jammer_antenna_height_m = \
+            _parse_antenna(data, 'jammer')
         lower_threshold = float(data.get('lower_threshold', -6.0))
         upper_threshold = float(data.get('upper_threshold',  6.0))
         if upper_threshold <= lower_threshold:
-            return jsonify({'status': 'error', 'message': '"Complete Jamming" threshold must be greater than "No Effect" threshold.'})
+            return _json_error('"Complete Jamming" threshold must be greater than "No Effect" threshold.')
 
         jammer_lat = data.get('jammer_lat')
         jammer_lon = data.get('jammer_lon')
@@ -350,7 +398,7 @@ def calculate_ea():
             [(jammer_lon, 'jammer_lon'), (rx_lon, 'rx_lon'), (tx_lon, 'tx_lon')],
         )
         if error:
-            return jsonify({'status': 'error', 'message': error})
+            return _json_error(error)
 
         if all(v is not None for v in [jammer_lat, jammer_lon, rx_lat, rx_lon]):
             try:
@@ -456,7 +504,7 @@ def calculate_ea():
         })
     except Exception as e:
         app.logger.error("calculate_ea error: %s", e)
-        return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
+        return _json_error('Calculation error. Check your inputs.')
 
 @csrf.exempt
 @app.route('/calculate_es', methods=['POST'])
@@ -469,7 +517,7 @@ def calculate_es():
         enemy_tx_w = float(data.get('enemy_tx_w', 5))
         enemy_tx_gain = float(data.get('enemy_tx_gain', 0))
 
-        rx_sensitivity = float(data.get('rx_sensitivity', -90))
+        rx_sensitivity = float(data.get('rx_sensitivity', DEFAULT_RX_SENSITIVITY_DBM))
         rx_gain = float(data.get('friendly_rx_gain', 0))
 
         error = _require_positive([
@@ -477,7 +525,7 @@ def calculate_es():
             (enemy_tx_w, 'Transmit power must be greater than zero.'),
         ])
         if error:
-            return jsonify({'status': 'error', 'message': error})
+            return _json_error(error)
 
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
         enemy_eirp = calculate_eirp(enemy_tx_dbm, enemy_tx_gain)
@@ -487,7 +535,7 @@ def calculate_es():
         return jsonify({'status': 'success', 'radius_km': dist_km})
     except Exception as e:
         app.logger.error("calculate_es error: %s", e)
-        return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
+        return _json_error('Calculation error. Check your inputs.')
 
 @csrf.exempt
 @app.route('/calculate_es_terrain', methods=['POST'])
@@ -498,43 +546,12 @@ def calculate_es_terrain():
     terrain that blocks detection.  Falls back gracefully if the elevation API
     is unavailable (polygon_points will be null).
     """
-    data = request.json
     try:
-        freq_mhz       = float(data.get('freq_mhz', 150))
-        sensor_terrain = data.get('enemy_terrain', 'free space')
-        enemy_tx_w     = float(data.get('enemy_tx_w', 5))
-        enemy_tx_gain  = float(data.get('enemy_tx_gain', 0))
-        rx_sensitivity = float(data.get('rx_sensitivity', -90))
-        rx_gain        = float(data.get('friendly_rx_gain', 0))
-        enemy_lat      = float(data['enemy_lat'])
-        enemy_lon      = float(data['enemy_lon'])
-        num_bearings   = int(data.get('num_bearings', 36))  # 36 × 12 = 432 points, 5 API requests
-
-        # Per-node TX antenna parameters
-        tx_antenna_type  = data.get('tx_antenna_type', 'omni')
-        tx_azimuth_deg   = float(data.get('tx_azimuth_deg', 0))
-        tx_beamwidth_deg = float(data.get('tx_beamwidth_deg', 90))
-        tx_antenna_height_m = float(data.get('tx_antenna_height_m', 0))
-
-        error = _require_positive([
-            (freq_mhz, 'Frequency must be greater than zero.'),
-            (enemy_tx_w, 'Transmit power must be greater than zero.'),
-        ]) or _validate_latlon([(enemy_lat, 'enemy_lat')], [(enemy_lon, 'enemy_lon')])
-        if error is None and not (1 <= num_bearings <= 360):
-            error = 'num_bearings must be between 1 and 360.'
-        if error:
-            return jsonify({'status': 'error', 'message': error})
-
-        result = compute_terrain_footprint(
-            enemy_lat, enemy_lon, enemy_tx_w, enemy_tx_gain,
-            tx_antenna_type, tx_azimuth_deg, tx_beamwidth_deg,
-            tx_antenna_height_m, freq_mhz, sensor_terrain,
-            rx_gain, rx_sensitivity, log_label='calculate_es_terrain',
-        )
-        return jsonify({'status': 'success', **result})
+        return _terrain_footprint_response(request.json, 'enemy', 'tx',
+                                           log_label='calculate_es_terrain')
     except Exception as e:
         app.logger.error("calculate_es_terrain error: %s", e)
-        return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
+        return _json_error('Calculation error. Check your inputs.')
 
 
 @csrf.exempt
@@ -547,42 +564,12 @@ def calculate_jammer_footprint():
     equals rx_sensitivity dBm (same reference used by ES rings).  Falls back to null
     polygon_points when the elevation API is unavailable.
     """
-    data = request.json
     try:
-        freq_mhz            = float(data.get('freq_mhz', 150))
-        jammer_terrain      = data.get('jammer_terrain', 'free space')
-        jammer_tx_w         = float(data.get('jammer_tx_w', 5))
-        jammer_tx_gain      = float(data.get('jammer_tx_gain', 0))
-        rx_sensitivity      = float(data.get('rx_sensitivity', -90))
-        rx_gain             = float(data.get('friendly_rx_gain', 0))
-        jammer_lat          = float(data['jammer_lat'])
-        jammer_lon          = float(data['jammer_lon'])
-        num_bearings        = int(data.get('num_bearings', 36))
-
-        jammer_antenna_type  = data.get('jammer_antenna_type', 'omni')
-        jammer_azimuth_deg   = float(data.get('jammer_azimuth_deg', 0))
-        jammer_beamwidth_deg = float(data.get('jammer_beamwidth_deg', 90))
-        jammer_antenna_height_m = float(data.get('jammer_antenna_height_m', 0))
-
-        error = _require_positive([
-            (freq_mhz, 'Frequency must be greater than zero.'),
-            (jammer_tx_w, 'Transmit power must be greater than zero.'),
-        ]) or _validate_latlon([(jammer_lat, 'jammer_lat')], [(jammer_lon, 'jammer_lon')])
-        if error is None and not (1 <= num_bearings <= 360):
-            error = 'num_bearings must be between 1 and 360.'
-        if error:
-            return jsonify({'status': 'error', 'message': error})
-
-        result = compute_terrain_footprint(
-            jammer_lat, jammer_lon, jammer_tx_w, jammer_tx_gain,
-            jammer_antenna_type, jammer_azimuth_deg, jammer_beamwidth_deg,
-            jammer_antenna_height_m, freq_mhz, jammer_terrain,
-            rx_gain, rx_sensitivity, log_label='calculate_jammer_footprint',
-        )
-        return jsonify({'status': 'success', **result})
+        return _terrain_footprint_response(request.json, 'jammer', 'jammer',
+                                           log_label='calculate_jammer_footprint')
     except Exception as e:
         app.logger.error("calculate_jammer_footprint error: %s", e)
-        return jsonify({'status': 'error', 'message': 'Calculation error. Check your inputs.'})
+        return _json_error('Calculation error. Check your inputs.')
 
 
 @csrf.exempt
@@ -592,7 +579,7 @@ def compute_overlap():
     try:
         polygon_list = data.get('polygons', [])
         if len(polygon_list) < 2:
-            return jsonify({'status': 'error', 'message': 'Need at least 2 polygons'})
+            return _json_error('Need at least 2 polygons')
         # polygon_list is [[[lat,lng],...], ...] — shapely Polygon expects (lng,lat)
         shapes = [Polygon([(lng, lat) for lat, lng in pts]) for pts in polygon_list]
         result = shapes[0]
@@ -607,7 +594,7 @@ def compute_overlap():
         return jsonify({'status': 'success', 'intersection': intersection})
     except Exception as e:
         app.logger.error("compute_overlap error: %s", e)
-        return jsonify({'status': 'error', 'message': 'Overlap calculation error.'})
+        return _json_error('Overlap calculation error.')
 
 
 @csrf.exempt

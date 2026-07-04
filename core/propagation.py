@@ -4,6 +4,27 @@ import math
 _EGLI_K = 47.39
 
 
+def _classify_terrain(terrain_type):
+    """
+    Canonical terrain category from free-text terrain keywords.
+
+    Returns one of 'free_space', 'dense', 'light', 'open'.
+    Precedence: free_space > dense > light > open. The UI vocabulary is
+    "free space", "rural", "light forest", "dense forest"; substring matching
+    keeps legacy synonyms ("urban", "suburban", "air", "open") working.
+    """
+    t = (terrain_type or '').strip().lower()
+    if 'free' in t or 'air' in t:
+        return 'free_space'
+    if 'suburb' in t:  # before 'urban': 'suburban' contains it
+        return 'light'
+    if 'dense' in t or 'urban' in t:
+        return 'dense'
+    if 'light' in t:
+        return 'light'
+    return 'open'
+
+
 def _cost231_valid(frequency_mhz, tx_height_m):
     """True when parameters fall inside the COST-231 Hata validity domain."""
     return frequency_mhz >= 150.0 and tx_height_m >= 30.0
@@ -30,16 +51,8 @@ def _egli_terrain_correction_db(terrain_type):
       Rural / open / free space  →   0 dB  (Egli's native calibration env)
       Light forest / suburban    →  +8 dB  (~37% range reduction vs. rural)
       Dense forest / urban       → +20 dB  (~70% range reduction vs. rural)
-
-    Keyword matching mirrors _shf_path_loss() and _cost231_hata_path_loss().
     """
-    terrain = terrain_type.strip().lower()
-    if "dense" in terrain or "urban" in terrain:
-        return 20.0
-    elif "suburb" in terrain or "light" in terrain:
-        return 8.0
-    else:
-        return 0.0  # rural / open / free space
+    return {'dense': 20.0, 'light': 8.0}.get(_classify_terrain(terrain_type), 0.0)
 
 
 def _egli_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m, terrain_type="rural"):
@@ -86,18 +99,19 @@ def _cost231_hata_path_loss(distance_km, frequency_mhz, terrain_type, tx_height_
     # Small/medium-city mobile antenna correction factor
     a_hm = (1.1 * math.log10(f) - 0.7) * h_m - (1.56 * math.log10(f) - 0.8)
 
+    cat = _classify_terrain(terrain_type)
+
     # Metropolitan-centre penalty (dense urban only)
-    c_m = 3.0 if "dense" in terrain_type.lower() else 0.0
+    c_m = 3.0 if cat == 'dense' else 0.0
 
     A = 46.3 + 33.9 * math.log10(f) - 13.82 * math.log10(h_b) - a_hm + c_m
     B = 44.9 - 6.55 * math.log10(h_b)
 
     urban_loss = A + B * math.log10(max(0.1, distance_km))
 
-    terrain = terrain_type.strip().lower()
-    if "rural" in terrain or "open" in terrain or "free" in terrain:
+    if cat in ('open', 'free_space'):
         loss = urban_loss - 4.78 * math.log10(f) ** 2 + 18.33 * math.log10(f) - 40.94
-    elif "suburb" in terrain or "light" in terrain:
+    elif cat == 'light':
         loss = urban_loss - 2.0 * (math.log10(f / 28.0)) ** 2 - 5.4
     else:
         loss = urban_loss  # urban / dense urban
@@ -140,16 +154,9 @@ def _shf_path_loss(distance_km, frequency_mhz, terrain_type):
     fspl = (20.0 * math.log10(distance_km)
             + 20.0 * math.log10(frequency_mhz) + 32.44)
 
-    terrain = terrain_type.strip().lower()
-    f_ghz   = frequency_mhz / 1000.0
-    if "suburb" in terrain or "light" in terrain:
-        clutter = 2.0 * f_ghz * distance_km
-    elif "dense" in terrain or "urban" in terrain:
-        clutter = 5.0 * f_ghz * distance_km
-    else:
-        clutter = 0.0  # open / rural / free space
-
-    return fspl + clutter
+    f_ghz = frequency_mhz / 1000.0
+    k = {'light': 2.0, 'dense': 5.0}.get(_classify_terrain(terrain_type), 0.0)
+    return fspl + k * f_ghz * distance_km
 
 
 def _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type):
@@ -170,13 +177,7 @@ def _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type):
     """
     if min(tx_height_m, rx_height_m) >= 5.0:
         return 0.0
-    terrain = terrain_type.strip().lower()
-    if "dense" in terrain or "urban" in terrain:
-        return 10.0
-    elif "suburb" in terrain or "light" in terrain:
-        return 5.0
-    else:
-        return 0.0  # open / rural / free space
+    return {'dense': 10.0, 'light': 5.0}.get(_classify_terrain(terrain_type), 0.0)
 
 
 def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
@@ -208,7 +209,7 @@ def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
     if distance_km <= 0:
         return 0.0
 
-    is_free_space = "free space" in terrain_type.lower() or "air" in terrain_type.lower()
+    is_free_space = _classify_terrain(terrain_type) == 'free_space'
     hata_ok = _cost231_valid(frequency_mhz, tx_height_m)
     # Egli was calibrated for 40–900 MHz VHF/UHF ground scenarios.  At 1–2 GHz with
     # low antennas (where COST-231 Hata is unavailable) it over-predicts path loss by
@@ -294,14 +295,8 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
 
     # SHF branch: early return before the LOS/NLOS split (diffraction is negligible at >2 GHz)
     if freq_mhz > 2000.0:
-        f_ghz   = freq_mhz / 1000.0
-        terrain = terrain_type.strip().lower()
-        if "suburb" in terrain or "light" in terrain:
-            k = 2.0 * f_ghz
-        elif "dense" in terrain or "urban" in terrain:
-            k = 5.0 * f_ghz
-        else:
-            k = 0.0
+        f_ghz = freq_mhz / 1000.0
+        k = {'light': 2.0, 'dense': 5.0}.get(_classify_terrain(terrain_type), 0.0) * f_ghz
 
         # Subtract near-ground penalty from the available link budget before solving for distance.
         shf_penalty = _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
@@ -329,7 +324,7 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
         distance_km = min(distance_km, _egli_horizon_km(ht, hr))
         return round(max(0.001, distance_km), 3)
 
-    is_free_space = "free space" in terrain_type.lower() or "air" in terrain_type.lower()
+    is_free_space = _classify_terrain(terrain_type) == 'free_space'
     hata_ok = _cost231_valid(freq_mhz, tx_height_m)
     upper_uhf = freq_mhz >= 1000.0 and not hata_ok
 
@@ -365,13 +360,13 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
             h_b = max(2.0, tx_height_m)
             h_m = max(1.0, rx_height_m)
             a_hm = (1.1 * math.log10(f_c) - 0.7) * h_m - (1.56 * math.log10(f_c) - 0.8)
-            c_m  = 3.0 if "dense" in terrain_type.lower() else 0.0
+            cat  = _classify_terrain(terrain_type)
+            c_m  = 3.0 if cat == 'dense' else 0.0
             A = 46.3 + 33.9 * math.log10(f_c) - 13.82 * math.log10(h_b) - a_hm + c_m
             B = 44.9 - 6.55 * math.log10(h_b)
-            terrain = terrain_type.strip().lower()
-            if "rural" in terrain or "open" in terrain or "free" in terrain:
+            if cat in ('open', 'free_space'):
                 A += -4.78 * math.log10(f_c) ** 2 + 18.33 * math.log10(f_c) - 40.94
-            elif "suburb" in terrain or "light" in terrain:
+            elif cat == 'light':
                 A += -2.0 * (math.log10(f_c / 28.0)) ** 2 - 5.4
             if B <= 0:
                 B = 1.0
