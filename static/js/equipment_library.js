@@ -156,7 +156,9 @@ function renderProfileControls() {
     if (receiverSelect) receiverSelect.innerHTML = profileOptionsHtml('receiver', 'Select receiver...');
     const jammerSelect = document.getElementById('ea-jammer-profile-select');
     if (jammerSelect) jammerSelect.innerHTML = profileOptionsHtml('jammer', 'No built-in jammer profiles');
+    // Both system card lists embed template dropdowns, so they refresh together.
     updateEpWorkbench();
+    updateRedSystemsWorkbench();
 }
 
 function mergeUserProfilePacks(packs) {

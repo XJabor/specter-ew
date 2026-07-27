@@ -225,7 +225,23 @@ function activeSensorCoverages() {
                 label: node.esLabel
             }
         }));
-    return blueCoverages.concat(redCoverages);
+    // Extra red systems each contribute their own ring. The synthetic sensor id
+    // is system-scoped, so the `${sensor.id}:${redId}` overlap key stays unique.
+    const redSystemCoverages = redNodes.flatMap(node =>
+        (node.systems || []).filter(sys => sys.polygonPoints).map(sys => ({
+            sensor: { id: `red-sys-${sys.id}`, name: sys.name },
+            coverage: {
+                redId: node.id,
+                // Marks the entry so KML can route it to its own coloured folder
+                // instead of the flat-red ES ring folder.
+                redSystem: sys,
+                rangeKm: sys.rangeKm,
+                polygonPoints: sys.polygonPoints,
+                layer: sys.layer,
+                label: sys.label
+            }
+        })));
+    return blueCoverages.concat(redCoverages, redSystemCoverages);
 }
 
 // ============================================================

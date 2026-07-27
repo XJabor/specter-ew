@@ -172,7 +172,8 @@ function serializeScenario() {
                 location: latLngToPlain(node.marker.getLatLng()),
                 equipment: equipmentScenarioState(node, 'red'),
                 ...nodeAntennaState(node),
-                es_active: !!node.esActive
+                es_active: !!node.esActive,
+                systems: (node.systems || []).map(redSystemScenarioState)
             })),
             blue: blueNodes.map(node => ({
                 id: node.id,
@@ -255,6 +256,7 @@ function resetScenarioState() {
     redNodes.forEach(n => {
         map.removeLayer(n.marker);
         clearRedRing(n);
+        clearRedSystemRings(n);
     });
     blueNodes.forEach(n => {
         map.removeLayer(n.marker);
@@ -282,6 +284,7 @@ function resetScenarioState() {
     renderOverlapControls();
     renderResults();
     updateEpWorkbench();
+    updateRedSystemsWorkbench();
     updateMGRSTooltips();
 }
 
@@ -321,11 +324,16 @@ async function loadScenario(data) {
         applyScenarioMapView(scenario.map_view);
         updateMGRSTooltips();
         updateEpWorkbench();
+        updateRedSystemsWorkbench();
         renderOverlapControls();
         recalculateAll();
         const epNodesToCalculate = epNodes.filter(node => node.systems.some(sys => sys.ringActive));
         for (const node of epNodesToCalculate) {
             await calculateEpNode(node.id);
+        }
+        const redNodesToCalculate = redNodes.filter(node => (node.systems || []).some(sys => sys.ringActive));
+        for (const node of redNodesToCalculate) {
+            await calculateRedNodeSystems(node.id);
         }
         if (scenario.overlays?.overlap_visible) {
             setTimeout(() => computeAndShowOverlap(true), 1200);
@@ -496,6 +504,11 @@ function exportKML(includeLabels) {
     // Overlap polygon (yellow outline, 35% yellow fill)
     lines.push(`  <Style id="overlapPoly"><LineStyle><color>${cssToKmlColor('#ffff00')}</color><width>2</width></LineStyle><PolyStyle><color>${cssToKmlColor('#ffff00', 0.35)}</color></PolyStyle></Style>`);
 
+    // Enemy system rings — one style per palette entry, matching the map colors
+    RED_SYSTEM_COLORS.forEach((hex, i) => {
+        lines.push(`  <Style id="redSysRing-${i}"><LineStyle><color>${cssToKmlColor(hex)}</color><width>2</width></LineStyle><PolyStyle><color>${cssToKmlColor(hex, 0.15)}</color></PolyStyle></Style>`);
+    });
+
     // --- Enemy Nodes ---
     lines.push('  <Folder><name>Enemy Nodes (Red)</name>');
     for (const node of redNodes) {
@@ -591,6 +604,7 @@ function exportKML(includeLabels) {
     lines.push('  <Folder><name>ES Detection Rings</name>');
     for (const { sensor, coverage } of activeSensorCoverages()) {
         if (!coverage.polygonPoints || coverage.polygonPoints.length < 3) continue;
+        if (coverage.redSystem) continue; // exported below with its own color
         const tx = findNode('red', coverage.redId);
         // esPolygonPoints is [[lat,lng],...]; KML needs lng,lat,alt; close the ring
         const pts = [...coverage.polygonPoints, coverage.polygonPoints[0]];
@@ -611,6 +625,37 @@ function exportKML(includeLabels) {
             lines.push('      <styleUrl>#linkLabel</styleUrl>');
             lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
             lines.push('    </Placemark>');
+        }
+    }
+    lines.push('  </Folder>');
+
+    // --- Enemy System Rings ---
+    lines.push('  <Folder><name>Enemy System Rings</name>');
+    for (const node of redNodes) {
+        const ll = node.marker.getLatLng();
+        for (const sys of node.systems || []) {
+            if (!sys.polygonPoints || sys.polygonPoints.length < 3) continue;
+            const colorIdx = RED_SYSTEM_COLORS.indexOf(sys.color);
+            const styleId  = colorIdx >= 0 ? `redSysRing-${colorIdx}` : 'redSysRing-0';
+            // polygonPoints is [[lat,lng],...]; KML needs lng,lat,alt; close the ring
+            const pts = [...sys.polygonPoints, sys.polygonPoints[0]];
+            const coordStr = pts.map(pt => `${pt[1]},${pt[0]},0`).join(' ');
+            lines.push('    <Placemark>');
+            lines.push(`      <name>${escapeXml(node.name + ' — ' + sys.name)}</name>`);
+            lines.push(`      <styleUrl>#${styleId}</styleUrl>`);
+            lines.push('      <Polygon><tessellate>1</tessellate>');
+            lines.push('        <outerBoundaryIs><LinearRing>');
+            lines.push(`          <coordinates>${coordStr}</coordinates>`);
+            lines.push('        </LinearRing></outerBoundaryIs>');
+            lines.push('      </Polygon>');
+            lines.push('    </Placemark>');
+            if (includeLabels && sys.rangeKm != null) {
+                lines.push('    <Placemark>');
+                lines.push(`      <name>${escapeXml(sys.name)}: ~${sys.rangeKm.toFixed(1)} km</name>`);
+                lines.push('      <styleUrl>#linkLabel</styleUrl>');
+                lines.push(`      <Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point>`);
+                lines.push('    </Placemark>');
+            }
         }
     }
     lines.push('  </Folder>');

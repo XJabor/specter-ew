@@ -1,4 +1,24 @@
 -----
+27JUL26 Claude Code
+
+- Enemy nodes can now carry extra named systems on top of their own radio, so a single position that transmits on several frequencies can be modelled as one node
+- Each system has its own frequency, power, gain, antenna, and height, and draws its own colour-coded detection ring shaped by the surrounding terrain
+- Systems can be added blank or copied from a Library template, and each can be set to omni or directional with an aim direction and beam width
+- These extra rings can be picked for common-coverage overlap analysis, are included in KML exports in their own colours, and are covered by Center on Nodes
+- Extra systems are display-only: they never create comms links, jamming pairs, or sidebar equipment entries, so existing calculations are unchanged
+- Moving a node or editing a system clears that node's rings; press Calculate to redraw them, which keeps the terrain lookups from being repeated needlessly
+- Saved scenario files now remember these systems and reopen with their rings restored; scenarios saved by older versions still load and simply start with no extra systems
+- Added collapse arrows to the Link Status, Enemy Systems, and Overlap Analysis sections so a long list in one no longer buries the others
+- Collapsed sections stay collapsed while the lists underneath refresh, and reopening them restores everything as it was
+- EP mode systems can now use directional antennas: each system card has an Omni/Directional choice that reveals an aim direction and beam width, stretching that system's ring toward where the antenna points
+- Choosing Directional sets the beam width to 90 degrees, because the previous all-round setting produced a ring that still looked circular and read as broken
+- Out-of-range entries are now corrected as they are typed, so an aim direction of 450 becomes 90 and an impossible beam width falls back to a sensible value
+- Changing any EP system setting now clears that node's rings, so an out-of-date ring no longer stays on the map until the next Calculate
+- Saved scenarios keep each system's antenna settings, and files saved before this change still open, simply starting as all-round antennas
+- Updated the README and the internal guidance files to cover the new systems, the collapse controls, the directional antenna options, and the corrected save-file version
+
+-----
+-----
 27JUN26 Codex
 
 - Added scenario save/load so operators can download their planning work as a portable `.specter.json` file and reopen it later
