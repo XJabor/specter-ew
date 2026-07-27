@@ -194,10 +194,37 @@ window.epUpdateSysName = function(nodeId, sysId, val) {
     if (sys) { sys.name = val; markDirty('EP system renamed.'); }
 };
 
+// Normalizers mirror the EA setters in nodes_links.js so both modes agree.
+const EP_PARAM_NORMALIZERS = {
+    antennaAzimuth:   v => ((parseFloat(v) || 0) % 360 + 360) % 360,
+    antennaBeamwidth: v => Math.max(1, Math.min(360, parseFloat(v) || 90))
+};
+
 window.epUpdateSysParam = function(nodeId, sysId, param, val) {
     const node = epNodes.find(n => n.id === nodeId);
     const sys  = node && node.systems.find(s => s.id === sysId);
-    if (sys) { sys[param] = val; markDirty('EP system changed.'); }
+    if (!sys) return;
+    const normalize = EP_PARAM_NORMALIZERS[param];
+    sys[param] = normalize ? normalize(val) : val;
+    // Rings are stale once any input changes; re-render also echoes clamped values back.
+    clearEpNodeRings(node);
+    updateEpWorkbench();
+    markDirty('EP system changed.');
+};
+
+window.epUpdateSysAntennaType = function(nodeId, sysId, val) {
+    const node = epNodes.find(n => n.id === nodeId);
+    const sys  = node && node.systems.find(s => s.id === sysId);
+    if (!sys) return;
+    sys.antennaType = val === 'directional' ? 'directional' : 'omni';
+    // A 360° "directional" system loses only ~3 dB at 180° off boresight, so it
+    // renders as a round ring. Snap the omni default to the EA/backend default.
+    if (sys.antennaType === 'directional' && sys.antennaBeamwidth >= 360) {
+        sys.antennaBeamwidth = 90;
+    }
+    clearEpNodeRings(node);
+    updateEpWorkbench();
+    markDirty('EP system antenna changed.');
 };
 
 window.calculateEpNode = async function(nodeId) {
@@ -269,14 +296,14 @@ function updateEpWorkbench() {
     }
 
     container.innerHTML = epNodes.map(node => `
-        <div class="ep-node-card" id="ep-card-${node.id}">
-            <div class="ep-node-header">
-                <input type="text" class="ep-node-name-input" value="${escapeHtml(node.name)}"
+        <div class="sys-card ep-theme" id="ep-card-${node.id}">
+            <div class="sys-card-header">
+                <input type="text" class="sys-card-name-input" value="${escapeHtml(node.name)}"
                     oninput="epUpdateNodeName('${node.id}', this.value)"
                     onclick="this.select()" title="Click to rename node">
-                <button class="ep-node-delete-btn" onclick="removeEpNode('${node.id}')" title="Remove node">✕</button>
+                <button class="sys-card-delete-btn" onclick="removeEpNode('${node.id}')" title="Remove node">✕</button>
             </div>
-            <div class="ep-library-row">
+            <div class="sys-library-row">
                 <select id="ep-library-select-${node.id}">
                     ${epSystemTemplateOptionsHtml()}
                 </select>
@@ -285,33 +312,49 @@ function updateEpWorkbench() {
             ${node.systems.length === 0
                 ? '<p class="results-empty" style="margin:2px 0 4px 0;font-size:11px;">No systems — click + Add System.</p>'
                 : node.systems.map(sys => `
-                <div class="ep-system-row">
-                    <span class="ep-system-color-dot" style="background:${sys.color};"></span>
-                    <input type="text" class="ep-sys-name" value="${escapeHtml(sys.name)}"
+                <div class="sys-row">
+                    <span class="sys-color-dot" style="background:${sys.color};"></span>
+                    <input type="text" class="sys-name" value="${escapeHtml(sys.name)}"
                         oninput="epUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
-                    <span class="ep-sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
-                    <button class="ep-sys-delete" onclick="removeSystemFromEpNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
-                    <div class="ep-sys-params">
-                        <label class="ep-sys-label">Freq (MHz)
+                    <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
+                    <button class="sys-delete" onclick="removeSystemFromEpNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
+                    <div class="sys-params">
+                        <label class="sys-label">Freq (MHz)
                             <input type="number" value="${sys.freqMhz}" min="30" max="40000"
                                 onchange="epUpdateSysParam('${node.id}','${sys.id}','freqMhz',+this.value)">
                         </label>
-                        <label class="ep-sys-label">Tx Power (W)
+                        <label class="sys-label">Tx Power (W)
                             <input type="number" value="${sys.txPowerW}" min="0.001" step="0.1"
                                 onchange="epUpdateSysParam('${node.id}','${sys.id}','txPowerW',+this.value)">
                         </label>
-                        <label class="ep-sys-label">Tx Gain (dBi)
+                        <label class="sys-label">Tx Gain (dBi)
                             <input type="number" value="${sys.txGainDbi}" step="0.5"
                                 onchange="epUpdateSysParam('${node.id}','${sys.id}','txGainDbi',+this.value)">
                         </label>
-                        <label class="ep-sys-label">Height AGL (m)
+                        <label class="sys-label">Height AGL (m)
                             <input type="number" value="${sys.antennaHeightAgl}" min="1" max="500"
                                 onchange="epUpdateSysParam('${node.id}','${sys.id}','antennaHeightAgl',+this.value)">
                         </label>
+                        <label class="sys-label">Antenna
+                            <select onchange="epUpdateSysAntennaType('${node.id}','${sys.id}',this.value)">
+                                <option value="omni"${sys.antennaType !== 'directional' ? ' selected' : ''}>Omni</option>
+                                <option value="directional"${sys.antennaType === 'directional' ? ' selected' : ''}>Directional</option>
+                            </select>
+                        </label>
+                        <div class="sys-dir"${sys.antennaType === 'directional' ? '' : ' style="display:none"'}>
+                            <label class="sys-label">Azimuth (° TN)
+                                <input type="number" value="${sys.antennaAzimuth}" min="0" max="360"
+                                    onchange="epUpdateSysParam('${node.id}','${sys.id}','antennaAzimuth',this.value)">
+                            </label>
+                            <label class="sys-label">Beamwidth (° HPBW)
+                                <input type="number" value="${sys.antennaBeamwidth}" min="1" max="360"
+                                    onchange="epUpdateSysParam('${node.id}','${sys.id}','antennaBeamwidth',this.value)">
+                            </label>
+                        </div>
                     </div>
                 </div>`).join('')}
-            <div class="ep-node-actions">
+            <div class="sys-card-actions">
                 <button class="workbench-btn" style="border-left:3px solid #27ae60;"
                     onclick="addSystemToEpNode('${node.id}')">+ Add System</button>
                 <button class="workbench-btn" style="border-left:3px solid #27ae60; color:#27ae60;"

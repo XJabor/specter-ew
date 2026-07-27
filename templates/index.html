@@ -273,15 +273,29 @@
                 </div>
             </div>
         </div>
-        <div class="workbench-section" id="overlap-section">
-            <div class="workbench-section-label">OVERLAP ANALYSIS</div>
-            <div id="overlap-checklist">
-                <p class="results-empty">No active detection rings.</p>
+        <div class="workbench-section">
+            <div class="workbench-section-label">
+                ENEMY SYSTEMS
+                <button id="btn-minimize-red-systems" class="minimize-btn" aria-label="Collapse enemy systems">▼</button>
             </div>
-            <button class="workbench-btn" id="btn-show-overlap" disabled>Show Common Coverage</button>
-            <button class="workbench-btn" id="btn-toggle-corners" style="display:none; border-left:3px solid #ffff00; color:#ffff00;">Show MGRS Corners</button>
-            <button class="workbench-btn" id="btn-clear-overlap" style="display:none; border-left:3px solid #ffff00; color:#ffff00;">Clear Overlap</button>
-            <div id="overlap-status"></div>
+            <div id="red-systems-list">
+                <p class="results-empty">No enemy nodes placed.</p>
+            </div>
+        </div>
+        <div class="workbench-section" id="overlap-section">
+            <div class="workbench-section-label">
+                OVERLAP ANALYSIS
+                <button id="btn-minimize-overlap" class="minimize-btn" aria-label="Collapse overlap analysis">▼</button>
+            </div>
+            <div id="overlap-body">
+                <div id="overlap-checklist">
+                    <p class="results-empty">No active detection rings.</p>
+                </div>
+                <button class="workbench-btn" id="btn-show-overlap" disabled>Show Common Coverage</button>
+                <button class="workbench-btn" id="btn-toggle-corners" style="display:none; border-left:3px solid #ffff00; color:#ffff00;">Show MGRS Corners</button>
+                <button class="workbench-btn" id="btn-clear-overlap" style="display:none; border-left:3px solid #ffff00; color:#ffff00;">Clear Overlap</button>
+                <div id="overlap-status"></div>
+            </div>
         </div>
         <div class="workbench-section">
             <div class="workbench-section-label">EXPORT</div>
@@ -326,6 +340,7 @@
     <script src="/static/js/equipment_library.js"></script>
     <script src="/static/js/nodes_links.js"></script>
     <script src="/static/js/rings_results.js"></script>
+    <script src="/static/js/enemy_systems.js"></script>
     <script src="/static/js/ep_mode.js"></script>
     <script src="/static/js/scenario_io.js"></script>
     <script src="/static/js/app_init.js"></script>

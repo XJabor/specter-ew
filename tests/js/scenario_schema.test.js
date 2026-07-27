@@ -29,37 +29,37 @@ function validPack(overrides = {}) {
 // ── validateScenario ────────────────────────────────────────────────────────
 
 test('current-version scenario validates', () => {
-    assert.equal(schema.validateScenario(minimalScenario(4)), true);
+    assert.equal(schema.validateScenario(minimalScenario(5)), true);
 });
 
 test('newer schema version is rejected', () => {
-    assert.throws(() => schema.validateScenario(minimalScenario(5)),
+    assert.throws(() => schema.validateScenario(minimalScenario(6)),
         /newer than this app supports/);
 });
 
 test('missing schema_version, nodes, or links are rejected', () => {
     assert.throws(() => schema.validateScenario({ nodes: {}, links: {} }),
         /missing schema_version/);
-    assert.throws(() => schema.validateScenario({ schema_version: 4, links: {} }),
+    assert.throws(() => schema.validateScenario({ schema_version: 5, links: {} }),
         /missing nodes/);
-    assert.throws(() => schema.validateScenario({ schema_version: 4, nodes: {} }),
+    assert.throws(() => schema.validateScenario({ schema_version: 5, nodes: {} }),
         /missing links/);
 });
 
 test('out-of-range node location is rejected', () => {
-    const s = minimalScenario(4);
+    const s = minimalScenario(5);
     s.nodes.red = [{ id: 'R1', location: { lat: 95, lon: 0 } }];
     assert.throws(() => schema.validateScenario(s), /invalid location/);
 });
 
 test('node missing id or location is rejected', () => {
-    const s = minimalScenario(4);
+    const s = minimalScenario(5);
     s.nodes.blue = [{ location: { lat: 10, lon: 10 } }];
     assert.throws(() => schema.validateScenario(s), /missing id or location/);
 });
 
 test('embedded profile_library packs are validated (jammers allowed)', () => {
-    const s = minimalScenario(4, {
+    const s = minimalScenario(5, {
         profile_library: {
             packs: [validPack({
                 templates: [{ id: 'j1', name: 'Jammer', equipment_type: 'jammer' }],
@@ -72,8 +72,24 @@ test('embedded profile_library packs are validated (jammers allowed)', () => {
 // ── migrateScenario ─────────────────────────────────────────────────────────
 
 test('current-version scenario passes through unchanged', () => {
-    const s = minimalScenario(4);
+    const s = minimalScenario(5);
     assert.equal(schema.migrateScenario(s), s);
+});
+
+test('v4 scenario gains an empty red systems array', () => {
+    const s = minimalScenario(4);
+    s.nodes.red = [{ id: 'R1', location: { lat: 30, lon: -86 } }];
+    const out = schema.migrateScenario(s);
+    assert.equal(out.schema_version, 5);
+    assert.deepEqual(out.nodes.red[0].systems, []);
+});
+
+test('existing red systems survive migration untouched', () => {
+    const s = minimalScenario(4);
+    const systems = [{ id: 'R1_S1', name: 'VHF Net', freq_mhz: 62.5 }];
+    s.nodes.red = [{ id: 'R1', location: { lat: 30, lon: -86 }, systems }];
+    const out = schema.migrateScenario(s);
+    assert.equal(out.nodes.red[0].systems, systems);
 });
 
 test('v3 scenario gains booleanized ring flags and a profile_library', () => {
@@ -81,10 +97,12 @@ test('v3 scenario gains booleanized ring flags and a profile_library', () => {
     s.nodes.red = [{ id: 'R1', location: { lat: 30, lon: -86 }, es_active: 1 }];
     s.nodes.blue = [{ id: 'B1', location: { lat: 30, lon: -86 } }];
     const out = schema.migrateScenario(s);
-    assert.equal(out.schema_version, 4);
+    assert.equal(out.schema_version, 5);
     assert.equal(out.nodes.red[0].es_active, true);
     assert.equal(out.nodes.blue[0].sensor_active, false);
     assert.deepEqual(out.profile_library, { packs: [] });
+    // Guards the fall-through: older branches must not skip the v4 -> v5 step.
+    assert.deepEqual(out.nodes.red[0].systems, []);
 });
 
 test('v1 scenario synthesizes node equipment from workspace settings', () => {
@@ -94,7 +112,8 @@ test('v1 scenario synthesizes node equipment from workspace settings', () => {
     s.nodes.red = [{ id: 'R1', location: { lat: 30.4, lon: -86.5 } }];
     s.nodes.blue = [{ id: 'B1', location: { lat: 30.5, lon: -86.4 } }];
     const out = schema.migrateScenario(s);
-    assert.equal(out.schema_version, 4);
+    assert.equal(out.schema_version, 5);
+    assert.deepEqual(out.nodes.red[0].systems, []);
     const red = out.nodes.red[0].equipment;
     assert.equal(red.equipment_type, 'radio');
     assert.equal(red.frequency_mhz, 80);

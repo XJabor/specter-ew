@@ -2,7 +2,7 @@
 // Loaded first; also loadable in Node for unit tests (see tests/js/).
 // Scenario/profile-pack validation, migration, and serialization helpers.
 
-const SCENARIO_SCHEMA_VERSION = 4;
+const SCENARIO_SCHEMA_VERSION = 5;
 const SPECTER_APP_VERSION = 'release-1-dev';
 
 const PROFILE_CATEGORIES = ['radio', 'receiver', 'jammer', 'antenna'];
@@ -55,20 +55,38 @@ function validateScenario(data) {
     return true;
 }
 
+// v4 -> v5: red nodes gained a `systems` array of extra ring-only emitters.
+// Purely additive, but every older branch must funnel through here rather than
+// stamping SCENARIO_SCHEMA_VERSION itself, or it would claim v5 without the field.
+function migrateV4ToV5(data) {
+    return {
+        ...data,
+        schema_version: 5,
+        nodes: {
+            ...data.nodes,
+            red: (data.nodes?.red || []).map(node => ({
+                ...node,
+                systems: Array.isArray(node.systems) ? node.systems : []
+            }))
+        }
+    };
+}
+
 function migrateScenario(data) {
     validateScenario(data);
     if (Number(data.schema_version) === SCENARIO_SCHEMA_VERSION) return data;
+    if (Number(data.schema_version) === 4) return migrateV4ToV5(data);
     if (Number(data.schema_version) === 3) {
-        return {
+        return migrateV4ToV5({
             ...data,
-            schema_version: SCENARIO_SCHEMA_VERSION,
+            schema_version: 4,
             nodes: {
                 ...data.nodes,
                 red: (data.nodes?.red || []).map(node => ({ ...node, es_active: !!node.es_active })),
                 blue: (data.nodes?.blue || []).map(node => ({ ...node, sensor_active: !!node.sensor_active }))
             },
             profile_library: data.profile_library || { packs: [] }
-        };
+        });
     }
     if ([1, 2].includes(Number(data.schema_version))) {
         const settings = data.settings || {};
@@ -102,16 +120,16 @@ function migrateScenario(data) {
             channel_bw_khz: Number(settings.enemy_bw_khz || 25),
             jammer_bw_khz: Number(settings.jammer_bw_khz || 20000)
         };
-        return {
+        return migrateV4ToV5({
             ...data,
-            schema_version: SCENARIO_SCHEMA_VERSION,
+            schema_version: 4,
             nodes: {
                 ...data.nodes,
                 red: (data.nodes?.red || []).map(node => ({ ...node, es_active: !!node.es_active, equipment: node.equipment || redEquipment })),
                 blue: (data.nodes?.blue || []).map(node => ({ ...node, sensor_active: false, equipment: node.equipment || blueEquipment }))
             },
             profile_library: data.profile_library || { packs: [] }
-        };
+        });
     }
     throw new Error(`Unsupported scenario schema v${data.schema_version}.`);
 }

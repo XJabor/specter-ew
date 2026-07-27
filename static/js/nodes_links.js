@@ -16,11 +16,18 @@ function createRedNode(latlng, opts) {
     const node = { id: opts.id, name: opts.name || opts.id, marker,
                    esActive: !!opts.esActive, esCircle: null, esLabel: null,
                    esPolygonPoints: null, esRangeKm: null, esSensorName: null, elevationM: null,
-                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0 };
+                   antennaType: 'omni', antennaAzimuth: 0, antennaBeamwidth: 90, antennaHeightAgl: 1.0,
+                   systems: [] };
     applyEquipmentToNode(node, opts.equipment, 'red');
     node.antennaAzimuth = Number(opts.antennaAzimuth || 0);
+    node.systems = (opts.systems || []).map((sys, idx) => redSystemFromScenario(sys, idx, node.id));
     marker.on('click', function() { handleNodeClick('red', node.id); });
-    marker.on('dragend', function() { fetchAndStoreElevation(node); markDirty('Node moved.'); recalculateAll(); });
+    marker.on('dragend', function() {
+        // Every system polygon is position-derived, so a move invalidates them all.
+        clearRedSystemRings(node);
+        updateRedSystemsWorkbench();
+        fetchAndStoreElevation(node); markDirty('Node moved.'); recalculateAll();
+    });
     marker.on('popupclose', function() { bindRedPopup(node.id); });
     redNodes.push(node);
     bindRedPopup(node.id);
@@ -78,7 +85,8 @@ function makeRedNodeFromScenario(item) {
         id: item.id, name: item.name,
         equipment: scenarioEquipment(item),
         antennaAzimuth: item.antenna_azimuth,
-        esActive: item.es_active
+        esActive: item.es_active,
+        systems: item.systems
     });
 }
 
@@ -121,6 +129,7 @@ function placeRedNode(latlng, template = null) {
     });
     updateMGRSTooltips();
     updateLinkAllBtn();
+    updateRedSystemsWorkbench();
     selectEquipmentNode('red', id);
     markDirty('Enemy node added.');
 }
@@ -267,6 +276,7 @@ function renameNode(type, id) {
     node.marker.openPopup();
     updateMGRSTooltips();
     renderResults();
+    if (type === 'red') updateRedSystemsWorkbench();
     markDirty('Node renamed.');
 }
 
@@ -327,6 +337,8 @@ window.moveNodeToMGRS = function(type, id, value) {
         map.panTo([lat, lng]);
         updateMGRSTooltips();
         if (type === 'red') {
+            clearRedSystemRings(node);
+            updateRedSystemsWorkbench();
             fetchAndStoreElevation(node);
             markDirty('Node moved.');
             recalculateAll();
@@ -497,9 +509,11 @@ window.removeNode = function(color, id) {
         if (node) {
             map.removeLayer(node.marker);
             clearRedRing(node);
+            clearRedSystemRings(node);
         }
         clearSensorCoverageForRed(id);
         redNodes = redNodes.filter(n => n.id !== id);
+        updateRedSystemsWorkbench();
         clearOverlapLayer();
         renderOverlapControls();
         enemyLinks.filter(l => l.txId === id || l.rxId === id).forEach(l => map.removeLayer(l.line));

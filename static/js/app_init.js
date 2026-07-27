@@ -37,12 +37,19 @@ document.getElementById('btn-link-all-enemy').addEventListener('click', function
     else                  linkAllEnemyComms();
 });
 
-document.getElementById('btn-minimize-links').addEventListener('click', function() {
-    const body = document.getElementById('link-statuses-body');
-    const minimized = body.style.display === 'none';
-    body.style.display = minimized ? 'block' : 'none';
-    this.textContent = minimized ? '▼' : '▶';
-});
+// Collapsible workbench sections: the button owns the caret, the body owns display.
+function bindSectionMinimize(btnId, bodyId) {
+    document.getElementById(btnId).addEventListener('click', function() {
+        const body = document.getElementById(bodyId);
+        const minimized = body.style.display === 'none';
+        body.style.display = minimized ? 'block' : 'none';
+        this.textContent = minimized ? '▼' : '▶';
+    });
+}
+
+bindSectionMinimize('btn-minimize-links', 'link-statuses-body');
+bindSectionMinimize('btn-minimize-red-systems', 'red-systems-list');
+bindSectionMinimize('btn-minimize-overlap', 'overlap-body');
 
 document.getElementById('btn-show-overlap').addEventListener('click', computeAndShowOverlap);
 document.getElementById('btn-clear-overlap').addEventListener('click', function() {

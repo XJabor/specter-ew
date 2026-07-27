@@ -118,6 +118,11 @@ const EP_COLORS  = ['#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22',
 let epNodeCounter = 0;
 let epModeActive  = false;
 
+// Palette for red-node extra system rings. Warm hues, deliberately distinct from
+// EP_COLORS (blues/greens) and from the primary ES ring red (RING_COLORS.es).
+const RED_SYSTEM_COLORS = ['#ff7043','#ffb300','#d81b60','#8e24aa',
+                           '#c62828','#ff5252','#ad1457','#ef6c00'];
+
 const DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM = -100;
 
 function activeBaseLayerName() {

@@ -228,8 +228,8 @@ class RuntimeOptionsTests(unittest.TestCase):
         ).read_text(encoding='utf-8')
         expected = [
             'scenario_schema.js', 'map_core.js', 'equipment_library.js',
-            'nodes_links.js', 'rings_results.js', 'ep_mode.js',
-            'scenario_io.js', 'app_init.js',
+            'nodes_links.js', 'rings_results.js', 'enemy_systems.js',
+            'ep_mode.js', 'scenario_io.js', 'app_init.js',
         ]
         positions = [html.find(f'/static/js/{name}') for name in expected]
         self.assertNotIn(-1, positions, 'missing frontend script tag')
@@ -240,7 +240,7 @@ class RuntimeOptionsTests(unittest.TestCase):
         script = '\n'.join(
             p.read_text(encoding='utf-8') for p in sorted(js_dir.glob('*.js'))
         )
-        self.assertIn('const SCENARIO_SCHEMA_VERSION = 4;', script)
+        self.assertIn('const SCENARIO_SCHEMA_VERSION = 5;', script)
         self.assertIn('profile_library: scenarioProfileLibraryState()', script)
         self.assertIn('mergeUserProfilePacks(scenario.profile_library.packs)', script)
         self.assertIn('sensor_active: !!node.sensorActive', script)

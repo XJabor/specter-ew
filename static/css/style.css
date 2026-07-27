@@ -1014,35 +1014,60 @@ body.ep-mode .ep-only { display: block; }
     box-shadow: 0 0 4px rgba(0,0,0,0.8);
 }
 
-#ep-nodes-list {
+#ep-nodes-list,
+#red-systems-list {
     max-height: 40vh;
     overflow-y: auto;
     margin-bottom: 4px;
 }
 
-.ep-node-card {
-    background: rgba(39,174,96,0.07);
-    border: 1px solid #2d6a3f;
+/* ------------------------------------------------------------
+   Per-system cards. Shared by EP nodes (#ep-nodes-list) and red-node
+   extra systems (#red-systems-list); .ep-theme / .red-theme supply the
+   only colour differences.
+   ------------------------------------------------------------ */
+
+.sys-card {
+    border: 1px solid;
     border-radius: 4px;
     padding: 6px;
     margin-bottom: 6px;
 }
 
-.ep-node-header {
+.sys-card.ep-theme  { background: rgba(39,174,96,0.07);  border-color: #2d6a3f; }
+.sys-card.red-theme { background: rgba(255,68,68,0.07);  border-color: #7a2d2d; }
+
+.sys-card.ep-theme  .sys-range { color: #27ae60; }
+.sys-card.red-theme .sys-range { color: #ff6b6b; }
+
+.sys-card.ep-theme  .sys-library-row .workbench-btn { border-left: 3px solid #27ae60; }
+.sys-card.red-theme .sys-library-row .workbench-btn { border-left: 3px solid #ff4444; }
+
+.sys-card-header {
     display: flex;
     align-items: center;
     gap: 4px;
     margin-bottom: 4px;
 }
 
-.ep-library-row {
+.sys-card-title {
+    flex: 1;
+    font-size: 12px;
+    font-weight: bold;
+    color: #e0e0e0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sys-library-row {
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 4px;
     margin-bottom: 5px;
 }
 
-.ep-library-row select {
+.sys-library-row select {
     margin-top: 0 !important;
     padding: 4px 5px !important;
     font-size: 11px !important;
@@ -1052,16 +1077,15 @@ body.ep-mode .ep-only { display: block; }
     border-radius: 3px !important;
 }
 
-.ep-library-row .workbench-btn {
+.sys-library-row .workbench-btn {
     width: auto;
     margin-bottom: 0;
     padding: 4px 6px;
     font-size: 10px;
     white-space: nowrap;
-    border-left: 3px solid #27ae60;
 }
 
-.ep-node-name-input {
+.sys-card-name-input {
     flex: 1;
     background: #222 !important;
     border: 1px solid #444 !important;
@@ -1075,7 +1099,7 @@ body.ep-mode .ep-only { display: block; }
     margin-top: 0 !important;
 }
 
-.ep-node-delete-btn {
+.sys-card-delete-btn {
     background: none;
     border: none;
     color: #888;
@@ -1085,9 +1109,9 @@ body.ep-mode .ep-only { display: block; }
     flex-shrink: 0;
     line-height: 1;
 }
-.ep-node-delete-btn:hover { color: #ff4444; }
+.sys-card-delete-btn:hover { color: #ff4444; }
 
-.ep-system-row {
+.sys-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1096,7 +1120,7 @@ body.ep-mode .ep-only { display: block; }
     border-top: 1px solid rgba(255,255,255,0.07);
 }
 
-.ep-system-color-dot {
+.sys-color-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
@@ -1104,7 +1128,7 @@ body.ep-mode .ep-only { display: block; }
     border: 1px solid rgba(255,255,255,0.25);
 }
 
-.ep-sys-name {
+.sys-name {
     flex: 1;
     background: #222 !important;
     border: 1px solid #444 !important;
@@ -1117,16 +1141,15 @@ body.ep-mode .ep-only { display: block; }
     margin-top: 0 !important;
 }
 
-.ep-sys-range {
+.sys-range {
     font-size: 10px;
-    color: #27ae60;
     white-space: nowrap;
     min-width: 44px;
     text-align: right;
     font-weight: bold;
 }
 
-.ep-sys-delete {
+.sys-delete {
     background: none;
     border: none;
     color: #888;
@@ -1136,9 +1159,9 @@ body.ep-mode .ep-only { display: block; }
     line-height: 1;
     flex-shrink: 0;
 }
-.ep-sys-delete:hover { color: #ff4444; }
+.sys-delete:hover { color: #ff4444; }
 
-.ep-sys-params {
+.sys-params {
     width: 100%;
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1146,7 +1169,14 @@ body.ep-mode .ep-only { display: block; }
     margin-top: 3px;
 }
 
-.ep-sys-label {
+.sys-dir {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+}
+
+.sys-label {
     display: flex !important;
     flex-direction: column;
     font-size: 10px !important;
@@ -1154,8 +1184,8 @@ body.ep-mode .ep-only { display: block; }
     margin-bottom: 0 !important;
 }
 
-.ep-sys-label input,
-.ep-sys-label select {
+.sys-label input,
+.sys-label select {
     padding: 2px 4px !important;
     font-size: 11px !important;
     background: #222 !important;
@@ -1166,13 +1196,13 @@ body.ep-mode .ep-only { display: block; }
     width: 100% !important;
 }
 
-.ep-node-actions {
+.sys-card-actions {
     display: flex;
     gap: 4px;
     margin-top: 5px;
 }
 
-.ep-node-actions .workbench-btn {
+.sys-card-actions .workbench-btn {
     flex: 1;
     text-align: center;
     margin-bottom: 0;
