@@ -270,13 +270,18 @@ def set_security_headers(response):
     response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
     clerk = f" {_CLERK_FRONTEND_API}" if _CLERK_FRONTEND_API else ""
     worker = " blob:" if _CLERK_FRONTEND_API else ""
+    # Clerk's sign-in flow loads a Cloudflare Turnstile / protect.clerk.com bot-protection
+    # iframe plus a same-origin verification frame; without these the widget hangs at factor-two.
+    clerk_bot = " https://challenges.cloudflare.com https://*.protect.clerk.com" if _CLERK_FRONTEND_API else ""
+    frame = f" 'self'{clerk}{clerk_bot}" if _CLERK_FRONTEND_API else ""
     response.headers['Content-Security-Policy'] = (
         "default-src 'none'; "
-        f"script-src 'self' https://unpkg.com 'unsafe-inline'{clerk}; "
+        f"script-src 'self' https://unpkg.com 'unsafe-inline'{clerk}{clerk_bot}; "
         f"style-src 'self' https://unpkg.com 'unsafe-inline'{clerk}; "
         "img-src 'self' https: data:; "
-        f"connect-src 'self'{clerk}; "
+        f"connect-src 'self'{clerk}{clerk_bot}; "
         f"font-src 'self'{clerk}; "
+        f"frame-src{frame}; "
         f"worker-src{worker}"
     )
     return response
