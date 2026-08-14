@@ -409,7 +409,7 @@
     {% if clerk_publishable_key %}
     <script
         data-clerk-publishable-key="{{ clerk_publishable_key }}"
-        src="{{ clerk_frontend_api }}/npm/@clerk/clerk-js@4.73.14/dist/clerk.browser.js"
+        src="{{ clerk_frontend_api }}/npm/@clerk/clerk-js@5.127.2/dist/clerk.browser.js"
         crossorigin="anonymous"
     ></script>
     <script>
@@ -420,7 +420,7 @@
             return;
         }
         window.Clerk.mountSignIn(document.getElementById('clerk-signin'), {
-            afterSignInUrl: '/',
+            fallbackRedirectUrl: '/',
             appearance: {
                 variables: {
                     colorPrimary: '#ffab00',
