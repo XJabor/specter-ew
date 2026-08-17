@@ -1,4 +1,18 @@
 -----
+16AUG26 Claude Code
+
+- EP nodes can now hide and show their rings, using the same wording as the enemy node ring control, from either the map popup or the EP workbench card
+- Hiding keeps the already-calculated rings in memory, so showing them again is instant and does not repeat the slow terrain lookups
+- A hidden node still updates its distance readouts when Calculate is pressed; the rings simply stay off the map until they are shown again
+- Moving a node still clears its rings whether they are shown or hidden, so an out-of-date ring can never reappear at the node's old position
+- Saved scenarios remember which EP nodes had their rings hidden, and older scenario files still open, simply starting with rings shown
+- Hidden rings are left out of KML exports and ignored by Center on Nodes, so both match what is actually on screen
+- Fixed rings being stranded on the map forever when an EP node was deleted while its terrain calculation was still running
+- EP calculations are now cancelled whenever the node is deleted, moved, edited, cleared, or recalculated, so no leftover ring can outlive its node
+- Fixed EP system naming so a deleted system's name is never reused by the next one, which previously could strand a ring the same way
+- Updated the internal guidance files to describe the ring toggle, the calculation cancelling, and the shared system-numbering helper
+
+-----
 27JUL26 Claude Code
 
 - Enemy nodes can now carry extra named systems on top of their own radio, so a single position that transmits on several frequencies can be modelled as one node

@@ -33,7 +33,8 @@ function makeEpNodeFromScenario(item) {
             polygonPoints: null,
             rangeKm: null,
             ringActive: !!sys.ring_active
-        }))
+        })),
+        ringsHidden: !!item.rings_hidden
     };
     marker.on('dragend', function(e) {
         node.lat = e.target.getLatLng().lat;
@@ -73,7 +74,7 @@ function placeEpNode(latlng) {
         iconAnchor: [12, 12]
     });
     const marker = L.marker(latlng, { icon, draggable: true }).addTo(map);
-    const node = { id, name: id, lat: latlng.lat, lon: latlng.lng, marker, systems: [] };
+    const node = { id, name: id, lat: latlng.lat, lon: latlng.lng, marker, systems: [], ringsHidden: false };
     epNodes.push(node);
 
     marker.on('dragend', function(e) {
@@ -94,22 +95,58 @@ function placeEpNode(latlng) {
 function bindEpPopup(id) {
     const node = epNodes.find(n => n.id === id);
     if (!node) return;
+    const ringLabel = node.ringsHidden ? '📡 Show Rings' : '🚫 Hide Rings';
     node.marker.bindPopup(
         `<b>${escapeHtml(node.name)}</b><br>` +
         `<small>Drag to reposition. Rings clear on move.</small><br>` +
+        `<button onclick="toggleEpNodeRings('${id}')">${ringLabel}</button><br>` +
         `<button onclick="map.closePopup(); removeEpNode('${id}')">🗑️ Remove Node</button>` +
         mgrsInputSection('ep', id, node),
         { minWidth: 180 }
     );
 }
 
+// Cancel the in-flight calculateEpNode() run for a node, if any.
+function abortEpCalc(nodeId) {
+    if (_epAbortControllers[nodeId]) {
+        _epAbortControllers[nodeId].abort();
+        delete _epAbortControllers[nodeId];
+    }
+}
+
+// Full teardown: every ring invalidation path funnels through here, so this is
+// also the one place that has to cancel a running calculation — otherwise the
+// loop resumes after the await and re-draws rings onto a node that is gone.
 function clearEpNodeRings(node) {
+    abortEpCalc(node.id);
     node.systems.forEach(s => {
         removeLayerRef(s, 'layer', 'label');
         s.rangeKm       = null;
         s.polygonPoints = null;
     });
 }
+
+// Hide/show without discarding geometry: the layer objects stay on the system
+// so re-showing costs no API calls. Teardown still goes through
+// clearEpNodeRings — map.removeLayer on a detached layer is a no-op.
+function setEpRingsHidden(node, hidden) {
+    node.ringsHidden = hidden;
+    node.systems.forEach(s => ['layer', 'label'].forEach(key => {
+        if (!s[key]) return;
+        if (hidden) map.removeLayer(s[key]);
+        else if (!map.hasLayer(s[key])) s[key].addTo(map);
+    }));
+}
+
+window.toggleEpNodeRings = function(nodeId) {
+    const node = epNodes.find(n => n.id === nodeId);
+    if (!node) return;
+    setEpRingsHidden(node, !node.ringsHidden);
+    map.closePopup();
+    bindEpPopup(nodeId);
+    updateEpWorkbench();
+    markDirty('EP rings toggled.');
+};
 
 window.removeEpNode = function(nodeId) {
     const idx = epNodes.findIndex(n => n.id === nodeId);
@@ -125,10 +162,13 @@ window.removeEpNode = function(nodeId) {
 window.addSystemToEpNode = function(nodeId) {
     const node = epNodes.find(n => n.id === nodeId);
     if (!node) return;
-    const sysIdx = node.systems.length;
+    // Monotonic index (shared with red systems): reusing the array length would
+    // hand a deleted system's id to its replacement, and removeSystemFromEpNode
+    // filters by id — so the collision would orphan a ring on the map.
+    const sysIdx = nextSystemIndex(node);
     node.systems.push({
-        id:               nodeId + '_S' + (sysIdx + 1),
-        name:             'System ' + (sysIdx + 1),
+        id:               nodeId + '_S' + sysIdx,
+        name:             'System ' + sysIdx,
         freqMhz:          150,
         txPowerW:         5,
         txGainDbi:        0,
@@ -136,7 +176,7 @@ window.addSystemToEpNode = function(nodeId) {
         antennaAzimuth:   0,
         antennaBeamwidth: 360,
         antennaHeightAgl: 1.0,
-        color:            EP_COLORS[sysIdx % EP_COLORS.length],
+        color:            EP_COLORS[(sysIdx - 1) % EP_COLORS.length],
         layer:            null,
         label:            null,
         polygonPoints:    null,
@@ -151,10 +191,10 @@ window.addLibrarySystemToEpNode = function(nodeId) {
     const select = document.getElementById(`ep-library-select-${nodeId}`);
     const template = select && findNodeTemplate(select.value);
     if (!node || !template) return;
-    const sysIdx = node.systems.length;
+    const sysIdx = nextSystemIndex(node);
     node.systems.push({
-        id:               nodeId + '_S' + (sysIdx + 1),
-        name:             template.name || ('System ' + (sysIdx + 1)),
+        id:               nodeId + '_S' + sysIdx,
+        name:             template.name || ('System ' + sysIdx),
         freqMhz:          Number(template.frequency_mhz || 150),
         txPowerW:         Number(template.tx_power_w || 5),
         txGainDbi:        Number(template.antenna_gain_dbi || 0),
@@ -162,7 +202,7 @@ window.addLibrarySystemToEpNode = function(nodeId) {
         antennaAzimuth:   0,
         antennaBeamwidth: Number(template.beamwidth_deg || 360),
         antennaHeightAgl: Number(template.antenna_height_m || 1.0),
-        color:            EP_COLORS[sysIdx % EP_COLORS.length],
+        color:            EP_COLORS[(sysIdx - 1) % EP_COLORS.length],
         layer:            null,
         label:            null,
         polygonPoints:    null,
@@ -234,7 +274,13 @@ window.calculateEpNode = async function(nodeId) {
 
     const terrain = document.getElementById('ep_terrain').value;
     const rxSens  = parseFloat(document.getElementById('ep_rx_sensitivity').value);
-    clearEpNodeRings(node);
+    clearEpNodeRings(node);   // also aborts any previous run for this node
+
+    const controller = new AbortController();
+    _epAbortControllers[nodeId] = controller;
+
+    // True until this run is superseded by a newer one or the node disappears.
+    const stillCurrent = () => _epAbortControllers[nodeId] === controller && epNodes.includes(node);
 
     for (let sysIdx = 0; sysIdx < node.systems.length; sysIdx++) {
         const sys = node.systems[sysIdx];
@@ -257,9 +303,13 @@ window.calculateEpNode = async function(nodeId) {
             const r    = await fetch('/calculate_es_terrain', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify(payload)
+                body:    JSON.stringify(payload),
+                signal:  controller.signal
             });
             const data = await r.json();
+            // Bail before touching the map: the node may have been deleted or
+            // recalculated while these awaits were pending.
+            if (!stillCurrent()) return;
             if (data.status !== 'success') continue;
 
             sys.rangeKm       = data.base_range_km;
@@ -279,10 +329,15 @@ window.calculateEpNode = async function(nodeId) {
                 }).addTo(map);
                 sys.label = makeEdgeLabel(null, node.lat, node.lon, radiusMeters, label, labelOffset);
             }
+            // The toggle stays authoritative: a hidden node collects fresh
+            // geometry and range readouts without its rings hitting the map.
+            if (node.ringsHidden) setEpRingsHidden(node, true);
         } catch(e) {
+            if (e.name === 'AbortError' || !stillCurrent()) return;
             console.error('EP calculate error for', sys.id, e);
         }
     }
+    if (_epAbortControllers[nodeId] === controller) delete _epAbortControllers[nodeId];
     updateEpWorkbench();
 };
 
@@ -357,6 +412,8 @@ function updateEpWorkbench() {
             <div class="sys-card-actions">
                 <button class="workbench-btn" style="border-left:3px solid #27ae60;"
                     onclick="addSystemToEpNode('${node.id}')">+ Add System</button>
+                <button class="workbench-btn" style="border-left:3px solid #27ae60;"
+                    onclick="toggleEpNodeRings('${node.id}')">${node.ringsHidden ? 'Show Rings' : 'Hide Rings'}</button>
                 <button class="workbench-btn" style="border-left:3px solid #27ae60; color:#27ae60;"
                     onclick="calculateEpNode('${node.id}')">Calculate</button>
             </div>

@@ -193,6 +193,7 @@ function serializeScenario() {
                 id: node.id,
                 name: node.name,
                 location: latLngToPlain(node.marker.getLatLng()),
+                rings_hidden: !!node.ringsHidden,
                 systems: node.systems.map(sys => ({
                     id: sys.id,
                     name: sys.name,
@@ -253,6 +254,8 @@ function resetScenarioState() {
     Object.keys(_esAbortControllers).forEach(id => delete _esAbortControllers[id]);
     Object.values(_fpAbortControllers).forEach(controller => controller.abort());
     Object.keys(_fpAbortControllers).forEach(id => delete _fpAbortControllers[id]);
+    Object.values(_epAbortControllers).forEach(controller => controller.abort());
+    Object.keys(_epAbortControllers).forEach(id => delete _epAbortControllers[id]);
     redNodes.forEach(n => {
         map.removeLayer(n.marker);
         clearRedRing(n);
@@ -267,7 +270,7 @@ function resetScenarioState() {
     enemyLinks.forEach(l => map.removeLayer(l.line));
     jammingLinks.forEach(l => map.removeLayer(l.line));
     epNodes.forEach(n => {
-        n.systems.forEach(s => { if (s.layer) map.removeLayer(s.layer); if (s.label) map.removeLayer(s.label); });
+        clearEpNodeRings(n);
         map.removeLayer(n.marker);
     });
     redNodes = []; blueNodes = []; blackNodes = []; enemyLinks = []; jammingLinks = [];
@@ -730,6 +733,7 @@ function exportEpKML(includeLabels) {
     // --- EP Detection Rings ---
     lines.push('  <Folder><name>EP Detection Rings</name>');
     for (const node of epNodes) {
+        if (node.ringsHidden) continue;   // KML mirrors the visible map picture
         for (const sys of node.systems) {
             if (!sys.polygonPoints || sys.polygonPoints.length < 3) continue;
             const colorIdx = EP_COLORS.indexOf(sys.color);

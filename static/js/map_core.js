@@ -92,6 +92,11 @@ const _esAbortControllers  = {};         // nodeId → AbortController for in-fl
 let _fpDebounceTimer       = null;
 const _fpAbortControllers  = {};
 
+// EP ring request management — epNodeId → AbortController for the in-flight
+// calculateEpNode() run. Without this a node deleted mid-calculation leaves
+// rings on the map that nothing holds a reference to any more.
+const _epAbortControllers  = {};
+
 // ============================================================
 // SHARED RING HELPERS
 // ============================================================
@@ -101,6 +106,17 @@ const RING_COLORS = {
     es:     { color: 'red',     fillColor: '#f03',    fillOpacity: 0.1  },
     jammer: { color: '#00bcd4', fillColor: '#00bcd4', fillOpacity: 0.12 },
 };
+
+// Monotonic per-node system index for red and EP nodes alike, so deleting a
+// system never lets the next one collide with a surviving sibling's id or
+// palette colour. Returns a 1-based index; ids are `<nodeId>_S<index>`.
+function nextSystemIndex(node) {
+    const used = (node.systems || []).map(sys => {
+        const m = /_S(\d+)$/.exec(sys.id || '');
+        return m ? Number(m[1]) : 0;
+    });
+    return Math.max(0, ...used) + 1;
+}
 
 // Remove Leaflet layers stored on an object and null the references
 function removeLayerRef(obj, ...keys) {
