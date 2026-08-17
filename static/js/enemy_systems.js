@@ -8,16 +8,9 @@
 // SYSTEM CONSTRUCTION
 // ============================================================
 
-// Monotonic per-node index, so deleting a system never lets the next one
-// collide with a surviving sibling's id or palette colour.
-function nextRedSystemIndex(node) {
-    const used = (node.systems || []).map(sys => {
-        const m = /_S(\d+)$/.exec(sys.id || '');
-        return m ? Number(m[1]) : 0;
-    });
-    return Math.max(0, ...used) + 1;
-}
-
+// Per-node indexes come from the shared monotonic nextSystemIndex() in
+// map_core.js, so deleting a system never lets the next one collide with a
+// surviving sibling's id or palette colour.
 function newRedSystem(node, idx, fields) {
     return {
         id:               node.id + '_S' + idx,
@@ -101,7 +94,7 @@ function clearRedSystemRings(node) {
 window.addSystemToRedNode = function(nodeId) {
     const node = findNode('red', nodeId);
     if (!node) return;
-    node.systems.push(newRedSystem(node, nextRedSystemIndex(node)));
+    node.systems.push(newRedSystem(node, nextSystemIndex(node)));
     updateRedSystemsWorkbench();
     renderOverlapControls();
     markDirty('Enemy system added.');
@@ -112,7 +105,7 @@ window.addLibrarySystemToRedNode = function(nodeId) {
     const select = document.getElementById(`red-library-select-${nodeId}`);
     const template = select && findNodeTemplate(select.value);
     if (!node || !template) return;
-    const idx = nextRedSystemIndex(node);
+    const idx = nextSystemIndex(node);
     node.systems.push(newRedSystem(node, idx, {
         name:             template.name || ('System ' + idx),
         freqMhz:          Number(template.frequency_mhz || 150),

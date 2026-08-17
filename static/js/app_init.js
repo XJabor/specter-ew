@@ -85,7 +85,10 @@ const CenterControl = L.Control.extend({
             allNodes.forEach(n => bounds.extend(n.marker.getLatLng()));
             circles.forEach(c => bounds.extend(c.getBounds()));
             blueNodes.filter(n => n.footprintCircle).forEach(n => bounds.extend(n.footprintCircle.getBounds()));
-            epNodes.forEach(n => n.systems.filter(s => s.layer).forEach(s => bounds.extend(s.layer.getBounds())));
+            epNodes.forEach(n => {
+                if (n.ringsHidden) return;
+                n.systems.filter(s => s.layer).forEach(s => bounds.extend(s.layer.getBounds()));
+            });
             // Extra right padding accounts for the 280px workbench panel
             map.fitBounds(bounds, {
                 paddingTopLeft:     [80, 80],
