@@ -457,11 +457,11 @@ function createEnemyLink(txId, rxId) {
         permanent: true, direction: 'center', className: 'dist-label'
     }).addTo(map);
 
-    // Click the line to remove it
+    // Click the line to inspect it (removal lives in the inspector and the results table)
     line.on('click', function(e) {
         L.DomEvent.stopPropagation(e);
         if (activeMode) return;
-        removeEnemyLink(linkId);
+        openInspector({ kind: 'enemy-link', enemyLinkId: linkId });
     });
 
     enemyLinks.push({ id: linkId, txId, rxId, line });
@@ -485,11 +485,11 @@ function createJammingLink(blueId, rxId) {
         permanent: true, direction: 'center', className: 'dist-label'
     }).addTo(map);
 
-    // Click the line to remove it
+    // Click the line to inspect it (removal lives in the inspector and the results table)
     line.on('click', function(e) {
         L.DomEvent.stopPropagation(e);
         if (activeMode) return;
-        removeJammingLink(linkId);
+        openInspector({ kind: 'ea-link', jammingLinkId: linkId, enemyLinkId: null });
     });
 
     jammingLinks.push({ id: linkId, blueId, rxId, line, results: null });

@@ -127,56 +127,8 @@ function recalculateAll() {
     let pending = tasks.length;
     const done = () => { if (--pending === 0) renderResults(); };
 
-    tasks.forEach(({ jLink, eLink, i, jammerDistKm, enemyDistKm }) => {
-        // Include node coordinates so the backend can perform elevation-aware LOS analysis
-        // and bearing-based directional antenna gain calculations
-        const blue = findNode('blue', jLink.blueId);
-        const rx   = findNode('red',  jLink.rxId);
-        const tx   = findNode('red',  eLink.txId);
-        const txEq = tx ? nodeEquipment(tx, 'red') : {};
-        const rxEq = rx ? nodeEquipment(rx, 'red') : {};
-        const blueEq = blue ? nodeEquipment(blue, 'blue') : {};
-        const payload = {
-            ...params,
-            freq_mhz: txEq.frequency_mhz ?? params.freq_mhz,
-            enemy_tx_w: txEq.tx_power_w ?? params.enemy_tx_w,
-            enemy_tx_gain: txEq.antenna_gain_dbi ?? params.enemy_tx_gain,
-            enemy_rx_gain: rxEq.rx_gain_dbi ?? rxEq.antenna_gain_dbi ?? params.enemy_rx_gain,
-            apply_fh: !!txEq.apply_fh,
-            enemy_bw_khz: txEq.channel_bw_khz ?? params.enemy_bw_khz,
-            jammer_tx_w: blueEq.tx_power_w ?? params.jammer_tx_w,
-            jammer_tx_gain: blueEq.antenna_gain_dbi ?? params.jammer_tx_gain,
-            jammer_bw_khz: blueEq.jammer_bw_khz ?? params.jammer_bw_khz,
-            rx_sensitivity: rxEq.rx_sensitivity_dbm ?? params.rx_sensitivity,
-            friendly_rx_gain: blueEq.rx_gain_dbi ?? params.friendly_rx_gain,
-            enemy_dist_km: enemyDistKm,
-            jammer_dist_km: jammerDistKm
-        };
-        if (blue && rx && tx) {
-            const bll = blue.marker.getLatLng();
-            const rll = rx.marker.getLatLng();
-            const tll = tx.marker.getLatLng();
-            payload.jammer_lat = bll.lat;
-            payload.jammer_lon = bll.lng;
-            payload.rx_lat     = rll.lat;
-            payload.rx_lon     = rll.lng;
-            payload.tx_lat     = tll.lat;
-            payload.tx_lon     = tll.lng;
-
-            // Per-node antenna parameters
-            payload.tx_antenna_type      = txEq.antenna_type || tx.antennaType;
-            payload.tx_azimuth_deg       = tx.antennaAzimuth;
-            payload.tx_beamwidth_deg     = txEq.beamwidth_deg || tx.antennaBeamwidth;
-            payload.rx_antenna_type      = rxEq.antenna_type || rx.antennaType;
-            payload.rx_azimuth_deg       = rx.antennaAzimuth;
-            payload.rx_beamwidth_deg     = rxEq.beamwidth_deg || rx.antennaBeamwidth;
-            payload.jammer_antenna_type  = blueEq.antenna_type || blue.antennaType;
-            payload.jammer_azimuth_deg   = blue.antennaAzimuth;
-            payload.jammer_beamwidth_deg = blueEq.beamwidth_deg || blue.antennaBeamwidth;
-            payload.tx_antenna_height_m     = txEq.antenna_height_m || tx.antennaHeightAgl;
-            payload.rx_antenna_height_m     = rxEq.antenna_height_m || rx.antennaHeightAgl;
-            payload.jammer_antenna_height_m = blueEq.antenna_height_m || blue.antennaHeightAgl;
-        }
+    tasks.forEach(({ jLink, eLink, i }) => {
+        const payload = buildEaPayload(jLink, eLink, params);
 
         fetch('/calculate_ea', {
             method: 'POST',
@@ -186,12 +138,86 @@ function recalculateAll() {
         .then(r => r.json())
         .then(data => {
             jLink.results[i] = data.status === 'success'
-                ? { ...data, enemyLinkId: eLink.id }
+                ? { ...data, enemyLinkId: eLink.id, record: eaRecord(jLink, eLink, payload, data) }
                 : { status: 'error', enemyLinkId: eLink.id };
             jLink.line.setStyle({ color: jammingLineColor(jLink.results), weight: 4 });
             done();
         })
         .catch(() => { jLink.results[i] = { status: 'error', enemyLinkId: eLink.id }; done(); });
+    });
+}
+
+// /calculate_ea request for one jamming pair, from current node state. Also
+// used by the inspector to detect results whose inputs have since changed.
+function buildEaPayload(jLink, eLink, params = getParams()) {
+    const blue = findNode('blue', jLink.blueId);
+    const rx   = findNode('red',  jLink.rxId);
+    const tx   = findNode('red',  eLink.txId);
+    const txEq = tx ? nodeEquipment(tx, 'red') : {};
+    const rxEq = rx ? nodeEquipment(rx, 'red') : {};
+    const blueEq = blue ? nodeEquipment(blue, 'blue') : {};
+    const dist = (a, b) => (a && b) ? a.marker.getLatLng().distanceTo(b.marker.getLatLng()) / 1000 : null;
+    const payload = {
+        ...params,
+        freq_mhz: txEq.frequency_mhz ?? params.freq_mhz,
+        enemy_tx_w: txEq.tx_power_w ?? params.enemy_tx_w,
+        enemy_tx_gain: txEq.antenna_gain_dbi ?? params.enemy_tx_gain,
+        enemy_rx_gain: rxEq.rx_gain_dbi ?? rxEq.antenna_gain_dbi ?? params.enemy_rx_gain,
+        apply_fh: !!txEq.apply_fh,
+        enemy_bw_khz: txEq.channel_bw_khz ?? params.enemy_bw_khz,
+        jammer_tx_w: blueEq.tx_power_w ?? params.jammer_tx_w,
+        jammer_tx_gain: blueEq.antenna_gain_dbi ?? params.jammer_tx_gain,
+        jammer_bw_khz: blueEq.jammer_bw_khz ?? params.jammer_bw_khz,
+        rx_sensitivity: rxEq.rx_sensitivity_dbm ?? params.rx_sensitivity,
+        friendly_rx_gain: blueEq.rx_gain_dbi ?? params.friendly_rx_gain,
+        enemy_dist_km: dist(tx, rx),
+        jammer_dist_km: dist(blue, rx)
+    };
+    // Include node coordinates so the backend can perform elevation-aware LOS analysis
+    // and bearing-based directional antenna gain calculations
+    if (blue && rx && tx) {
+        const bll = blue.marker.getLatLng();
+        const rll = rx.marker.getLatLng();
+        const tll = tx.marker.getLatLng();
+        payload.jammer_lat = bll.lat;
+        payload.jammer_lon = bll.lng;
+        payload.rx_lat     = rll.lat;
+        payload.rx_lon     = rll.lng;
+        payload.tx_lat     = tll.lat;
+        payload.tx_lon     = tll.lng;
+
+        // Per-node antenna parameters
+        payload.tx_antenna_type      = txEq.antenna_type || tx.antennaType;
+        payload.tx_azimuth_deg       = tx.antennaAzimuth;
+        payload.tx_beamwidth_deg     = txEq.beamwidth_deg || tx.antennaBeamwidth;
+        payload.rx_antenna_type      = rxEq.antenna_type || rx.antennaType;
+        payload.rx_azimuth_deg       = rx.antennaAzimuth;
+        payload.rx_beamwidth_deg     = rxEq.beamwidth_deg || rx.antennaBeamwidth;
+        payload.jammer_antenna_type  = blueEq.antenna_type || blue.antennaType;
+        payload.jammer_azimuth_deg   = blue.antennaAzimuth;
+        payload.jammer_beamwidth_deg = blueEq.beamwidth_deg || blue.antennaBeamwidth;
+        payload.tx_antenna_height_m     = txEq.antenna_height_m || tx.antennaHeightAgl;
+        payload.rx_antenna_height_m     = rxEq.antenna_height_m || rx.antennaHeightAgl;
+        payload.jammer_antenna_height_m = blueEq.antenna_height_m || blue.antennaHeightAgl;
+    }
+    return payload;
+}
+
+function nodeRef(type, id) {
+    const node = findNode(type, id);
+    return { id, name: plainNodeName(node ? node.name : id) };
+}
+
+function eaRecord(jLink, eLink, payload, data) {
+    return SpecterResults.buildLinkResult({
+        id: `${jLink.id}|${eLink.id}`,
+        subject: {
+            jammer: nodeRef('blue', jLink.blueId),
+            transmitter: nodeRef('red', eLink.txId),
+            target: nodeRef('red', jLink.rxId),
+        },
+        request: payload,
+        response: data,
     });
 }
 
@@ -418,18 +444,21 @@ window.toggleNodeSensorCoverage = function(id) {
 };
 
 // Full teardown of a red node's detection ring: map layers plus the cached
-// polygon/range/sensor-name fields that drive overlap and serialization.
+// polygon/range/sensor-name/result fields that drive overlap, serialization,
+// the inspector, and reports.
 function clearRedRing(node) {
     removeLayerRef(node, 'esCircle', 'esLabel');
     node.esPolygonPoints = null;
     node.esRangeKm = null;
     node.esSensorName = null;
+    node.esResult = null;
 }
 
-// Full teardown of a blue node's jammer footprint layers and cached polygon.
+// Full teardown of a blue node's jammer footprint layers, cached polygon, and result.
 function clearBlueFootprint(node) {
     removeLayerRef(node, 'footprintCircle', 'fpLabel');
     node.footprintPolygonPoints = null;
+    node.fpResult = null;
 }
 
 window.toggleNodeES = function(id) {
@@ -476,30 +505,12 @@ async function updateBlueSensorCoverages() {
         clearSensorCoverage(node);
     });
 
-    const esParams = {
-        enemy_terrain: document.getElementById('enemy_terrain').value
-    };
-
     for (const sensor of activeSensors) {
         const sensorEq = nodeEquipment(sensor, 'blue');
         const transmitters = compatibleRedTransmitters(sensorEq);
         for (const txNode of transmitters) {
             const ll = txNode.marker.getLatLng();
-            const txEq = nodeEquipment(txNode, 'red');
-            const payload = {
-                ...esParams,
-                freq_mhz:            txEq.frequency_mhz,
-                enemy_tx_w:          txEq.tx_power_w,
-                enemy_tx_gain:       txEq.antenna_gain_dbi,
-                rx_sensitivity:      sensorEq.rx_sensitivity_dbm,
-                friendly_rx_gain:    sensorEq.rx_gain_dbi,
-                enemy_lat:           ll.lat,
-                enemy_lon:           ll.lng,
-                tx_antenna_type:     txEq.antenna_type || txNode.antennaType,
-                tx_azimuth_deg:      txNode.antennaAzimuth,
-                tx_beamwidth_deg:    txEq.beamwidth_deg || txNode.antennaBeamwidth,
-                tx_antenna_height_m: txEq.antenna_height_m || txNode.antennaHeightAgl,
-            };
+            const payload = buildSensorCoveragePayload(sensor, txNode);
 
             try {
                 const r = await fetch('/calculate_es_terrain', {
@@ -516,7 +527,14 @@ async function updateBlueSensorCoverages() {
                     rangeKm: data.base_range_km,
                     polygonPoints: data.polygon_points || null,
                     layer: null,
-                    label: null
+                    label: null,
+                    result: SpecterResults.buildFootprintResult({
+                        kind: 'sensor-coverage',
+                        id: `cov:${sensor.id}:${txNode.id}`,
+                        subject: { node: nodeRef('red', txNode.id), sensor: nodeRef('blue', sensor.id) },
+                        request: payload,
+                        response: data,
+                    })
                 };
                 const label = `${sensor.name} detects ${txNode.name}: ~${data.base_range_km.toFixed(1)} km`;
 
@@ -533,6 +551,8 @@ async function updateBlueSensorCoverages() {
                     }).addTo(map);
                     coverage.label = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
                 }
+                bindInspectOnClick(coverage.layer,
+                    { kind: 'sensor-coverage', sensorId: sensor.id, redId: txNode.id });
 
                 sensor.sensorCoverages.push(coverage);
             } catch (e) {
@@ -545,11 +565,52 @@ async function updateBlueSensorCoverages() {
     updateDistanceWarning();
 }
 
+function buildSensorCoveragePayload(sensor, txNode) {
+    const sensorEq = nodeEquipment(sensor, 'blue');
+    const txEq = nodeEquipment(txNode, 'red');
+    const ll = txNode.marker.getLatLng();
+    return {
+        enemy_terrain:       document.getElementById('enemy_terrain').value,
+        freq_mhz:            txEq.frequency_mhz,
+        enemy_tx_w:          txEq.tx_power_w,
+        enemy_tx_gain:       txEq.antenna_gain_dbi,
+        rx_sensitivity:      sensorEq.rx_sensitivity_dbm,
+        friendly_rx_gain:    sensorEq.rx_gain_dbi,
+        enemy_lat:           ll.lat,
+        enemy_lon:           ll.lng,
+        tx_antenna_type:     txEq.antenna_type || txNode.antennaType,
+        tx_azimuth_deg:      txNode.antennaAzimuth,
+        tx_beamwidth_deg:    txEq.beamwidth_deg || txNode.antennaBeamwidth,
+        tx_antenna_height_m: txEq.antenna_height_m || txNode.antennaHeightAgl,
+    };
+}
+
+// ES ring request for a red node's own equipment against the reference sensor.
+function buildRedRingPayload(node, sensor = selectedSensorReference()) {
+    const ll = node.marker.getLatLng();
+    const eq = nodeEquipment(node, 'red');
+    return {
+        enemy_terrain:       document.getElementById('enemy_terrain').value,
+        freq_mhz:            eq.frequency_mhz,
+        enemy_tx_w:          eq.tx_power_w,
+        enemy_tx_gain:       eq.antenna_gain_dbi,
+        rx_sensitivity:      sensor.rxSensitivityDbm,
+        friendly_rx_gain:    sensor.rxGainDbi,
+        enemy_lat:           ll.lat,
+        enemy_lon:           ll.lng,
+        tx_antenna_type:     eq.antenna_type || node.antennaType,
+        tx_azimuth_deg:      node.antennaAzimuth,
+        tx_beamwidth_deg:    eq.beamwidth_deg || node.antennaBeamwidth,
+        tx_antenna_height_m: eq.antenna_height_m || node.antennaHeightAgl,
+    };
+}
+
 function selectedSensorReference() {
     const selected = selectedSensorNodeId ? findNode('blue', selectedSensorNodeId) : null;
     if (selected && isReceiverCapableNode(selected, 'blue')) {
         const eq = nodeEquipment(selected, 'blue');
         return {
+            id: selected.id,
             name: selected.name,
             rxSensitivityDbm: eq.rx_sensitivity_dbm,
             rxGainDbi: eq.rx_gain_dbi
@@ -576,27 +637,10 @@ async function updateRedDetectionRings() {
     });
 
     const sensor = selectedSensorReference();
-    const esParams = {
-        enemy_terrain: document.getElementById('enemy_terrain').value
-    };
 
     for (const node of activeNodes) {
         const ll = node.marker.getLatLng();
-        const eq = nodeEquipment(node, 'red');
-        const payload = {
-            ...esParams,
-            freq_mhz:            eq.frequency_mhz,
-            enemy_tx_w:          eq.tx_power_w,
-            enemy_tx_gain:       eq.antenna_gain_dbi,
-            rx_sensitivity:      sensor.rxSensitivityDbm,
-            friendly_rx_gain:    sensor.rxGainDbi,
-            enemy_lat:           ll.lat,
-            enemy_lon:           ll.lng,
-            tx_antenna_type:     eq.antenna_type || node.antennaType,
-            tx_azimuth_deg:      node.antennaAzimuth,
-            tx_beamwidth_deg:    eq.beamwidth_deg || node.antennaBeamwidth,
-            tx_antenna_height_m: eq.antenna_height_m || node.antennaHeightAgl,
-        };
+        const payload = buildRedRingPayload(node, sensor);
 
         try {
             const r = await fetch('/calculate_es_terrain', {
@@ -610,6 +654,16 @@ async function updateRedDetectionRings() {
 
             node.esRangeKm = data.base_range_km;
             node.esSensorName = sensor.name;
+            node.esResult = SpecterResults.buildFootprintResult({
+                kind: 'es-ring',
+                id: `es:${node.id}`,
+                subject: {
+                    node: nodeRef('red', node.id),
+                    sensor: sensor.id ? nodeRef('blue', sensor.id) : { name: sensor.name },
+                },
+                request: payload,
+                response: data,
+            });
             removeLayerRef(node, 'esCircle', 'esLabel');
 
             const label = `${sensor.name} detects ${node.name}: ~${data.base_range_km.toFixed(1)} km`;
@@ -627,6 +681,7 @@ async function updateRedDetectionRings() {
                 }).addTo(map);
                 node.esLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
             }
+            bindInspectOnClick(node.esCircle, { kind: 'es-ring', nodeId: node.id });
         } catch (e) {
             if (e.name !== 'AbortError') { /* network error - leave existing ring in place */ }
         }
@@ -638,6 +693,7 @@ async function updateESCircles() {
     await updateBlueSensorCoverages();
     renderOverlapControls();
     updateDistanceWarning();
+    refreshInspector();
 }
 
 window.toggleNodeFootprint = function(id) {
@@ -656,45 +712,42 @@ function scheduleFootprintUpdate() {
     _fpDebounceTimer = setTimeout(updateJammerFootprints, 300);
 }
 
+function buildFootprintPayload(node) {
+    const ll = node.marker.getLatLng();
+    const eq = nodeEquipment(node, 'blue');
+    return {
+        jammer_terrain:          document.getElementById('jammer_terrain').value,
+        freq_mhz:                eq.frequency_mhz,
+        jammer_tx_w:             eq.tx_power_w,
+        jammer_tx_gain:          eq.antenna_gain_dbi,
+        rx_sensitivity:          document.getElementById('footprint_rx_sensitivity').value,
+        friendly_rx_gain:        0,
+        jammer_lat:              ll.lat,
+        jammer_lon:              ll.lng,
+        jammer_antenna_type:     eq.antenna_type || node.antennaType,
+        jammer_azimuth_deg:      node.antennaAzimuth,
+        jammer_beamwidth_deg:    eq.beamwidth_deg || node.antennaBeamwidth,
+        jammer_antenna_height_m: eq.antenna_height_m || node.antennaHeightAgl,
+    };
+}
+
 async function updateJammerFootprints() {
     blueNodes.forEach(n => {
         if (n.footprintActive && !isJammerNode(n, 'blue')) n.footprintActive = false;
-        if (!n.footprintActive) removeLayerRef(n, 'footprintCircle', 'fpLabel');
+        if (!n.footprintActive) clearBlueFootprint(n);
     });
 
     const activeNodes = blueNodes.filter(n => n.footprintActive && isJammerNode(n, 'blue'));
-    if (activeNodes.length === 0) return;
+    if (activeNodes.length === 0) { refreshInspector(); return; }
 
     activeNodes.forEach(node => {
         if (_fpAbortControllers[node.id]) _fpAbortControllers[node.id].abort();
         _fpAbortControllers[node.id] = new AbortController();
     });
 
-    const fpParams = {
-        freq_mhz:         document.getElementById('freq_mhz').value,
-        jammer_terrain:   document.getElementById('jammer_terrain').value,
-        jammer_tx_w:      document.getElementById('jammer_tx_w').value,
-        jammer_tx_gain:   document.getElementById('jammer_tx_gain').value,
-        rx_sensitivity:   document.getElementById('footprint_rx_sensitivity').value,
-        friendly_rx_gain: 0,
-    };
-
     for (const node of activeNodes) {
         const ll = node.marker.getLatLng();
-        const eq = nodeEquipment(node, 'blue');
-        const payload = {
-            ...fpParams,
-            freq_mhz:              eq.frequency_mhz,
-            jammer_tx_w:           eq.tx_power_w,
-            jammer_tx_gain:        eq.antenna_gain_dbi,
-            rx_sensitivity:        fpParams.rx_sensitivity,
-            jammer_lat:            ll.lat,
-            jammer_lon:            ll.lng,
-            jammer_antenna_type:   eq.antenna_type || node.antennaType,
-            jammer_azimuth_deg:    node.antennaAzimuth,
-            jammer_beamwidth_deg:  eq.beamwidth_deg || node.antennaBeamwidth,
-            jammer_antenna_height_m: eq.antenna_height_m || node.antennaHeightAgl,
-        };
+        const payload = buildFootprintPayload(node);
 
         try {
             const r = await fetch('/calculate_jammer_footprint', {
@@ -707,6 +760,13 @@ async function updateJammerFootprints() {
             if (data.status !== 'success') continue;
 
             removeLayerRef(node, 'footprintCircle', 'fpLabel');
+            node.fpResult = SpecterResults.buildFootprintResult({
+                kind: 'jammer-footprint',
+                id: `fp:${node.id}`,
+                subject: { node: nodeRef('blue', node.id) },
+                request: payload,
+                response: data,
+            });
 
             if (data.polygon_points) {
                 node.footprintPolygonPoints = data.polygon_points;
@@ -724,10 +784,12 @@ async function updateJammerFootprints() {
                 }).addTo(map);
                 node.fpLabel = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label);
             }
+            bindInspectOnClick(node.footprintCircle, { kind: 'jammer-footprint', nodeId: node.id });
         } catch (e) {
             if (e.name !== 'AbortError') { /* network error — leave existing footprint in place */ }
         }
     }
+    refreshInspector();
 }
 
 // ============================================================
@@ -768,8 +830,10 @@ function updateMapHighlights() {
             const specificResult = (l.results || []).find(r => r?.enemyLinkId === selectedLink.enemyLinkId);
             let color;
             if (specificResult?.status === 'success') {
-                color = specificResult.margin >= 6 ? '#00ee00'
-                      : specificResult.margin > -6 ? '#ff9900'
+                const upper = parseFloat(document.getElementById('upper_threshold').value) || 6;
+                const lower = parseFloat(document.getElementById('lower_threshold').value) || -6;
+                color = specificResult.margin >= upper ? '#00ee00'
+                      : specificResult.margin > lower ? '#ff9900'
                       : '#ff3333';
             } else {
                 color = jammingLineColor(l.results);
@@ -792,6 +856,7 @@ function renderResults() {
         panel.innerHTML = '<p class="results-empty">No links defined.</p>';
         setMobileResult('--', 'Place nodes...');
         updateMapHighlights();
+        refreshInspector();
         return;
     }
 
@@ -860,12 +925,15 @@ function renderResults() {
                     }
                 }
 
+                const inspectBtn = result?.record
+                    ? `<button class="inspect-btn" title="Explain this result" onclick="event.stopPropagation(); openInspector({kind:'ea-link', jammingLinkId:'${jLink.id}', enemyLinkId:'${eLink.id}'})">ⓘ</button>`
+                    : '';
                 html += `<tr class="jammer-sub-row ${rowClass}${jammerSel ? ' row-selected' : ''}"
                     onclick="selectLink('jammer', '${jLink.id}', '${eLink.id}')">
                     <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeJammingLinkById('${jLink.id}')">✕</button></td>
                     <td>↳ ${getNodeDisplayName('blue', jLink.blueId)}</td>
                     <td>${margin}</td>
-                    <td>${effect} ${losBadge}${enemyLosBadge}${terrainWarningBadge}</td>
+                    <td>${effect} ${losBadge}${enemyLosBadge}${terrainWarningBadge}${inspectBtn}</td>
                 </tr>`;
             });
         }
@@ -880,7 +948,7 @@ function renderResults() {
             html += `<tr class="jammer-sub-row result-unknown${jammerSel ? ' row-selected' : ''}"
                 onclick="selectLink('jammer', '${jLink.id}', null)">
                 <td><button class="remove-link-btn" onclick="event.stopPropagation(); removeJammingLinkById('${jLink.id}')">✕</button></td>
-                <td>${getNodeDisplayName('blue', jLink.id)}</td>
+                <td>${getNodeDisplayName('blue', jLink.blueId)}</td>
                 <td>—</td>
                 <td class="uncontested">No enemy link</td>
             </tr>`;
@@ -900,4 +968,5 @@ function renderResults() {
     }
 
     updateMapHighlights();
+    refreshInspector();
 }

@@ -200,6 +200,15 @@ function escapeHtml(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// renameNode() stores names HTML-escaped (they are injected into popup/table
+// markup raw). Result records and reports escape at render time instead, so
+// they take the plain text.
+function plainNodeName(name) {
+    return String(name ?? '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+}
+
 function makeEdgeLabel(polygonPoints, centerLat, centerLon, radiusM, text, offsetPx = [0, 0]) {
     let edgePt;
     if (polygonPoints && polygonPoints.length > 0) {

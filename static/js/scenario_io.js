@@ -34,6 +34,9 @@ let scenarioCreatedAt = new Date().toISOString();
 let scenarioUpdatedAt = scenarioCreatedAt;
 let scenarioAutosaveTimer = null;
 let scenarioRestorePrompted = false;
+// { from, to } when the current scenario was migrated from an older schema on
+// load; surfaced as an inspector/report warning. Null for fresh scenarios.
+let loadedScenarioMigration = null;
 
 function getScenarioName() {
     const input = document.getElementById('scenario-name');
@@ -284,6 +287,8 @@ function resetScenarioState() {
     updateDefaultSidebarContext();
     overlapChecked.clear();
     clearOverlapLayer();
+    loadedScenarioMigration = null;
+    closeInspector();
     renderOverlapControls();
     renderResults();
     updateEpWorkbench();
@@ -292,6 +297,7 @@ function resetScenarioState() {
 }
 
 async function loadScenario(data) {
+    const originalSchema = Number(data?.schema_version);
     const scenario = migrateScenario(data);
     if (scenario.profile_library?.packs) {
         mergeUserProfilePacks(scenario.profile_library.packs);
@@ -299,6 +305,9 @@ async function loadScenario(data) {
     scenarioLoading = true;
     try {
         resetScenarioState();
+        if (Number.isFinite(originalSchema) && originalSchema < SCENARIO_SCHEMA_VERSION) {
+            loadedScenarioMigration = { from: originalSchema, to: SCENARIO_SCHEMA_VERSION };
+        }
         scenarioCreatedAt = scenario.created_at || scenarioNow();
         scenarioUpdatedAt = scenario.updated_at || scenarioCreatedAt;
         setScenarioName(scenario.scenario_name || '');
