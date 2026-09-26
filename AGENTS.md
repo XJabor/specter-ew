@@ -24,7 +24,9 @@ python3 app.py
 
 Access at `http://localhost:5000` or `http://<host-ip>:5000`.
 
-There are no build steps or linters configured. Runtime smoke tests live under `tests/` and can be run with `python -m unittest discover -s tests`. Frontend unit tests for the pure scenario-schema logic live under `tests/js/` and run with `node --test "tests/js/*.test.js"` (Node 18+, no npm dependencies; unittest discovery ignores them).
+There are no build steps or linters configured. Runtime smoke tests live under `tests/` and can be run with `python -m unittest discover -s tests`. Frontend unit tests for the pure scenario-schema, result-model, and report logic live under `tests/js/` and run with `node --test "tests/js/*.test.js"` (Node 18+, no npm dependencies; unittest discovery ignores them).
+
+Model validation (v1.2.0): `tests/test_propagation_known_answers.py` checks every model branch against values hand-derived from the published formulas (substitutions in comments — never copy expectations from the code); `tests/test_propagation_golden.py` pins `calculate_path_loss` / `calculate_sensing_distance` over a branch-covering grid so any numeric drift fails; `tests/test_diagnostics.py` pins the diagnostic response shapes; `tests/test_api_fixtures.py` keeps `tests/fixtures/api_responses.json` (real endpoint responses the Node tests consume) structurally identical to the live API. After an intentional model or response change, regenerate with `python -m tests.test_propagation_golden --regenerate` / `python -m tests.test_api_fixtures --regenerate` and review the diff.
 
 ## Deployment & Environment Variables
 
@@ -38,7 +40,7 @@ There are no build steps or linters configured. Runtime smoke tests live under `
 
 ## Architecture
 
-**Backend** (`app.py` + `core/`): Stateless Flask REST API with eight endpoints (plus auth routes):
+**Backend** (`app.py` + `core/`): Stateless Flask REST API with eight endpoints (plus auth routes). `/calculate_ea`, `/calculate_es_terrain`, and `/calculate_jammer_footprint` also return an optional `diagnostics` block (see "Calculation diagnostics" below); every pre-1.2.0 response field is unchanged:
 - `POST /calculate_ea` — Electronic Attack: computes J/S margin (jamming effectiveness)
 - `POST /calculate_es` — Electronic Support: computes omni sensing/detection range
 - `POST /calculate_es_terrain` — ES with terrain-aware detection polygon (per-bearing diffraction)
@@ -59,26 +61,32 @@ There are no build steps or linters configured. Runtime smoke tests live under `
 - `local_data.py` — Local geospatial data manager: startup scanner for DTED L2 and GeoTIFF imagery, DTED elevation sampler, imagery tile renderer, coverage checker, and data directory configuration
 - `antenna.py` — Directional antenna gain pattern, bearing calculations
 
-**Frontend** (`static/js/`, vanilla JS split into nine classic scripts — no modules, no build step). Script order in `templates/index.html` is load-bearing; top-level `let`/`const` share the global lexical scope across files, so a file loaded out of order throws load-time TDZ ReferenceErrors:
+**Frontend** (`static/js/`, vanilla JS split into thirteen classic scripts — no modules, no build step). Script order in `templates/index.html` is load-bearing; top-level `let`/`const` share the global lexical scope across files, so a file loaded out of order throws load-time TDZ ReferenceErrors:
 1. `scenario_schema.js` — pure scenario/profile-pack validation, migration, and filename/ID helpers; zero DOM/Leaflet references. Dual-mode: classic script in the browser, CommonJS module under Node for `tests/js/`.
-2. `map_core.js` — Leaflet map/layers/icons, **all shared mutable node/link/mode/EP state**, generic helpers (`findNode`, `escapeHtml`, `removeLayerRef`, `makeEdgeLabel`), and mode management.
-3. `equipment_library.js` — profiles, library, builder, sidebar sync.
-4. `nodes_links.js` — node constructors (`createRedNode`/`createBlueNode`/`createBlackNode`, shared by placement and scenario load), popup binding (`bindNodePopup` trailer + `rebindNodePopup` dispatcher), antenna setters, MGRS jump, link creation/removal.
-5. `rings_results.js` — calculation engine, ES rings, sensor coverage, jammer footprints (`clearRedRing`/`clearBlueFootprint` teardown helpers), overlap, results rendering.
-6. `enemy_systems.js` — red-node extra frequency systems: per-system state, mutators, rings, and the ENEMY SYSTEMS workbench (`clearRedSystemRings` teardown helper).
-7. `ep_mode.js` — EP nodes/systems/workbench (EP state lives in map_core).
-8. `scenario_io.js` — scenario persistence, autosave, download, KML export.
-9. `app_init.js` — **loaded last; the only file (besides map_core's map creation) that runs top-level code**: every `addEventListener`, Leaflet control registration, and bootstrap call lives here so all functions/state exist before wiring runs. Files 3–8 must contain declarations only.
+2. `calc_results.js` — pure calculation result model: record builders per calculation kind, `describeResult()` (the one view model the inspector and report both render), warning derivation, `MODEL_INFO` names/summaries keyed by the backend model ids. IIFE-wrapped; exposes only `window.SpecterResults`. Dual-mode like `scenario_schema.js`.
+3. `report_model.js` — pure report assembly: `buildReportData(snapshot)` (allowlist — only named snapshot fields reach the report), SVG map schematic, `renderReportHtml()`. IIFE-wrapped; exposes only `window.SpecterReport`. Dual-mode.
+4. `map_core.js` — Leaflet map/layers/icons, **all shared mutable node/link/mode/EP state**, generic helpers (`findNode`, `escapeHtml`, `removeLayerRef`, `makeEdgeLabel`), and mode management.
+5. `equipment_library.js` — profiles, library, builder, sidebar sync.
+6. `nodes_links.js` — node constructors (`createRedNode`/`createBlueNode`/`createBlackNode`, shared by placement and scenario load), popup binding (`bindNodePopup` trailer + `rebindNodePopup` dispatcher), antenna setters, MGRS jump, link creation/removal.
+7. `rings_results.js` — calculation engine, per-calculation request builders (`buildEaPayload`, `buildRedRingPayload`, `buildSensorCoveragePayload`, `buildFootprintPayload`), ES rings, sensor coverage, jammer footprints (`clearRedRing`/`clearBlueFootprint` teardown helpers), overlap, results rendering.
+8. `enemy_systems.js` — red-node extra frequency systems: per-system state, mutators, rings, and the ENEMY SYSTEMS workbench (`clearRedSystemRings` teardown helper).
+9. `ep_mode.js` — EP nodes/systems/workbench (EP state lives in map_core).
+10. `scenario_io.js` — scenario persistence, autosave, download, KML export; records `loadedScenarioMigration` when a file was migrated from an older schema.
+11. `inspector.js` — calculation inspector panel: resolves a ref (`{kind, ...ids}`) against live state, detects stale results, renders `describeResult()`; `collectResultRecords()` enumerates every held result (used by the report).
+12. `report.js` — gathers the plain-data report snapshot from live state and opens the report window (download fallback when pop-ups are blocked).
+13. `app_init.js` — **loaded last; the only file (besides map_core's map creation) that runs top-level code**: every `addEventListener`, Leaflet control registration, and bootstrap call lives here so all functions/state exist before wiring runs. Files 4–12 must contain declarations only (2–3 only define their namespace object).
 
 Behavior:
 - Leaflet.js map with OpenStreetMap and Esri Satellite tile layers
 - Interactive placement of red (enemy), blue (friendly), and black (marker) nodes
 - Black marker nodes are reference-only — no RF calculations, no links, no elevation fetch
 - Versioned `.specter.json` scenario save/load, dirty-state tracking, and browser-local autosave recovery via `localStorage`; scenario files persist serializable planning intent only, not Leaflet objects, cookies, auth data, local filesystem paths, or cached terrain/elevation responses
-- Link creation between red/blue nodes triggers RF calculations via API calls
+- Link creation between red/blue nodes triggers RF calculations via API calls. Clicking a link line (in pan mode) opens the calculation inspector; link removal is in the inspector and the ✕ in the results table
 - Workbench tabs are ordered Ops, Library, Builder, Scenario. Ops is default. Library places node templates as red/blue nodes; Builder creates complete radio/receiver/jammer node templates. User templates persist in `localStorage`, import/export as JSON packs, and are embedded in `.specter.json` scenario exports. Built-ins live in `static/equipment_profiles.json`, are schema v2 node templates, are commercial/civilian only, and must not include military radios, generic examples, or built-in jammer presets.
 - Red and blue nodes carry node-attached `equipment` configs (scenario schema v5). Selecting a red/blue node loads that equipment into the sidebar; edits update the selected node. Receiver/jammer frequency fields are shown as locked reference/target context.
 - `Link Enemy Comms by Frequency` auto-links only compatible same-frequency enemy radio pairs (0.001 MHz tolerance) and skips mismatches/non-radio transmitters.
+- Calculation inspector (`#inspector-panel`, floating left of the workbench; bottom sheet on mobile): clicking a J/S link, ES / sensor / enemy-system / EP ring, or jammer footprint — or an ⓘ button in the results table / system cards — shows inputs, intermediate values, the propagation model, the result, and warning flags. Esc closes it when no placement mode is active
+- Report generation: Scenario tab → REPORT (title, optional marking) or the Generate Report buttons in the EA/EP EXPORT sections open a print-to-PDF HTML report of the whole scenario (EA and EP content regardless of mode)
 - Workbench panel for managing multiple nodes simultaneously; toggles between EA and EP modes via the EP button in the workbench header
 - The Ops tab's LINK STATUS, ENEMY SYSTEMS, and OVERLAP ANALYSIS sections each carry a caret toggle in their section label that collapses the section body, so a long node or ring list cannot push the sections below it out of reach
 - Permanent MGRS grid labels above all icons; inline MGRS input in every popup lets the user type a grid string and jump the icon to that location
@@ -100,6 +108,9 @@ Behavior:
   - Free space / aerial terrain → **FSPL** (0 dB terrain correction)
   - `calculate_sensing_distance()` is the exact closed-form (or binary-search for SHF clutter) inverse of `calculate_path_loss()` for each branch; for Egli / Two-Ray / COST-231 it returns min(model inverse, FSPL inverse) because path loss is max(FSPL, model)
 - **Terrain correction across all bands**: `_egli_terrain_correction_db(terrain_type)` returns a flat additive penalty (rural/open 0 dB, light forest/suburban +8 dB, dense forest/urban +20 dB) applied to the Egli and upper-UHF FSPL branches. For SHF, `_shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)` adds an additional flat penalty when either antenna is below 5 m AGL in vegetated terrain (+5 dB light, +10 dB dense), capturing Fresnel-zone obstruction and canopy-entry absorption. Terrain keyword matching is centralised in `_classify_terrain(terrain_type)` (returns `'free_space' | 'dense' | 'light' | 'open'`; `'suburb'` is checked before `'urban'` because the substring would otherwise misclassify it) — every model function branches on that category instead of re-matching keywords.
+- **Calculation diagnostics**: `path_loss_breakdown()` / `sensing_distance_breakdown()` in `propagation.py` return the chosen model id (`egli`, `two_ray`, `cost231_hata`, `fspl_upper_uhf`, `free_space`, `shf` — mirrored in `calc_results.js` `MODEL_INFO`) and component terms; `calculate_path_loss()` / `calculate_sensing_distance()` are thin wrappers, so diagnostics are by construction the numbers used. Routing lives in one place, `_select_model()`. Elevation provenance (local DTED / remote API / voids) is tracked per cached profile and collected per request with the `elevation_tally()` context manager; `_fetch_elevations()` returns an `_Elevations` list subclass carrying a `remote` mask, which keeps plain-list test mocks working (they report source `unknown`). Footprints add per-bearing ranges, min/median/mean/max, blocked-bearing and circle-fallback flags.
+- **Result records & staleness**: every calculation stores a record on its owner (`jLink.results[i].record`, `node.esResult`, `coverage.result`, `node.fpResult`, `sys.result`) built by `SpecterResults`, including the exact request sent. Records are cleared at the same teardown sites as their ring layers. The inspector marks a record stale when rebuilding the request from current state (same builder functions) no longer matches the stored one — this is how EP and enemy-system rings, which only recalculate on a manual Calculate, surface out-of-date results.
+- **Reports**: the report is a user-facing export, not a persisted object. `report.js` builds an explicit plain-data snapshot (equipment `notes` / `source_url`, cookies, storage, auth state, and server paths are never read); `report_model.js` renders only named fields and escapes all text, and tests assert no secret leakage. Names are stored HTML-escaped by `renameNode()`, so records and reports use `plainNodeName()` and escape at render time. The map is an SVG schematic (no tile capture), framed on the nodes; rings far larger than the layout clip at the edge.
 - **Deygout multiple knife-edge diffraction**: `_deygout_loss_db()` in `elevation.py` recursively finds the dominant obstacle, computes ITU-R P.526 knife-edge loss, and recurses on the two sub-paths; the sum is added to NLOS path loss for all frequency bands. For SHF the value acts as a blockage penalty rather than a classical diffraction correction.
 - **No database**: all active planning state is client-side and the backend is purely stateless calculation. Durable scenario persistence is portable `.specter.json` download/upload; autosave recovery is local to the browser/device and should not be treated as cloud save even when Clerk auth is active.
 - **Frequency-hopping tax**: node-attached in the frontend, not universal across the workspace. `calculate_ea` still accepts `apply_fh`, `enemy_bw_khz`, and `jammer_bw_khz`, but the frontend supplies those values per J/S pair from the red transmitter equipment and blue jammer equipment.
