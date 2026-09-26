@@ -9,6 +9,7 @@
 - Fixed a major error in the low-antenna VHF/UHF model (Egli): an incorrect constant made ranges about ten times too long, so rings in that band are now much smaller and more realistic
 - Fixed detection ranges running slightly too far for tall antennas at short range
 - Added automated checks that compare the models against hand calculations from published formulas and alert on any unexpected change in results
+- EP mode now assumes Rural / Open terrain by default instead of Free Space, which had drawn ground-level EP rings hundreds of kilometres wide
 
 -----
 16AUG26 Claude Code
