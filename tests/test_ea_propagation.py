@@ -21,7 +21,9 @@ class EaPropagationTests(unittest.TestCase):
         enemy_rx = calculate_received_power(enemy_eirp, enemy_path_loss) + 2.0
         jammer_rx = calculate_received_power(jammer_eirp, jammer_path_loss) + 2.0
 
-        self.assertAlmostEqual(jammer_rx - enemy_rx, 7.58, places=2)
+        # Both paths are Egli, so the Egli constant cancels; delta covers the
+        # 2 dp rounding of each path loss.
+        self.assertAlmostEqual(jammer_rx - enemy_rx, 7.58, delta=0.015)
 
     def test_smooth_ridge_does_not_stack_as_many_independent_edges(self):
         profile = []

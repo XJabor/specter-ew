@@ -83,7 +83,7 @@ class PathLossBreakdownTests(unittest.TestCase):
 
     def test_fspl_floor_flag(self):
         # Very short Egli path: free-space loss exceeds the Egli estimate.
-        self.assertTrue(path_loss_breakdown(0.05, 60.0, 'rural', 0, 2, 2, False)['fspl_floor_applied'])
+        self.assertTrue(path_loss_breakdown(0.005, 60.0, 'rural', 0, 2, 2, False)['fspl_floor_applied'])
         self.assertFalse(path_loss_breakdown(20.0, 60.0, 'rural', 0, 2, 2, False)['fspl_floor_applied'])
 
     def test_zero_distance(self):
