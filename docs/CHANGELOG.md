@@ -4,7 +4,7 @@
 - Version 1.2.0: every calculated result can now be explained, reported, and checked
 - Clicking a jamming link, detection ring, or jammer footprint opens an "inspector" panel showing the inputs, each step of the math, which propagation model was used, and the final answer
 - The inspector flags anything that weakens a result, such as missing terrain data, online instead of local terrain, a range cut off at the horizon, or settings changed since the last calculation
-- Clicking a link line now opens the inspector instead of deleting the link; links can still be removed from the inspector or the results table
+- Clicking a link line now opens the inspector instead of deleting the link (links can still be removed from the inspector or the results table), and the whole workbench now scrolls when its contents are taller than the window
 - A new Generate Report button produces a print-ready page (save as PDF from the browser) with a map over the current satellite or street imagery, every node and result, settings, assumptions, warnings, and a planning-estimate disclaimer
 - Fixed a major error in the low-antenna VHF/UHF model (Egli): an incorrect constant made ranges about ten times too long, so rings in that band are now much smaller and more realistic
 - Detection rings and jammer footprints now use the sensor's antenna height (a friendly node's own height, or new sidebar settings) instead of always assuming a receiver 1 m off the ground; fixed ranges running slightly too far for tall antennas at short range; above 1 GHz, low antennas now include the ground reflection, which previously made ranges look far longer than realistic

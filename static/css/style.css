@@ -311,6 +311,12 @@ textarea:disabled {
     padding: 10px;
     width: 280px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    /* Never taller than the window: the whole workbench scrolls when a tab's
+       content (plus the mode indicator and legal notice) doesn't fit. */
+    max-height: calc(100vh - 20px);
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;   /* wheel at the ends doesn't zoom the map */
 }
 
 .workbench-title {
@@ -767,6 +773,7 @@ td.uncontested { color: #666; font-style: italic; font-weight: normal; }
 @media (max-width: 768px) {
     #workbench {
         top: 60px;
+        max-height: calc(100vh - 70px);
         right: 10px;
         transform: none;
         width: 260px;
