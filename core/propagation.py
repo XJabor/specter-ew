@@ -1,7 +1,15 @@
 import math
 
-# Egli (1957) SI constant: 76.3 (original) − 8.27 (miles→km) − 10.32×2 (feet→m) = 47.39
-_EGLI_K = 47.39
+# Egli (1957) median path loss is the plane-earth loss scaled by (f/40 MHz)²:
+#   Pr/Pt = Gt·Gr·(ht·hr / d²)²·(40 / f_MHz)²
+# In dB with d in km and heights in metres:
+#   L = 20·log10(f) + 40·log10(d_km) − 20·log10(ht) − 20·log10(hr) + K
+#   K = 40·log10(1000) − 20·log10(40) = 120 − 32.04 = 87.96
+# (Imperial cross-check: 117 dB for miles/feet − 8.27 − 2×10.32 = 88.09.)
+# Before v1.2.0 this was 47.39, from treating the SI constant 76.3 of the
+# −10·log10(hm) variant as a miles/feet constant; that under-stated loss by
+# ~40 dB and overstated VHF/UHF ranges roughly tenfold.
+_EGLI_K = 120.0 - 20.0 * math.log10(40.0)
 
 
 def _classify_terrain(terrain_type):
@@ -61,9 +69,10 @@ def _egli_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m, terrai
 
     Designed for VHF/UHF tactical propagation at ground-level antenna heights.
     Unlike Two-Ray it includes a frequency term, correctly giving longer range
-    at lower VHF frequencies (e.g. 80 MHz dismounted radio reaches ~20 km).
+    at lower VHF frequencies (e.g. a 5 W, 80 MHz, 2 m dismounted radio against
+    a −110 dBm receiver reaches ~6.7 km over rural terrain).
 
-    L = 20·log10(f_MHz) + 40·log10(d_km) − 20·log10(ht_m) − 20·log10(hr_m) + 47.39
+    L = 20·log10(f_MHz) + 40·log10(d_km) − 20·log10(ht_m) − 20·log10(hr_m) + 87.96
         + _egli_terrain_correction_db(terrain_type)
 
     Heights floored at 1 m. Terrain correction applied before the FSPL floor.
@@ -348,7 +357,8 @@ def sensing_distance_breakdown(enemy_eirp, freq_mhz, terrain_type, rx_gain,
 
     Returned keys: distance_km, model, budget_db (eirp + rx_gain − sensitivity,
     before diffraction), uncapped_distance_km, horizon_km (None when this branch
-    has no horizon cap), horizon_capped.
+    has no horizon cap), horizon_capped, fspl_floor_limited (range set by the
+    free-space floor rather than the empirical model).
     """
     max_loss = enemy_eirp + rx_gain - rx_sensitivity - diffraction_loss_db
     category = _classify_terrain(terrain_type)
@@ -415,6 +425,17 @@ def sensing_distance_breakdown(enemy_eirp, freq_mhz, terrain_type, rx_gain,
                   + _EGLI_K)
         distance_km = 10.0 ** ((max_loss - correction - A_egli) / 40.0)
 
+    # Two-Ray, COST-231 Hata and Egli return max(FSPL, model), so the loss
+    # stays within budget only while BOTH terms do: the range is the smaller
+    # of the two inverses.  (Hata's floor uses its clamped frequency.)
+    fspl_floor_limited = False
+    if model in (MODEL_TWO_RAY, MODEL_COST231_HATA, MODEL_EGLI):
+        f_floor = max(150.0, min(2000.0, freq_mhz)) if model == MODEL_COST231_HATA else freq_mhz
+        fspl_d = 10.0 ** ((max_loss - 20.0 * math.log10(f_floor) - 32.44) / 20.0)
+        if fspl_d < distance_km:
+            distance_km = fspl_d
+            fspl_floor_limited = True
+
     uncapped_km = distance_km
     # Strict 1× radio horizon cap for SHF (no over-horizon propagation) and for
     # 1–2 GHz low antennas (ground-wave negligible, signal is horizon-limited).
@@ -432,6 +453,7 @@ def sensing_distance_breakdown(enemy_eirp, freq_mhz, terrain_type, rx_gain,
         'uncapped_distance_km': round(max(0.001, uncapped_km), 3),
         'horizon_km': None if horizon_km is None else round(horizon_km, 3),
         'horizon_capped': horizon_km is not None and uncapped_km > horizon_km,
+        'fspl_floor_limited': fspl_floor_limited,
     }
 
 

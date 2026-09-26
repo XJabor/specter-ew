@@ -63,10 +63,9 @@ class PropagationGoldenTests(unittest.TestCase):
         self.assertEqual(set(golden), set(current), f'{table}: grid keys changed')
         drift = [(k, golden[k], current[k]) for k in golden
                  if abs(golden[k] - current[k]) > 1e-9]
-        self.assertFalse(
-            drift,
-            f'{table}: {len(drift)} values drifted from the golden snapshot; '
-            f'first few: {drift[:5]}')
+        if drift:
+            self.fail(f'{table}: {len(drift)} values drifted from the golden '
+                      f'snapshot; first few (key, golden, current): {drift[:5]}')
 
     def test_path_loss_matches_golden(self):
         self._assert_matches('path_loss')

@@ -30,9 +30,15 @@ Frequently used terms (20 log10 x):
     5800 -> 75.2686 2 -> 6.0206     5 -> 13.9794    10 -> 20.0000
     29.9 -> 29.5134 30 -> 29.5424   40 -> 32.0412
 
-The Egli branch uses the code's documented SI constant 47.39. See
-EgliBranchTests.test_published_egli_constant_* for why that constant does not
-match the published Egli model (a finding, marked expectedFailure).
+Egli (1957), ratio form Pr/Pt = Gt Gr (ht hr / d^2)^2 (40 / f_MHz)^2, in dB
+with d km and h m:
+    L = 20 log f + 40 log d - 20 log ht - 20 log hr + K,
+    K = 40 log10(1000) - 20 log10(40) = 120 - 32.0412 = 87.9588
+Imperial cross-check: 117 - 40 log10(1.609344) - 2 x 20 log10(3.28084)
+    = 117 - 8.27 - 20.64 = 88.09 (agrees).
+Before v1.2.0 the code used 47.39 (the -10 log hm variant's SI constant 76.3
+misread as a miles/feet constant); these tests were written against the
+published formula and caught it.
 """
 import math
 import unittest
@@ -52,55 +58,34 @@ def _pl(d, f, terrain, diff=0.0, ht=0.0, hr=0.0, los=False):
 # ---------------------------------------------------------------------------
 class EgliBranchTests(unittest.TestCase):
     """freq < 1000 MHz, tx < 30 m (or freq < 150 MHz), not free space.
-
-    Code constant derivation: 47.39 = 76.3 - 8.27 - 2 x 10.32, where
-      8.27  = 40 log10(1.609344)  (miles -> km, 40 dB/decade)
-      10.32 = 20 log10(3.28084)   (feet -> metres, per antenna)
-    76.3 - 8.27 - 20.64 = 47.39.  The arithmetic is right; the premise that
-    76.3 is the miles/feet constant is not (see the expectedFailure test).
-    """
+    K = 87.9588 (see module docstring)."""
 
     def test_60mhz_10km_rural_egli_wins(self):
-        # Egli: 35.5630 + 40 log10(10)=40 - 6.0206 - 6.0206 + 47.39 = 110.9118
+        # Egli: 35.5630 + 40 log10(10)=40 - 6.0206 - 6.0206 + 87.9588 = 151.4806
         # FSPL: 20 + 35.5630 + 32.44 = 88.0030  -> Egli wins
-        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 0.0, 2.0, 2.0, True), 110.91, delta=DELTA)
+        # (Egli exceeds plane-earth two-ray 147.96 by 20 log(60/40) = 3.52 dB, as
+        # the (40/f)^2 factor requires above 40 MHz.)
+        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 0.0, 2.0, 2.0, True), 151.48, delta=DELTA)
         # NLOS with zero diffraction is the same model
-        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 0.0, 2.0, 2.0, False), 110.91, delta=DELTA)
+        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 0.0, 2.0, 2.0, False), 151.48, delta=DELTA)
 
-    def test_60mhz_500m_rural_fspl_floor_wins(self):
-        # Egli: 35.5630 + 40 log10(0.5)=-12.0412 - 12.0412 + 47.39 = 58.8706
-        # FSPL: -6.0206 + 35.5630 + 32.44 = 61.9824  -> FSPL floor wins
-        self.assertAlmostEqual(_pl(0.5, 60.0, 'rural', 0.0, 2.0, 2.0, True), 61.98, delta=DELTA)
+    def test_60mhz_5m_rural_fspl_floor_wins(self):
+        # Floor crossover at 2/2 m: 20 log d < 32.44 - 87.9588 + 12.0412 -> d < 6.7 m
+        # Egli at 5 m: 35.5630 + 40 log10(0.005)=-92.0412 - 12.0412 + 87.9588 = 19.4394
+        # FSPL: -46.0206 + 35.5630 + 32.44 = 21.9824  -> FSPL floor wins
+        self.assertAlmostEqual(_pl(0.005, 60.0, 'rural', 0.0, 2.0, 2.0, True), 21.98, delta=DELTA)
 
     def test_450mhz_5km_light_forest(self):
-        # Egli: 53.0643 + 40 log10(5)=27.9588 - 12.0412 + 47.39 = 116.3719
-        # + light-forest correction 8 = 124.3719 ; FSPL 13.9794+53.0643+32.44 = 99.4837
-        self.assertAlmostEqual(_pl(5.0, 450.0, 'light forest', 0.0, 2.0, 2.0, True), 124.37, delta=DELTA)
+        # Egli: 53.0643 + 40 log10(5)=27.9588 - 12.0412 + 87.9588 = 156.9407
+        # + light-forest correction 8 = 164.9407 ; FSPL 13.9794+53.0643+32.44 = 99.4837
+        self.assertAlmostEqual(_pl(5.0, 450.0, 'light forest', 0.0, 2.0, 2.0, True), 164.94, delta=DELTA)
 
     def test_nlos_adds_diffraction(self):
-        # 110.9118 (see above) + 7.3 dB Deygout = 118.2118
-        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 7.3, 2.0, 2.0, False), 118.21, delta=DELTA)
+        # 151.4806 (see above) + 7.3 dB Deygout = 158.7806
+        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 7.3, 2.0, 2.0, False), 158.78, delta=DELTA)
 
     def test_los_ignores_diffraction(self):
-        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 7.3, 2.0, 2.0, True), 110.91, delta=DELTA)
-
-    @unittest.expectedFailure
-    def test_published_egli_constant_60mhz_10km(self):
-        # FINDING: the code's 47.39 constant is ~40.6 dB lower than published Egli.
-        # Egli (1957) ratio form, consistent length units:
-        #   Pr/Pt = Gt Gr (ht hr / d^2)^2 (40 / f_MHz)^2
-        #   L = 40 log d_m - 20 log ht - 20 log hr + 20 log f - 20 log 40
-        #     = 20 log f + 40 log d_km - 20 log ht - 20 log hr + (120 - 32.0412)
-        #   SI constant = 87.9588
-        # Cross-check, imperial form L = 117 + 40 log d_mi + 20 log f - 20 log(ht_ft hr_ft):
-        #   117 - 8.27 - 20.64 = 88.09  (agrees with 87.96)
-        # The commonly-quoted "76.3" constant is already SI (km, m) and pairs with
-        # -10 log hm for hm <= 10 m; it is not a miles/feet constant.
-        #   L = 35.5630 + 40 - 6.0206 - 6.0206 + 87.9588 = 151.4806
-        # (Wikipedia SI form: 35.5630 + 40 - 6.0206 + 76.3 - 3.0103 = 142.83)
-        # Code returns 110.91 -> under-predicts loss by 40.57 dB (by 31.9 dB vs
-        # the 76.3 SI form), i.e. it is 37 dB *below* plane-earth two-ray (147.96).
-        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 0.0, 2.0, 2.0, False), 151.48, delta=DELTA)
+        self.assertAlmostEqual(_pl(10.0, 60.0, 'rural', 7.3, 2.0, 2.0, True), 151.48, delta=DELTA)
 
 
 # ---------------------------------------------------------------------------
@@ -262,11 +247,11 @@ class TerrainCorrectionDeltaTests(unittest.TestCase):
         self.assertAlmostEqual(_pl(10.0, 60.0, 'dense forest', 0.0, 2.0, 2.0, True) - r, 20.0, delta=0.011)
 
     def test_egli_delta_compressed_in_fspl_floor_region(self):
-        # 0.5 km: rural hits floor 61.9824; light = 58.8706 + 8 = 66.8706
-        # delta = 4.8882, NOT 8 (floor applies after correction)
-        r = _pl(0.5, 60.0, 'rural', 0.0, 2.0, 2.0, True)
-        l = _pl(0.5, 60.0, 'light forest', 0.0, 2.0, 2.0, True)
-        self.assertAlmostEqual(l - r, 4.89, delta=DELTA)
+        # 5 m: rural hits floor 21.9824; light = 19.4394 + 8 = 27.4394
+        # delta = 5.4570, NOT 8 (floor applies after correction)
+        r = _pl(0.005, 60.0, 'rural', 0.0, 2.0, 2.0, True)
+        l = _pl(0.005, 60.0, 'light forest', 0.0, 2.0, 2.0, True)
+        self.assertAlmostEqual(l - r, 5.46, delta=DELTA)
 
     def test_upper_uhf_deltas_0_8_20(self):
         r = _pl(5.0, 1500.0, 'rural', 0.0, 2.0, 2.0, True)
@@ -295,10 +280,10 @@ class TerrainCorrectionDeltaTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class BranchBoundaryTests(unittest.TestCase):
     def test_freq_149_9_vs_150_at_30m_los(self):
-        # 149.9 -> Egli: 43.5160 + 27.9588 - 29.5424 - 6.0206 + 47.39 = 83.3018
-        #          FSPL: 13.9794 + 43.5160 + 32.44 = 89.9354 -> floor wins
-        self.assertAlmostEqual(_pl(5.0, 149.9, 'rural', 0.0, 30.0, 2.0, True), 89.94, delta=DELTA)
-        # 150 -> Two-ray: 147.9588 - 29.5424 - 6.0206 = 112.3958 (12.5 dB jump)
+        # 149.9 -> Egli: 43.5160 + 27.9588 - 29.5424 - 6.0206 + 87.9588 = 123.8706
+        #          FSPL: 13.9794 + 43.5160 + 32.44 = 89.9354 -> Egli wins
+        self.assertAlmostEqual(_pl(5.0, 149.9, 'rural', 0.0, 30.0, 2.0, True), 123.87, delta=DELTA)
+        # 150 -> Two-ray: 147.9588 - 29.5424 - 6.0206 = 112.3958 (11.5 dB drop)
         self.assertAlmostEqual(_pl(5.0, 150.0, 'rural', 0.0, 30.0, 2.0, True), 112.40, delta=DELTA)
 
     def test_freq_150_nlos_is_hata(self):
@@ -310,16 +295,17 @@ class BranchBoundaryTests(unittest.TestCase):
         self.assertAlmostEqual(_pl(5.0, 150.0, 'rural', 0.0, 30.0, 2.0, False), 99.80, delta=DELTA)
 
     def test_tx_29_9_vs_30_at_450mhz(self):
-        # 29.9 m -> Egli: 53.0643 + 27.9588 - 29.5134 - 6.0206 + 47.39 = 92.8791
-        #           FSPL(5, 450) = 99.4837 -> floor wins
-        self.assertAlmostEqual(_pl(5.0, 450.0, 'rural', 0.0, 29.9, 2.0, True), 99.48, delta=DELTA)
-        # 30 m -> Two-ray 112.3958
+        # 29.9 m -> Egli: 53.0643 + 27.9588 - 29.5134 - 6.0206 + 87.9588 = 133.4479
+        #           FSPL(5, 450) = 99.4837 -> Egli wins
+        self.assertAlmostEqual(_pl(5.0, 450.0, 'rural', 0.0, 29.9, 2.0, True), 133.45, delta=DELTA)
+        # 30 m -> Two-ray 112.3958 (21.1 dB drop)
         self.assertAlmostEqual(_pl(5.0, 450.0, 'rural', 0.0, 30.0, 2.0, True), 112.40, delta=DELTA)
 
     def test_999_9_vs_1000_low_antenna(self):
-        # 999.9 -> Egli: 59.9991 + 27.9588 - 12.0412 + 47.39 = 123.3067 (> FSPL 106.4185)
-        self.assertAlmostEqual(_pl(5.0, 999.9, 'rural', 0.0, 2.0, 2.0, True), 123.31, delta=DELTA)
-        # 1000 -> upper-UHF FSPL: 13.9794 + 60 + 32.44 = 106.4194 (16.9 dB drop)
+        # 999.9 -> Egli: 59.9991 + 27.9588 - 12.0412 + 87.9588 = 163.8755 (> FSPL 106.4185)
+        self.assertAlmostEqual(_pl(5.0, 999.9, 'rural', 0.0, 2.0, 2.0, True), 163.88, delta=DELTA)
+        # 1000 -> upper-UHF FSPL: 13.9794 + 60 + 32.44 = 106.4194 (57.5 dB drop —
+        # the upper-UHF FSPL branch is far more optimistic than Egli at the seam)
         self.assertAlmostEqual(_pl(5.0, 1000.0, 'rural', 0.0, 2.0, 2.0, True), 106.42, delta=DELTA)
 
     def test_2000_vs_2000_1_light_low_antenna(self):
@@ -366,10 +352,10 @@ class SensingDistanceInverseTests(unittest.TestCase):
                                 lambda d: _slope_log(40, d))
 
     def test_egli_hand_distance(self):
-        # 130 = 35.5630 + 40 log d - 12.0412 + 47.39 -> 40 log d = 59.0882
-        # d = 10^1.477205 = 30.00 km
+        # 130 = 35.5630 + 40 log d - 12.0412 + 87.9588 -> 40 log d = 18.5194
+        # d = 10^0.462985 = 2.904 km (FSPL there is 77.3 dB: floor inactive)
         d = calculate_sensing_distance(40.0, 60.0, 'rural', 0.0, -90.0, 0.0, 2.0, 2.0, True)
-        self.assertAlmostEqual(d, 30.00, delta=0.01)
+        self.assertAlmostEqual(d, 2.904, delta=0.002)
 
     def test_two_ray(self):
         # hand: 40 log d_m = 130 + 32.0412 + 6.0206 = 168.0618 -> d = 15.906 km
@@ -453,24 +439,23 @@ class SensingDistanceHorizonTests(unittest.TestCase):
 
 
 class SensingDistanceFsplFloorTests(unittest.TestCase):
-    """FINDING: in the region where the FSPL floor (max(fspl, model)) wins,
-    calculate_sensing_distance() inverts the raw model without the floor, so it
-    returns a distance at which calculate_path_loss() exceeds the budget. The
-    "exact inverse" contract in the docstring does not hold there. These tests
-    assert the contract and are expected to fail.
+    """In the region where the FSPL floor (max(fspl, model)) wins, the sensing
+    distance must be the FSPL inverse, so path_loss(distance) == budget still
+    holds. (Before v1.2.0 the raw model was inverted without the floor and the
+    returned range over-shot the budget by 3–6 dB; these tests caught it.)
     """
 
-    @unittest.expectedFailure
     def test_egli_high_mast_low_vhf(self):
-        # 60 MHz, tx 29 m, rx 10 m, rural, budget 90 dB.
-        # A = 35.5630 - 29.2480 - 20 + 47.39 = 33.7050 ; 40 log d = 56.295 -> d = 25.55 km
-        # FSPL(25.55) = 28.1475 + 35.5630 + 32.44 = 96.15 -> path loss 96.15 > 90 (6.15 dB)
-        # True floor-consistent answer: 20 log d = 90 - 68.003 -> d = 12.58 km (2x over-range).
-        d = calculate_sensing_distance(90.0, 60.0, 'rural', 0.0, 0.0, 0.0, 29.0, 10.0, True)
+        # 60 MHz, tx 29 m, rx 10 m, rural, budget 55 dB.
+        # Floor crossover: 20 log d < 32.44 - 87.9588 + 20 log 290 -> d < 0.486 km
+        # Raw Egli: A = 35.5630 - 29.2480 - 20 + 87.9588 = 74.2738
+        #           40 log d = 55 - 74.2738 -> d = 0.3297 km (FSPL there: 57.9 > 55)
+        # FSPL inverse: 20 log d = 55 - 35.5630 - 32.44 -> d = 0.2238 km  <- answer
+        d = calculate_sensing_distance(55.0, 60.0, 'rural', 0.0, 0.0, 0.0, 29.0, 10.0, True)
+        self.assertAlmostEqual(d, 0.224, delta=0.0011)
         pl = calculate_path_loss(d, 60.0, 'rural', 0.0, 29.0, 10.0, True)
-        self.assertAlmostEqual(pl, 90.0, delta=_tol(_slope_log(20, d)))
+        self.assertAlmostEqual(pl, 55.0, delta=_tol(_slope_log(20, d)))
 
-    @unittest.expectedFailure
     def test_two_ray_inside_breakpoint(self):
         # 450 MHz 40/2 m, budget 80: 40 log d_m = 118.0618 -> d = 0.894 km
         # FSPL(0.894) = -0.9691 + 53.0643 + 32.44 = 84.54 > 80 (4.5 dB)
@@ -478,7 +463,6 @@ class SensingDistanceFsplFloorTests(unittest.TestCase):
         pl = calculate_path_loss(d, 450.0, 'rural', 0.0, 40.0, 2.0, True)
         self.assertAlmostEqual(pl, 80.0, delta=_tol(_slope_log(20, d)))
 
-    @unittest.expectedFailure
     def test_hata_open_short_range(self):
         # 900 MHz 50/1.5 open, budget 80: log d = (80 - 94.446766)/33.771746 -> d = 0.373 km
         # FSPL(0.373) = -8.5585 + 59.0849 + 32.44 = 82.97 > 80 (3.0 dB)
@@ -486,13 +470,13 @@ class SensingDistanceFsplFloorTests(unittest.TestCase):
         pl = calculate_path_loss(d, 900.0, 'rural', 0.0, 50.0, 1.5, False)
         self.assertAlmostEqual(pl, 80.0, delta=_tol(_slope_log(20, d)))
 
-    def test_egli_floor_region_distance_is_raw_egli_inverse(self):
-        # Characterises current behaviour: 60 MHz 2/2 rural, budget 60.
-        # 40 log d = 60 - 35.5630 + 12.0412 - 47.39 = -10.9118 -> d = 0.5336 km
-        # (floor-consistent answer would be 10^((60-68.003)/20) = 0.398 km)
-        d = calculate_sensing_distance(60.0, 60.0, 'rural', 0.0, 0.0, 0.0, 2.0, 2.0, True)
-        self.assertAlmostEqual(d, 0.534, delta=0.0011)
-        self.assertGreater(calculate_path_loss(d, 60.0, 'rural', 0.0, 2.0, 2.0, True), 60.0 + 2.0)
+    def test_floor_limit_is_reported(self):
+        from core.propagation import sensing_distance_breakdown
+        floor = sensing_distance_breakdown(55.0, 60.0, 'rural', 0.0, 0.0, 0.0, 29.0, 10.0, True)
+        self.assertTrue(floor['fspl_floor_limited'])
+        # 2/2 m Egli: floor only below 6.7 m, so a 130 dB budget is model-limited.
+        egli = sensing_distance_breakdown(40.0, 60.0, 'rural', 0.0, -90.0, 0.0, 2.0, 2.0, True)
+        self.assertFalse(egli['fspl_floor_limited'])
 
 
 if __name__ == '__main__':
