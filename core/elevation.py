@@ -2,6 +2,7 @@ import contextlib
 import contextvars
 import logging
 import math
+import threading
 import time
 import requests
 from core.local_data import sample_dted
@@ -11,6 +12,12 @@ _logger = logging.getLogger(__name__)
 ELEVATION_API_URL = "https://api.opentopodata.org/v1/srtm30m"
 _BATCH_SIZE = 100        # public API hard limit: 100 locations per request
 _RATE_LIMIT_DELAY = 1.1  # seconds between requests; public API limit is 1 req/sec
+_MAX_RETRIES = 3         # retries of a 429 (rate-limited) response before giving up
+_MAX_BACKOFF_S = 10.0    # cap on any single Retry-After / backoff wait
+
+# Process-wide pacing clock for the public API; see _post_rate_limited().
+_API_LOCK = threading.Lock()
+_last_api_request = float('-inf')  # time.monotonic() of the last request start
 
 EARTH_EFFECTIVE_RADIUS_KM = 8500  # 4/3 Earth model for standard atmosphere
 
@@ -110,40 +117,70 @@ def _haversine(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def _retry_after_seconds(resp, attempt):
+    """Server-requested wait from a 429's Retry-After header (seconds form),
+    else exponential backoff from the base rate-limit interval, capped."""
+    header = resp.headers.get("Retry-After", "") if resp is not None else ""
+    try:
+        wait = float(header)
+    except (TypeError, ValueError):
+        wait = _RATE_LIMIT_DELAY * (2 ** attempt)
+    return max(_RATE_LIMIT_DELAY, min(wait, _MAX_BACKOFF_S))
+
+
+def _post_rate_limited(payload):
+    """POST to the elevation API, paced process-wide and retried on 429.
+
+    The public API allows 1 request/second per client. Flask (and each
+    Gunicorn worker) serves requests on several threads, and a page load or
+    scenario load fires the J/S, ring, footprint and EP calculations at
+    once — so pacing inside one call is not enough: concurrent calls each
+    hit the API immediately and most get 429 and fall back to flat circles.
+    _API_LOCK makes every thread in the process queue behind one pacing
+    clock; the lock is held across the request so only one call is ever in
+    flight. Separate processes (multiple Gunicorn workers) can still collide
+    occasionally, which the 429 retry absorbs.
+    """
+    global _last_api_request
+    with _API_LOCK:
+        for attempt in range(_MAX_RETRIES + 1):
+            wait = _RATE_LIMIT_DELAY - (time.monotonic() - _last_api_request)
+            if wait > 0:
+                time.sleep(wait)
+            _last_api_request = time.monotonic()
+            resp = requests.post(ELEVATION_API_URL, json=payload, timeout=30)
+            if resp.status_code != 429 or attempt == _MAX_RETRIES:
+                resp.raise_for_status()
+                return resp
+            backoff = _retry_after_seconds(resp, attempt)
+            _logger.info("elevation API rate-limited (429); retrying in %.1fs (attempt %d/%d)",
+                         backoff, attempt + 1, _MAX_RETRIES)
+            # Push the shared clock forward so the retry (and every queued
+            # caller after it) waits out the backoff.
+            _last_api_request = time.monotonic() + backoff - _RATE_LIMIT_DELAY
+
+
 def _fetch_online(locations):
     """POST a list of {latitude, longitude} dicts to Open-Topo-Data in batches.
 
     Splits requests into chunks of at most _BATCH_SIZE to stay within the
-    public API's per-request location limit, sleeping _RATE_LIMIT_DELAY seconds
-    between chunks to respect the 1 req/sec rate limit.
+    public API's per-request location limit. Every chunk goes through
+    _post_rate_limited(), which paces all API traffic in this process to the
+    1 req/sec limit and retries rate-limited requests.
 
     Returns elevation values (metres) in the same order as the input.
     Raises requests.RequestException on network failure, or ValueError if the
     API returns an error status or an unexpected number of results.
     """
     all_elevations = []
-    last_request_start = None
 
     for i in range(0, len(locations), _BATCH_SIZE):
-        # Sleep only the remaining time needed since the last request started,
-        # so that request latency counts toward the rate-limit window.
-        if last_request_start is not None:
-            elapsed = time.time() - last_request_start
-            if elapsed < _RATE_LIMIT_DELAY:
-                time.sleep(_RATE_LIMIT_DELAY - elapsed)
-
-        last_request_start = time.time()
         chunk = locations[i:i + _BATCH_SIZE]
         loc_string = "|".join(
             f"{loc['latitude']},{loc['longitude']}" for loc in chunk
         )
 
-        resp = requests.post(
-            ELEVATION_API_URL,
-            json={"locations": loc_string},
-            timeout=30
-        )
-        resp.raise_for_status()
+        resp = _post_rate_limited({"locations": loc_string})
 
         body = resp.json()
         if body.get("status") != "OK":
