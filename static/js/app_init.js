@@ -11,6 +11,8 @@ document.addEventListener('keydown', function(e) {
 });
 
 document.getElementById('btn-generate-report').addEventListener('click', openReport);
+// Capture phase: [data-inspect] buttons sit inside clickable results rows.
+document.addEventListener('click', handleInspectorClick, true);
 
 document.getElementById('btn-ep-mode').addEventListener('click', toggleEpMode);
 
@@ -44,18 +46,27 @@ document.getElementById('btn-link-all-enemy').addEventListener('click', function
 });
 
 // Collapsible workbench sections: the button owns the caret, the body owns display.
-function bindSectionMinimize(btnId, bodyId) {
-    document.getElementById(btnId).addEventListener('click', function() {
+// aria-expanded / aria-controls / aria-label expose the state to assistive tech.
+function bindSectionMinimize(btnId, bodyId, sectionName) {
+    const btn = document.getElementById(btnId);
+    const setState = expanded => {
+        btn.setAttribute('aria-expanded', String(expanded));
+        btn.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${sectionName}`);
+    };
+    btn.setAttribute('aria-controls', bodyId);
+    setState(document.getElementById(bodyId).style.display !== 'none');
+    btn.addEventListener('click', function() {
         const body = document.getElementById(bodyId);
         const minimized = body.style.display === 'none';
         body.style.display = minimized ? 'block' : 'none';
         this.textContent = minimized ? '▼' : '▶';
+        setState(minimized);
     });
 }
 
-bindSectionMinimize('btn-minimize-links', 'link-statuses-body');
-bindSectionMinimize('btn-minimize-red-systems', 'red-systems-list');
-bindSectionMinimize('btn-minimize-overlap', 'overlap-body');
+bindSectionMinimize('btn-minimize-links', 'link-statuses-body', 'link status');
+bindSectionMinimize('btn-minimize-red-systems', 'red-systems-list', 'enemy systems');
+bindSectionMinimize('btn-minimize-overlap', 'overlap-body', 'overlap analysis');
 
 document.getElementById('btn-show-overlap').addEventListener('click', computeAndShowOverlap);
 document.getElementById('btn-clear-overlap').addEventListener('click', function() {
@@ -146,8 +157,12 @@ document.getElementById('sidebar-close').addEventListener('click', function() {
 document.getElementById('workbench-collapse-btn').addEventListener('click', function() {
     const wb = document.getElementById('workbench');
     wb.classList.toggle('collapsed');
-    this.textContent = wb.classList.contains('collapsed') ? '\u25b6' : '\u25bc';
+    const collapsed = wb.classList.contains('collapsed');
+    this.textContent = collapsed ? '\u25b6' : '\u25bc';
+    this.setAttribute('aria-expanded', String(!collapsed));
+    this.setAttribute('aria-label', collapsed ? 'Expand workbench' : 'Minimize workbench');
 });
+document.getElementById('workbench-collapse-btn').setAttribute('aria-expanded', 'true');
 
 document.getElementById('fh_toggle').addEventListener('change', function() {
     updateFrequencyHoppingControls();

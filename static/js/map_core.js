@@ -209,6 +209,15 @@ function plainNodeName(name) {
         .replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 }
 
+// Red/blue/black node names are stored HTML-escaped (renameNode escapes on
+// input) because popups, tooltips and the results table interpolate them into
+// markup. Any name arriving from outside the app — a scenario file or a
+// library pack — goes through this so it lands in that same safe form.
+// (EP node and system names are stored raw and escaped at each display site.)
+function storedNodeName(name) {
+    return escapeHtml(plainNodeName(name));
+}
+
 function makeEdgeLabel(polygonPoints, centerLat, centerLon, radiusM, text, offsetPx = [0, 0]) {
     let edgePt;
     if (polygonPoints && polygonPoints.length > 0) {
@@ -253,7 +262,7 @@ function updateMGRSTooltips() {
     epNodes.forEach(function(node) {
         const latlng = node.marker.getLatLng();
         const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
-        node.marker.bindTooltip(`${node.name} — ${mgrsStr}`, {
+        node.marker.bindTooltip(`${escapeHtml(node.name)} — ${mgrsStr}`, {   // EP names are stored raw
             permanent: true, direction: 'top', className: 'mgrs-label'
         });
     });

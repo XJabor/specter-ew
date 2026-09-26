@@ -376,17 +376,24 @@ function buildMapModel(snap) {
     const nodes = snap.nodes || {};
     const points = [];
     const markers = [];
+    // Unwrap longitudes relative to the first node so a layout straddling the
+    // antimeridian (179°E / 179°W) stays contiguous instead of spanning the globe.
+    let refLon = null;
+    const unwrap = lon => (refLon == null ? lon : refLon + ((((lon - refLon) % 360) + 540) % 360) - 180);
     ['red', 'blue', 'black', 'ep'].forEach(type => (nodes[type] || []).forEach(n => {
         if (num(n.lat) == null || num(n.lon) == null) return;
-        markers.push({ type, lat: Number(n.lat), lon: Number(n.lon), name: str(n.name, 40) });
-        points.push([Number(n.lat), Number(n.lon)]);
+        if (refLon == null) refLon = Number(n.lon);
+        const lon = unwrap(Number(n.lon));
+        markers.push({ type, lat: Number(n.lat), lon, name: str(n.name, 40) });
+        points.push([Number(n.lat), lon]);
     }));
     if (markers.length === 0) return null;
+    const ll = p => [Number(p[0]), unwrap(Number(p[1]))];
 
     const shapes = (snap.shapes || []).map(s => {
         const pts = Array.isArray(s.points) && s.points.length >= 3
-            ? s.points.filter(p => num(p?.[0]) != null && num(p?.[1]) != null).map(p => [Number(p[0]), Number(p[1])])
-            : (s.center && num(s.radiusKm) ? circlePoints(s.center.map(Number), Number(s.radiusKm)) : []);
+            ? s.points.filter(p => num(p?.[0]) != null && num(p?.[1]) != null).map(ll)
+            : (s.center && num(s.radiusKm) ? circlePoints(ll(s.center), Number(s.radiusKm)) : []);
         return { kind: s.kind === 'overlap' ? 'overlap' : 'ring', color: safeColor(s.color, '#888888'), points: pts };
     }).filter(s => s.points.length >= 3);
 
@@ -409,7 +416,7 @@ function buildMapModel(snap) {
     const lines = [];
     (snap.enemyLinks || []).forEach(l => {
         const a = find('red', l.txId), b = find('red', l.rxId);
-        if (a && b) lines.push({ kind: 'enemy', a: [a.lat, a.lon], b: [b.lat, b.lon], color: '#c62828' });
+        if (a && b) lines.push({ kind: 'enemy', a: ll([a.lat, a.lon]), b: ll([b.lat, b.lon]), color: '#c62828' });
     });
     (snap.jammingLinks || []).forEach(l => {
         const a = find('blue', l.blueId), b = find('red', l.rxId);
@@ -418,7 +425,7 @@ function buildMapModel(snap) {
             .map(r => r?.record)
             .filter(r => r?.kind === 'ea-link' && r.subject?.jammer?.id === l.blueId && r.subject?.target?.id === l.rxId)
             .reduce((best, r) => (best == null || Number(r.margin) > Number(best.margin) ? r : best), null);
-        lines.push({ kind: 'jammer', a: [a.lat, a.lon], b: [b.lat, b.lon],
+        lines.push({ kind: 'jammer', a: ll([a.lat, a.lon]), b: ll([b.lat, b.lon]),
             color: LINK_TONES[tone?.classification || 'unknown'] });
     });
 

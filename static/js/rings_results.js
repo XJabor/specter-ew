@@ -255,7 +255,9 @@ function activeSensorCoverages() {
     // is system-scoped, so the `${sensor.id}:${redId}` overlap key stays unique.
     const redSystemCoverages = redNodes.flatMap(node =>
         (node.systems || []).filter(sys => sys.polygonPoints).map(sys => ({
-            sensor: { id: `red-sys-${sys.id}`, name: sys.name },
+            // System names are stored raw; every other sensor name here is
+            // already HTML-escaped, and the overlap checklist renders them as markup.
+            sensor: { id: `red-sys-${sys.id}`, name: escapeHtml(sys.name) },
             coverage: {
                 redId: node.id,
                 // Marks the entry so KML can route it to its own coloured folder
@@ -313,6 +315,26 @@ function toggleCornerMarkers() {
     }
 }
 
+// Keyboard-reachable inspector entry for a ring listed in the overlap
+// checklist (map ring clicks are mouse-only).
+function coverageInspectButton(item) {
+    const c = item.coverage;
+    let ref = null, hasResult = false;
+    if (c.redSystem) {
+        ref = { kind: 'red-system', nodeId: c.redId, sysId: c.redSystem.id };
+        hasResult = !!c.redSystem.result;
+    } else if (String(item.sensor.id).startsWith('red-ring-')) {
+        ref = { kind: 'es-ring', nodeId: c.redId };
+        hasResult = !!findNode('red', c.redId)?.esResult;
+    } else {
+        ref = { kind: 'sensor-coverage', sensorId: item.sensor.id, redId: c.redId };
+        hasResult = !!c.result;
+    }
+    return hasResult
+        ? `<button class="inspect-btn" ${inspectDataAttr(ref)} title="Explain this ring" aria-label="Explain ${item.sensor.name} ring">ⓘ</button>`
+        : '';
+}
+
 function renderOverlapControls() {
     const checklist = document.getElementById('overlap-checklist');
     const showBtn   = document.getElementById('btn-show-overlap');
@@ -340,6 +362,7 @@ function renderOverlapControls() {
             <input type="checkbox" id="ov-chk-${id}" value="${id}" ${checked}
                 onchange="handleOverlapCheck(this)">
             <label for="ov-chk-${id}">${item.sensor.name} / ${tx ? tx.name : item.coverage.redId}</label>
+            ${coverageInspectButton(item)}
         </div>`;
     });
     checklist.innerHTML = html;
@@ -926,7 +949,7 @@ function renderResults() {
                 }
 
                 const inspectBtn = result?.record
-                    ? `<button class="inspect-btn" title="Explain this result" onclick="event.stopPropagation(); openInspector({kind:'ea-link', jammingLinkId:'${jLink.id}', enemyLinkId:'${eLink.id}'})">ⓘ</button>`
+                    ? `<button class="inspect-btn" title="Explain this result" aria-label="Explain J/S result" ${inspectDataAttr({ kind: 'ea-link', jammingLinkId: jLink.id, enemyLinkId: eLink.id })}>ⓘ</button>`
                     : '';
                 html += `<tr class="jammer-sub-row ${rowClass}${jammerSel ? ' row-selected' : ''}"
                     onclick="selectLink('jammer', '${jLink.id}', '${eLink.id}')">

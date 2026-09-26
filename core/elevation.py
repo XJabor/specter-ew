@@ -14,6 +14,12 @@ _BATCH_SIZE = 100        # public API hard limit: 100 locations per request
 _RATE_LIMIT_DELAY = 1.1  # seconds between requests; public API limit is 1 req/sec
 _MAX_RETRIES = 3         # retries of a 429 (rate-limited) response before giving up
 _MAX_BACKOFF_S = 10.0    # cap on any single Retry-After / backoff wait
+_HTTP_TIMEOUT_S = 20     # per API request
+_QUEUE_TIMEOUT_S = 120.0 # longest a request waits for the API slot before falling back
+_POINT_CACHE_MAX = 200_000  # point elevations kept (≈ tens of MB); cleared when exceeded
+
+# API elevations by rounded (lat, lon); see _fetch_online().
+_point_cache = {}
 
 # Process-wide pacing clock for the public API; see _post_rate_limited().
 _API_LOCK = threading.Lock()
@@ -128,73 +134,106 @@ def _retry_after_seconds(resp, attempt):
     return max(_RATE_LIMIT_DELAY, min(wait, _MAX_BACKOFF_S))
 
 
-def _post_rate_limited(payload):
-    """POST to the elevation API, paced process-wide and retried on 429.
+def _post_paced_locked(payload):
+    """POST to the elevation API, paced and retried on 429. Caller holds _API_LOCK.
 
     The public API allows 1 request/second per client. Flask (and each
     Gunicorn worker) serves requests on several threads, and a page load or
     scenario load fires the J/S, ring, footprint and EP calculations at
     once — so pacing inside one call is not enough: concurrent calls each
     hit the API immediately and most get 429 and fall back to flat circles.
-    _API_LOCK makes every thread in the process queue behind one pacing
-    clock; the lock is held across the request so only one call is ever in
-    flight. Separate processes (multiple Gunicorn workers) can still collide
-    occasionally, which the 429 retry absorbs.
+    Holding _API_LOCK across the request makes every thread in the process
+    queue behind one pacing clock with only one call in flight. Separate
+    processes (multiple Gunicorn workers) can still collide occasionally,
+    which the 429 retry absorbs.
     """
     global _last_api_request
-    with _API_LOCK:
-        for attempt in range(_MAX_RETRIES + 1):
-            wait = _RATE_LIMIT_DELAY - (time.monotonic() - _last_api_request)
-            if wait > 0:
-                time.sleep(wait)
-            _last_api_request = time.monotonic()
-            resp = requests.post(ELEVATION_API_URL, json=payload, timeout=30)
-            if resp.status_code != 429 or attempt == _MAX_RETRIES:
-                resp.raise_for_status()
-                return resp
-            backoff = _retry_after_seconds(resp, attempt)
-            _logger.info("elevation API rate-limited (429); retrying in %.1fs (attempt %d/%d)",
-                         backoff, attempt + 1, _MAX_RETRIES)
-            # Push the shared clock forward so the retry (and every queued
-            # caller after it) waits out the backoff.
-            _last_api_request = time.monotonic() + backoff - _RATE_LIMIT_DELAY
+    for attempt in range(_MAX_RETRIES + 1):
+        wait = _RATE_LIMIT_DELAY - (time.monotonic() - _last_api_request)
+        if wait > 0:
+            time.sleep(wait)
+        _last_api_request = time.monotonic()
+        resp = requests.post(ELEVATION_API_URL, json=payload, timeout=_HTTP_TIMEOUT_S)
+        if resp.status_code != 429 or attempt == _MAX_RETRIES:
+            resp.raise_for_status()
+            return resp
+        backoff = _retry_after_seconds(resp, attempt)
+        _logger.info("elevation API rate-limited (429); retrying in %.1fs (attempt %d/%d)",
+                     backoff, attempt + 1, _MAX_RETRIES)
+        # Push the shared clock forward so the retry (and every queued
+        # caller after it) waits out the backoff.
+        _last_api_request = time.monotonic() + backoff - _RATE_LIMIT_DELAY
+
+
+@contextlib.contextmanager
+def _api_slot():
+    """Hold the process-wide API lock, waiting at most _QUEUE_TIMEOUT_S.
+
+    A slow or rate-limited service would otherwise leave every waiting request
+    thread parked on the lock indefinitely; past the bound the request fails
+    like any network error and the caller falls back (flat circle, non-terrain
+    path loss)."""
+    if not _API_LOCK.acquire(timeout=_QUEUE_TIMEOUT_S):
+        raise requests.RequestException(
+            f"elevation request queue busy for more than {_QUEUE_TIMEOUT_S:.0f}s")
+    try:
+        yield
+    finally:
+        _API_LOCK.release()
+
+
+def _point_key(loc):
+    return (round(loc['latitude'], 5), round(loc['longitude'], 5))  # ~1 m
+
+
+def _post_rate_limited(payload):
+    """One paced, retried API call (acquires the process-wide slot itself)."""
+    with _api_slot():
+        return _post_paced_locked(payload)
 
 
 def _fetch_online(locations):
-    """POST a list of {latitude, longitude} dicts to Open-Topo-Data in batches.
+    """Elevations for a list of {latitude, longitude} dicts from Open-Topo-Data.
 
-    Splits requests into chunks of at most _BATCH_SIZE to stay within the
-    public API's per-request location limit. Every chunk goes through
-    _post_rate_limited(), which paces all API traffic in this process to the
-    1 req/sec limit and retries rate-limited requests.
+    Points already fetched (by this or any concurrent request) come from the
+    point cache. The rest go out in chunks of at most _BATCH_SIZE (the public
+    API's per-request limit), each under the process-wide API slot — and the
+    cache is re-checked after the slot is acquired, so a request that queued
+    behind an identical one reuses its answer instead of repeating the call.
 
     Returns elevation values (metres) in the same order as the input.
-    Raises requests.RequestException on network failure, or ValueError if the
-    API returns an error status or an unexpected number of results.
+    Raises requests.RequestException on network failure or queue timeout, or
+    ValueError if the API returns an error status or an unexpected number of
+    results.
     """
-    all_elevations = []
+    out = [_point_cache.get(_point_key(loc)) for loc in locations]
+    missing = [i for i, v in enumerate(out) if v is None]
 
-    for i in range(0, len(locations), _BATCH_SIZE):
-        chunk = locations[i:i + _BATCH_SIZE]
-        loc_string = "|".join(
-            f"{loc['latitude']},{loc['longitude']}" for loc in chunk
-        )
+    for c in range(0, len(missing), _BATCH_SIZE):
+        chunk_idx = missing[c:c + _BATCH_SIZE]
+        with _api_slot():
+            todo = [i for i in chunk_idx if _point_key(locations[i]) not in _point_cache]
+            if todo:
+                loc_string = "|".join(
+                    f"{locations[i]['latitude']},{locations[i]['longitude']}" for i in todo
+                )
+                resp = _post_paced_locked({"locations": loc_string})
+                body = resp.json()
+                if body.get("status") != "OK":
+                    raise ValueError(f"Elevation API error: {body.get('error', 'unknown status')}")
+                results = body.get("results", [])
+                if len(results) != len(todo):
+                    raise ValueError(
+                        f"Elevation API returned {len(results)} results for {len(todo)} locations"
+                    )
+                if len(_point_cache) > _POINT_CACHE_MAX:
+                    _point_cache.clear()
+                for i, r in zip(todo, results):
+                    _point_cache[_point_key(locations[i])] = r["elevation"]
+        for i in chunk_idx:
+            out[i] = _point_cache.get(_point_key(locations[i]))
 
-        resp = _post_rate_limited({"locations": loc_string})
-
-        body = resp.json()
-        if body.get("status") != "OK":
-            raise ValueError(f"Elevation API error: {body.get('error', 'unknown status')}")
-
-        results = body.get("results", [])
-        if len(results) != len(chunk):
-            raise ValueError(
-                f"Elevation API returned {len(results)} results for {len(chunk)} locations"
-            )
-
-        all_elevations.extend(r["elevation"] for r in results)
-
-    return all_elevations
+    return out
 
 
 def _fetch_elevations(locations):

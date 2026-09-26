@@ -217,6 +217,8 @@ window.addLibrarySystemToEpNode = function(nodeId) {
 window.removeSystemFromEpNode = function(nodeId, sysId) {
     const node = epNodes.find(n => n.id === nodeId);
     if (!node) return;
+    // A running calculateEpNode() may still hold this system object; it checks
+    // membership after each response, so no ring is drawn for it once removed.
     const sys = node.systems.find(s => s.id === sysId);
     if (sys) removeLayerRef(sys, 'layer', 'label');
     node.systems = node.systems.filter(s => s.id !== sysId);
@@ -296,6 +298,8 @@ window.calculateEpNode = async function(nodeId) {
             // Bail before touching the map: the node may have been deleted or
             // recalculated while these awaits were pending.
             if (!stillCurrent()) return;
+            // The system itself may have been deleted mid-run; skip only it.
+            if (!node.systems.includes(sys)) continue;
             if (data.status !== 'success') continue;
 
             sys.rangeKm       = data.base_range_km;
@@ -307,7 +311,7 @@ window.calculateEpNode = async function(nodeId) {
                 request: payload,
                 response: data,
             });
-            const label = `${sys.name}: ~${data.base_range_km.toFixed(1)} km`;
+            const label = `${escapeHtml(sys.name)}: ~${data.base_range_km.toFixed(1)} km`;
 
             if (data.polygon_points) {
                 sys.layer = L.polygon(data.polygon_points, {
@@ -385,7 +389,7 @@ function updateEpWorkbench() {
                         oninput="epUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
                     <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
-                    ${sys.result ? `<button class="inspect-btn" onclick="openInspector({kind:'ep-system', nodeId:'${node.id}', sysId:'${sys.id}'})" title="Explain this ring">ⓘ</button>` : ''}
+                    ${sys.result ? `<button class="inspect-btn" ${inspectDataAttr({ kind: 'ep-system', nodeId: node.id, sysId: sys.id })} title="Explain this ring" aria-label="Explain ${escapeHtml(sys.name)} ring">ⓘ</button>` : ''}
                     <button class="sys-delete" onclick="removeSystemFromEpNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
                     <div class="sys-params">
                         <label class="sys-label">Freq (MHz)
