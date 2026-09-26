@@ -34,13 +34,15 @@ API_RES_SAMPLES = 11
 MIN_RING_RANGE_KM = 0.05
 
 
-def walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m):
+def walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity,
+                          tx_height_m, rx_height_m=0.0):
     """Detection/sensing range (km) along one bearing; see _walk_profile()."""
     return _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain,
-                         rx_sensitivity, tx_height_m)['range_km']
+                         rx_sensitivity, tx_height_m, rx_height_m)['range_km']
 
 
-def _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m):
+def _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m,
+                  rx_height_m=0.0):
     """
     Find the detection/sensing range by walking the elevation profile outward.
 
@@ -75,7 +77,7 @@ def _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_
         # the straight geometric LOS line.  If not, Earth curvature is the only
         # "obstacle" and the empirical model already handles it.
         h_tx = sub[0]['elevation_m'] + tx_height_m
-        h_rx = sub[-1]['elevation_m']   # notional ground-level receiver
+        h_rx = sub[-1]['elevation_m'] + rx_height_m   # receiver antenna AGL
         terrain_blocked = any(
             pt['elevation_m'] > h_tx + (h_rx - h_tx) * (pt['distance_km'] / d_i) + 1.0
             for pt in sub[1:-1]
@@ -83,7 +85,7 @@ def _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_
         )
 
         if terrain_blocked:
-            los    = check_line_of_sight(sub, freq_mhz, tx_height_m, 0.0)
+            los    = check_line_of_sight(sub, freq_mhz, tx_height_m, rx_height_m)
             diff_db  = los['diffraction_loss_db']
             is_los   = los['is_los']
         else:
@@ -91,7 +93,7 @@ def _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_
             is_los  = True  # let the empirical model handle Earth curvature
 
         pl = path_loss_breakdown(
-            d_i, freq_mhz, terrain, diff_db, tx_height_m, 0.0, is_los
+            d_i, freq_mhz, terrain, diff_db, tx_height_m, rx_height_m, is_los
         )
         pl_i = pl['loss_db']
         blocked, model = terrain_blocked, pl['model']
@@ -114,7 +116,7 @@ def _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_
 def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
                               azimuth_deg, beamwidth_deg, antenna_height_m,
                               freq_mhz, terrain, rx_gain, rx_sensitivity,
-                              log_label='footprint'):
+                              log_label='footprint', rx_height_m=0.0):
     """
     Compute a terrain-shaped coverage polygon around a transmitter.
 
@@ -141,11 +143,11 @@ def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
     peak_eirp = eirp_at_bearing(azimuth_deg if antenna_type == 'directional' else 0)
     los_sense = sensing_distance_breakdown(
         peak_eirp, freq_mhz, terrain, rx_gain, rx_sensitivity,
-        tx_height_m=antenna_height_m, is_los=True
+        tx_height_m=antenna_height_m, rx_height_m=rx_height_m, is_los=True
     )
     nlos_sense = sensing_distance_breakdown(
         peak_eirp, freq_mhz, terrain, rx_gain, rx_sensitivity,
-        tx_height_m=antenna_height_m, is_los=False
+        tx_height_m=antenna_height_m, rx_height_m=rx_height_m, is_los=False
     )
     base_range_km = los_sense['distance_km']
     proj_range_km = max(base_range_km, nlos_sense['distance_km'])
@@ -175,7 +177,7 @@ def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
                 eirp = eirp_at_bearing(bearing)
                 walk = _walk_profile(
                     profile, freq_mhz, terrain,
-                    eirp, rx_gain, rx_sensitivity, antenna_height_m
+                    eirp, rx_gain, rx_sensitivity, antenna_height_m, rx_height_m
                 )
                 walk['range_km'] = max(walk['range_km'], MIN_RING_RANGE_KM)
                 walks.append(walk)
@@ -188,7 +190,7 @@ def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
 
     diagnostics = _footprint_diagnostics(
         freq_mhz=freq_mhz, terrain=terrain, tx_dbm=tx_dbm, peak_eirp=peak_eirp,
-        rx_gain=rx_gain, rx_sensitivity=rx_sensitivity,
+        rx_gain=rx_gain, rx_sensitivity=rx_sensitivity, rx_height_m=rx_height_m,
         antenna=(antenna_type, azimuth_deg, beamwidth_deg, antenna_height_m),
         los_sense=los_sense, nlos_sense=nlos_sense, proj_range_km=proj_range_km,
         locally_covered=locally_covered, num_bearings=num_bearings,
@@ -209,7 +211,7 @@ def _range_stats(ranges):
 
 
 def _footprint_diagnostics(*, freq_mhz, terrain, tx_dbm, peak_eirp, rx_gain,
-                           rx_sensitivity, antenna, los_sense, nlos_sense,
+                           rx_sensitivity, rx_height_m, antenna, los_sense, nlos_sense,
                            proj_range_km, locally_covered, num_bearings,
                            num_samples, walks, elevation):
     """Provenance record for one terrain footprint: the inputs as the backend
@@ -237,6 +239,8 @@ def _footprint_diagnostics(*, freq_mhz, terrain, tx_dbm, peak_eirp, rx_gain,
         'peak_eirp_dbm': peak_eirp,
         'rx_gain_dbi': rx_gain,
         'rx_sensitivity_dbm': rx_sensitivity,
+        # As the models apply it: heights below 1 m are floored to 1 m.
+        'rx_height_m': max(1.0, rx_height_m),
         'antenna': {
             'type': antenna_type,
             'azimuth_deg': azimuth_deg,

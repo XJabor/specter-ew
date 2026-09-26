@@ -352,6 +352,7 @@ function buildEpSystemPayload(node, sys) {
         enemy_tx_gain:       sys.txGainDbi,
         rx_sensitivity:      parseFloat(document.getElementById('ep_rx_sensitivity').value),
         friendly_rx_gain:    0,
+        rx_antenna_height_m: receiverHeightSetting('ep_rx_height_m'),
         enemy_lat:           node.lat,
         enemy_lon:           node.lon,
         tx_antenna_type:     sys.antennaType,

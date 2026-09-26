@@ -390,3 +390,12 @@ test('map stays contiguous across the antimeridian', () => {
     const plan = P.basemapTilePlan(model);
     plan.tiles.forEach(t => assert.ok(t.x >= 0 && t.x < 2 ** t.z));
 });
+
+test('inspector reports the receiver height the backend applied', () => {
+    const fx = clone(API.es_ring);
+    fx.response.diagnostics.rx_height_m = 4.5;
+    assert.equal(section(R.describeResult(ringRecord(fx)), 'Receiver reference')['Receiver antenna height'], '4.5 m AGL');
+    // Older responses without the field: ground level, floored to 1 m.
+    delete fx.response.diagnostics.rx_height_m;
+    assert.equal(section(R.describeResult(ringRecord(fx)), 'Receiver reference')['Receiver antenna height'], '1.0 m AGL');
+});

@@ -339,6 +339,7 @@
      "min_km": 1.942
     },
     "rx_gain_dbi": 0.0,
+    "rx_height_m": 1.0,
     "rx_sensitivity_dbm": -100.0,
     "terrain": "rural",
     "tx_power_dbm": 36.99
@@ -557,6 +558,7 @@
      "min_km": 1.835
     },
     "rx_gain_dbi": 0.0,
+    "rx_height_m": 1.0,
     "rx_sensitivity_dbm": -90.0,
     "terrain": "rural",
     "tx_power_dbm": 43.01
@@ -669,6 +671,7 @@
      "min_km": 0.98
     },
     "rx_gain_dbi": 0.0,
+    "rx_height_m": 1.0,
     "rx_sensitivity_dbm": -100.0,
     "terrain": "light forest",
     "tx_power_dbm": 30.0

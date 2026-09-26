@@ -211,6 +211,37 @@ class FootprintDiagnosticsTests(_Client):
         self.assertEqual(d['ranges']['min_km'], d['flat_los']['distance_km'])
 
 
+class ReceiverHeightTests(_Client):
+    RING = {'freq_mhz': 446, 'enemy_terrain': 'light forest', 'enemy_tx_w': 5,
+            'enemy_lat': 35.0, 'enemy_lon': -117.0, 'rx_sensitivity': -100,
+            'tx_antenna_height_m': 1}
+
+    def ring(self, **extra):
+        with patch.object(elevation, '_fetch_elevations', _flat_elevations):
+            return self.post('/calculate_es_terrain', {**self.RING, **extra})
+
+    def test_omitted_height_is_the_legacy_ground_level_receiver(self):
+        omitted, zero = self.ring(), self.ring(rx_antenna_height_m=0)
+        self.assertEqual(omitted['base_range_km'], zero['base_range_km'])
+        self.assertEqual(omitted['polygon_points'], zero['polygon_points'])
+        self.assertEqual(omitted['diagnostics']['rx_height_m'], 1.0)  # floored, as applied
+
+    def test_sensor_height_extends_the_ring(self):
+        low, high = self.ring(rx_antenna_height_m=1.5), self.ring(rx_antenna_height_m=5)
+        self.assertEqual(high['diagnostics']['rx_height_m'], 5.0)
+        # Egli: range scales with sqrt(hr) -> (5 / 1.5) ** 0.5 = 1.826x
+        self.assertAlmostEqual(high['base_range_km'] / low['base_range_km'], (5 / 1.5) ** 0.5, delta=0.01)
+        self.assertGreater(high['diagnostics']['ranges']['median_km'],
+                           low['diagnostics']['ranges']['median_km'])
+
+    def test_height_is_validated(self):
+        for bad in (-1, 501):
+            with self.subTest(bad=bad):
+                data = self.ring(rx_antenna_height_m=bad)
+                self.assertEqual(data['status'], 'error')
+                self.assertIn('Receiver height', data['message'])
+
+
 class ElevationSummaryTests(unittest.TestCase):
     def test_sources(self):
         def summary(**kw):

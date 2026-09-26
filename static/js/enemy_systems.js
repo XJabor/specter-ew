@@ -263,6 +263,7 @@ function buildRedSystemPayload(node, sys, sensor = selectedSensorReference()) {
         enemy_tx_gain:       sys.txGainDbi,
         rx_sensitivity:      sensor.rxSensitivityDbm,
         friendly_rx_gain:    sensor.rxGainDbi,
+        rx_antenna_height_m: sensor.heightM,
         enemy_lat:           ll.lat,
         enemy_lon:           ll.lng,
         tx_antenna_type:     sys.antennaType,

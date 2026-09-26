@@ -113,6 +113,9 @@ function gatherReportSnapshot() {
             sensorReference: { name: plainNodeName(sensor.name), rxSensitivityDbm: sensor.rxSensitivityDbm, rxGainDbi: sensor.rxGainDbi },
             epTerrain: value('ep_terrain'),
             epRxSensitivity: value('ep_rx_sensitivity'),
+            sensorHeightM: receiverHeightSetting('sensor_height_m'),
+            footprintRxHeightM: receiverHeightSetting('footprint_rx_height_m'),
+            epRxHeightM: receiverHeightSetting('ep_rx_height_m'),
         },
         nodes: {
             red: redNodes.map(n => ({ ...reportRfNode(n, 'red'), systems: (n.systems || []).map(reportSystem) })),

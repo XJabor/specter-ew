@@ -232,6 +232,9 @@ def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
     lat            = float(data[f'{prefix}_lat'])
     lon            = float(data[f'{prefix}_lon'])
     num_bearings   = int(data.get('num_bearings', 36))
+    # Optional receiver (sensor / reference receiver) antenna height AGL. Absent
+    # means ground level, which the models floor to 1 m (pre-1.2.0 behaviour).
+    rx_height_m    = float(data.get('rx_antenna_height_m', 0))
 
     antenna_type, azimuth_deg, beamwidth_deg, antenna_height_m = \
         _parse_antenna(data, antenna_prefix)
@@ -242,6 +245,8 @@ def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
     ]) or _validate_latlon([(lat, f'{prefix}_lat')], [(lon, f'{prefix}_lon')])
     if error is None and not (1 <= num_bearings <= 360):
         error = 'num_bearings must be between 1 and 360.'
+    if error is None and not (0 <= rx_height_m <= 500):
+        error = 'Receiver height must be between 0 and 500 m.'
     if error:
         return _json_error(error)
 
@@ -249,7 +254,7 @@ def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
         lat, lon, tx_w, tx_gain,
         antenna_type, azimuth_deg, beamwidth_deg,
         antenna_height_m, freq_mhz, terrain,
-        rx_gain, rx_sensitivity, log_label=log_label,
+        rx_gain, rx_sensitivity, log_label=log_label, rx_height_m=rx_height_m,
     )
     return jsonify({'status': 'success', **result})
 

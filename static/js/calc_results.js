@@ -437,6 +437,14 @@ function thresholdDescription(record) {
     }
 }
 
+function receiverHeightText(d, req) {
+    // Diagnostics carry the height as the models applied it (floored at 1 m);
+    // responses from before v1.2.0's receiver-height support imply ground level.
+    const applied = isNum(d?.rx_height_m) ? Number(d.rx_height_m)
+        : Math.max(1, Number(req?.rx_antenna_height_m) || 0);
+    return `${fmtNum(applied, 1)} m AGL`;
+}
+
 function describeFootprint(record, ctx) {
     const d = record.diagnostics;
     const req = record.request || {};
@@ -468,7 +476,7 @@ function describeFootprint(record, ctx) {
         rows: [
             row(thresholdDescription(record), fmtDbm(d?.rx_sensitivity_dbm ?? req.rx_sensitivity)),
             row('Receiver antenna gain', fmtDbi(d?.rx_gain_dbi ?? req.friendly_rx_gain)),
-            row('Receiver height', '1 m AGL (ground-level receiver)'),
+            row('Receiver antenna height', receiverHeightText(d, req)),
             row('Link budget (max path loss)', fmtDb(d?.flat_los?.budget_db)),
         ],
     }];

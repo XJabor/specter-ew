@@ -70,7 +70,9 @@
             <hr style="border-top: 1px solid #555; margin: 15px 0;">
             <label id="rx-sensitivity-row"><span id="rx-sensitivity-label">Sensor Rx Sensitivity (dBm)</span>: <input type="number" id="rx_sensitivity" value="-100"></label>
             <label id="friendly-rx-gain-row"><span id="friendly-rx-gain-label">Sensor Rx Ant Gain (dBi)</span>: <input type="number" id="friendly_rx_gain" value="0"></label>
+            <label id="sensor-height-row" title="Used for detection rings when no friendly sensor node is selected. A selected sensor node, and every sensor-coverage ring, uses that node's own antenna height.">Generic Sensor Height AGL (m): <input type="number" id="sensor_height_m" value="1" min="1" max="500" step="0.5"></label>
             <label id="footprint-rx-sensitivity-row">Reference Receiver Threshold (dBm): <input type="number" id="footprint_rx_sensitivity" value="-90"></label>
+            <label id="footprint-rx-height-row" title="Antenna height of the notional receiver that jammer footprints are drawn for.">Reference Receiver Height AGL (m): <input type="number" id="footprint_rx_height_m" value="1" min="1" max="500" step="0.5"></label>
         </div>
 
         <div class="control-group ea-only" style="border-left: 4px solid #aaaaaa;">
@@ -94,6 +96,9 @@
             </label>
             <label>Enemy Rx Sensitivity (dBm):
                 <input type="number" id="ep_rx_sensitivity" value="-90">
+            </label>
+            <label>Enemy Rx Height AGL (m):
+                <input type="number" id="ep_rx_height_m" value="1" min="1" max="500" step="0.5">
             </label>
         </div>
 
