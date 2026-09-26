@@ -1,3 +1,5 @@
+import contextlib
+import contextvars
 import logging
 import math
 import time
@@ -14,6 +16,87 @@ EARTH_EFFECTIVE_RADIUS_KM = 8500  # 4/3 Earth model for standard atmosphere
 
 # Module-level cache keyed by rounded coordinates to avoid redundant API calls
 _profile_cache = {}
+# Per-profile elevation provenance, same keys as _profile_cache:
+# {'local': n, 'remote': n, 'void': n}, or None when the source is unknown.
+_profile_source = {}
+
+SRTM_VOID_M = -32000  # SRTM/DTED voids are reported as -32768
+
+# Request-scoped provenance accumulator; see elevation_tally().
+_tally = contextvars.ContextVar('elevation_tally', default=None)
+
+
+class _Elevations(list):
+    """Elevation list that also records which samples came from the remote API.
+
+    A plain list subclass so callers (and test mocks returning plain lists)
+    keep working; `remote` is a parallel list of bools, or absent."""
+
+    def __init__(self, values, remote):
+        super().__init__(values)
+        self.remote = remote
+
+
+@contextlib.contextmanager
+def elevation_tally():
+    """Collect elevation provenance for every profile fetched (or served from
+    cache) inside the block.  Yields a dict that elevation_summary() reads."""
+    tally = {'local': 0, 'remote': 0, 'void': 0, 'unknown_paths': 0, 'paths': 0}
+    token = _tally.set(tally)
+    try:
+        yield tally
+    finally:
+        _tally.reset(token)
+
+
+def _tally_profile(cache_key):
+    tally = _tally.get()
+    if tally is None:
+        return
+    tally['paths'] += 1
+    source = _profile_source.get(cache_key)
+    if source is None:
+        tally['unknown_paths'] += 1
+        return
+    for k in ('local', 'remote', 'void'):
+        tally[k] += source[k]
+
+
+def _record_source(cache_key, elevations, start, end):
+    remote = getattr(elevations, 'remote', None)
+    if remote is None:
+        _profile_source[cache_key] = None
+        return
+    values = elevations[start:end]
+    n_remote = sum(1 for r in remote[start:end] if r)
+    _profile_source[cache_key] = {
+        'local': len(values) - n_remote,
+        'remote': n_remote,
+        'void': sum(1 for v in values if v is None or v <= SRTM_VOID_M),
+    }
+
+
+def elevation_summary(tally):
+    """Condense an elevation_tally() dict into the diagnostic shape the
+    frontend inspector reads."""
+    local, remote = tally['local'], tally['remote']
+    if tally['paths'] == 0:
+        source = 'none'
+    elif tally['unknown_paths'] == tally['paths']:
+        source = 'unknown'
+    elif remote and local:
+        source = 'mixed'
+    elif remote:
+        source = 'remote'
+    else:
+        source = 'local'
+    return {
+        'source': source,
+        'local_samples': local,
+        'remote_samples': remote,
+        'void_samples': tally['void'],
+        'profiles': tally['paths'],
+    }
 
 
 def _haversine(lat1, lon1, lat2, lon2):
@@ -88,9 +171,10 @@ def _fetch_elevations(locations):
 
     uncovered = [i for i, v in enumerate(local) if v is None]
     n_local = len(locations) - len(uncovered)
+    remote = [False] * len(locations)
     if not uncovered:
         _logger.info("elevations: %d/%d from local DTED (all local)", n_local, len(locations))
-        return local
+        return _Elevations(local, remote)
 
     _logger.info("elevations: %d/%d from local DTED, %d from API", n_local, len(locations), len(uncovered))
     api_locs = [locations[i] for i in uncovered]
@@ -98,8 +182,9 @@ def _fetch_elevations(locations):
 
     for i, val in zip(uncovered, api_results):
         local[i] = val
+        remote[i] = True
 
-    return local
+    return _Elevations(local, remote)
 
 
 def get_point_elevations(points):
@@ -127,6 +212,7 @@ def get_elevation_profile(lat1, lon1, lat2, lon2, num_samples=20):
     cache_key = (round(lat1, 4), round(lon1, 4),
                  round(lat2, 4), round(lon2, 4), num_samples)
     if cache_key in _profile_cache:
+        _tally_profile(cache_key)
         return _profile_cache[cache_key]
 
     total_km = _haversine(lat1, lon1, lat2, lon2)
@@ -151,6 +237,8 @@ def get_elevation_profile(lat1, lon1, lat2, lon2, num_samples=20):
         })
 
     _profile_cache[cache_key] = profile
+    _record_source(cache_key, elevations, 0, num_samples)
+    _tally_profile(cache_key)
     return profile
 
 
@@ -228,7 +316,10 @@ def get_elevation_profiles_batch(paths, num_samples=12):
                     "distance_km": (i / (num_samples - 1)) * total_km,
                 })
             _profile_cache[cache_keys[path_idx]] = profile
+            _record_source(cache_keys[path_idx], all_elevations, start, end)
 
+    for k in cache_keys:
+        _tally_profile(k)
     return [_profile_cache[k] for k in cache_keys]
 
 

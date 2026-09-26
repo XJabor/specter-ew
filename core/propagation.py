@@ -180,23 +180,60 @@ def _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type):
     return {'dense': 10.0, 'light': 5.0}.get(_classify_terrain(terrain_type), 0.0)
 
 
-def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
+# Model identifiers reported by path_loss_breakdown() / sensing_distance_breakdown().
+# The frontend (static/js/calc_results.js MODEL_INFO) maps these to readable
+# names; keep the two in sync.
+MODEL_SHF = 'shf'
+MODEL_FREE_SPACE = 'free_space'
+MODEL_FSPL_UPPER_UHF = 'fspl_upper_uhf'
+MODEL_TWO_RAY = 'two_ray'
+MODEL_COST231_HATA = 'cost231_hata'
+MODEL_EGLI = 'egli'
+
+
+def _fspl_db(distance_km, frequency_mhz):
+    return 20.0 * math.log10(distance_km) + 20.0 * math.log10(frequency_mhz) + 32.44
+
+
+def _select_model(frequency_mhz, tx_height_m, terrain_category, is_los):
+    """Routing table shared by path loss and its sensing-distance inverse."""
+    if frequency_mhz > 2000.0:
+        return MODEL_SHF
+    if terrain_category == 'free_space':
+        return MODEL_FREE_SPACE
+    hata_ok = _cost231_valid(frequency_mhz, tx_height_m)
+    # Egli was calibrated for 40–900 MHz VHF/UHF ground scenarios.  At 1–2 GHz with
+    # low antennas (where COST-231 Hata is unavailable) it over-predicts path loss by
+    # 20–30 dB relative to measured values.  Use FSPL as the baseline instead.
+    if frequency_mhz >= 1000.0 and not hata_ok:
+        return MODEL_FSPL_UPPER_UHF
+    if hata_ok:
+        return MODEL_TWO_RAY if is_los else MODEL_COST231_HATA
+    return MODEL_EGLI
+
+
+def path_loss_breakdown(distance_km, frequency_mhz, terrain_type="free space",
                         diffraction_loss_db=0.0,
                         tx_height_m=0.0, rx_height_m=0.0, is_los=False):
     """
-    Total path loss (dB) using the hybrid empirical-deterministic model.
+    Total path loss plus the component terms that produced it.
+
+    calculate_path_loss() returns this dict's 'loss_db', so the diagnostics the
+    inspector shows are by construction the numbers the calculation used.
 
     Routing (checked against raw tx_height_m before any model-internal flooring):
 
       LOS paths (diffraction not applied):
         freq > 2000 MHz         → SHF (FSPL + clutter, no diffraction)
         free space              → FSPL
+        freq ≥ 1000, Hata n/a   → FSPL + flat terrain correction (upper UHF)
         COST-231 valid domain   → Two-Ray Ground Reflection
         tactical exception      → Egli
 
       NLOS paths (+ Deygout diffraction_loss_db):
         freq > 2000 MHz         → SHF (FSPL + clutter + diffraction_loss_db as blockage penalty)
         free space              → FSPL
+        freq ≥ 1000, Hata n/a   → FSPL + flat terrain correction (upper UHF)
         COST-231 valid domain   → COST-231 Hata
         tactical exception      → Egli
 
@@ -205,54 +242,72 @@ def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
     tx_height_m / rx_height_m : antenna AGL heights (metres)
     is_los                    : from check_line_of_sight(); False when unknown
     diffraction_loss_db       : Deygout sum; 0 when LOS or elevation unavailable
+
+    Returned keys: loss_db, model, terrain_category, is_los, fspl_db,
+    base_loss_db (model loss before diffraction), terrain_correction_db,
+    clutter_db (SHF distance-proportional), near_ground_penalty_db (SHF),
+    diffraction_db (as applied: 0 on LOS paths), fspl_floor_applied.
     """
+    category = _classify_terrain(terrain_type)
+    out = {
+        'loss_db': 0.0, 'model': None, 'terrain_category': category,
+        'is_los': bool(is_los), 'fspl_db': None, 'base_loss_db': None,
+        'terrain_correction_db': 0.0, 'clutter_db': 0.0,
+        'near_ground_penalty_db': 0.0, 'diffraction_db': 0.0,
+        'fspl_floor_applied': False,
+    }
     if distance_km <= 0:
-        return 0.0
+        return out
 
-    is_free_space = _classify_terrain(terrain_type) == 'free_space'
-    hata_ok = _cost231_valid(frequency_mhz, tx_height_m)
-    # Egli was calibrated for 40–900 MHz VHF/UHF ground scenarios.  At 1–2 GHz with
-    # low antennas (where COST-231 Hata is unavailable) it over-predicts path loss by
-    # 20–30 dB relative to measured values.  Use FSPL as the baseline instead.
-    upper_uhf = frequency_mhz >= 1000.0 and not hata_ok
+    model = _select_model(frequency_mhz, tx_height_m, category, is_los)
+    diff = 0.0 if is_los else diffraction_loss_db
+    fspl = _fspl_db(distance_km, frequency_mhz)
+    out['model'] = model
+    out['fspl_db'] = round(fspl, 2)
 
-    if is_los:
-        if frequency_mhz > 2000.0:
-            shf_loss = (_shf_path_loss(distance_km, frequency_mhz, terrain_type)
-                        + _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type))
-            return round(shf_loss, 2)
-        elif is_free_space or upper_uhf:
-            base_loss = (20.0 * math.log10(distance_km)
-                         + 20.0 * math.log10(frequency_mhz) + 32.44)
-            if upper_uhf and not is_free_space:
-                base_loss += _egli_terrain_correction_db(terrain_type)
-        elif hata_ok:
-            base_loss = _two_ray_path_loss(distance_km, frequency_mhz,
-                                           tx_height_m, rx_height_m)
-        else:
-            base_loss = _egli_path_loss(distance_km, frequency_mhz,
-                                        tx_height_m, rx_height_m, terrain_type)
-        return round(base_loss, 2)
+    if model == MODEL_SHF:
+        # SHF doesn't diffract meaningfully, so on NLOS paths diffraction_loss_db
+        # represents terrain blockage severity rather than a bending loss.
+        shf = _shf_path_loss(distance_km, frequency_mhz, terrain_type)
+        penalty = _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
+        base_loss = shf + penalty
+        out['clutter_db'] = round(shf - fspl, 2)
+        out['near_ground_penalty_db'] = penalty
+    elif model in (MODEL_FREE_SPACE, MODEL_FSPL_UPPER_UHF):
+        base_loss = fspl
+        if model == MODEL_FSPL_UPPER_UHF:
+            correction = _egli_terrain_correction_db(terrain_type)
+            base_loss += correction
+            out['terrain_correction_db'] = correction
+    elif model == MODEL_TWO_RAY:
+        base_loss = _two_ray_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m)
+        out['fspl_floor_applied'] = base_loss == fspl
+    elif model == MODEL_COST231_HATA:
+        base_loss = _cost231_hata_path_loss(distance_km, frequency_mhz,
+                                            terrain_type, tx_height_m, rx_height_m)
+        f_c = max(150.0, min(2000.0, frequency_mhz))
+        out['fspl_floor_applied'] = base_loss == _fspl_db(distance_km, f_c)
     else:
-        if frequency_mhz > 2000.0:
-            # SHF doesn't diffract meaningfully, so diffraction_loss_db represents
-            # terrain blockage severity rather than a bending loss.
-            shf_loss = (_shf_path_loss(distance_km, frequency_mhz, terrain_type)
-                        + _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
-                        + diffraction_loss_db)
-            return round(shf_loss, 2)
-        elif is_free_space or upper_uhf:
-            base_loss = (20.0 * math.log10(distance_km)
-                         + 20.0 * math.log10(frequency_mhz) + 32.44)
-            if upper_uhf and not is_free_space:
-                base_loss += _egli_terrain_correction_db(terrain_type)
-        elif hata_ok:
-            base_loss = _cost231_hata_path_loss(distance_km, frequency_mhz,
-                                                terrain_type, tx_height_m, rx_height_m)
-        else:
-            base_loss = _egli_path_loss(distance_km, frequency_mhz,
-                                        tx_height_m, rx_height_m, terrain_type)
-        return round(base_loss + diffraction_loss_db, 2)
+        base_loss = _egli_path_loss(distance_km, frequency_mhz,
+                                    tx_height_m, rx_height_m, terrain_type)
+        out['fspl_floor_applied'] = base_loss == fspl
+        if not out['fspl_floor_applied']:
+            out['terrain_correction_db'] = _egli_terrain_correction_db(terrain_type)
+
+    out['base_loss_db'] = round(base_loss, 2)
+    out['diffraction_db'] = round(diff, 2)
+    out['loss_db'] = round(base_loss + diff, 2)
+    return out
+
+
+def calculate_path_loss(distance_km, frequency_mhz, terrain_type="free space",
+                        diffraction_loss_db=0.0,
+                        tx_height_m=0.0, rx_height_m=0.0, is_los=False):
+    """Total path loss (dB) using the hybrid empirical-deterministic model.
+    See path_loss_breakdown() for routing and the component terms."""
+    return path_loss_breakdown(distance_km, frequency_mhz, terrain_type,
+                               diffraction_loss_db, tx_height_m, rx_height_m,
+                               is_los)['loss_db']
 
 
 def calculate_received_power(eirp, path_loss):
@@ -278,25 +333,31 @@ def evaluate_jamming_effect(jammer_rx_dbm, enemy_rx_dbm, lower_threshold=-6.0, u
         return "Warbling / Popcorn (Contested Zone)"
 
 
-def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
+def sensing_distance_breakdown(enemy_eirp, freq_mhz, terrain_type, rx_gain,
                                rx_sensitivity, diffraction_loss_db=0.0,
                                tx_height_m=0.0, rx_height_m=0.0, is_los=False):
     """
-    Maximum detection distance (km) for ES mode.
+    Maximum detection distance (km) for ES mode, plus how it was reached.
 
-    Exact closed-form inverse of calculate_path_loss() for each model branch.
-    Routing mirrors calculate_path_loss() exactly.
+    Exact closed-form inverse of calculate_path_loss() for each model branch;
+    routing is shared with path_loss_breakdown() via _select_model().
 
     tx_height_m / rx_height_m : TX and RX AGL heights; 0 uses model minimums.
     is_los                    : from check_line_of_sight(); False when unknown.
     diffraction_loss_db       : Deygout sum already subtracted from the budget.
+
+    Returned keys: distance_km, model, budget_db (eirp + rx_gain − sensitivity,
+    before diffraction), uncapped_distance_km, horizon_km (None when this branch
+    has no horizon cap), horizon_capped.
     """
     max_loss = enemy_eirp + rx_gain - rx_sensitivity - diffraction_loss_db
+    category = _classify_terrain(terrain_type)
+    model = _select_model(freq_mhz, tx_height_m, category, is_los)
+    horizon_km = None
 
-    # SHF branch: early return before the LOS/NLOS split (diffraction is negligible at >2 GHz)
-    if freq_mhz > 2000.0:
+    if model == MODEL_SHF:
         f_ghz = freq_mhz / 1000.0
-        k = {'light': 2.0, 'dense': 5.0}.get(_classify_terrain(terrain_type), 0.0) * f_ghz
+        k = {'light': 2.0, 'dense': 5.0}.get(category, 0.0) * f_ghz
 
         # Subtract near-ground penalty from the available link budget before solving for distance.
         shf_penalty = _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
@@ -317,78 +378,68 @@ def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
                 else:
                     d_hi = mid
             distance_km = (d_lo + d_hi) / 2.0
-
-        # Strict 1× radio horizon cap: SHF has no over-horizon propagation (unlike VHF ground-wave).
+    elif model in (MODEL_FREE_SPACE, MODEL_FSPL_UPPER_UHF):
+        uhf_correction = 0.0 if model == MODEL_FREE_SPACE else _egli_terrain_correction_db(terrain_type)
+        log_d = (max_loss - uhf_correction - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
+        distance_km = 10.0 ** log_d
+    elif model == MODEL_TWO_RAY:
+        # Two-ray inverse: d_m = 10^((max_loss + 20·log(ht) + 20·log(hr)) / 40)
         ht = max(1.0, tx_height_m)
         hr = max(1.0, rx_height_m)
-        distance_km = min(distance_km, _egli_horizon_km(ht, hr))
-        return round(max(0.001, distance_km), 3)
-
-    is_free_space = _classify_terrain(terrain_type) == 'free_space'
-    hata_ok = _cost231_valid(freq_mhz, tx_height_m)
-    upper_uhf = freq_mhz >= 1000.0 and not hata_ok
-
-    if is_los:
-        if is_free_space or upper_uhf:
-            uhf_correction = 0.0 if is_free_space else _egli_terrain_correction_db(terrain_type)
-            log_d = (max_loss - uhf_correction - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
-            distance_km = 10.0 ** log_d
-        elif hata_ok:
-            # Two-ray inverse: d_m = 10^((max_loss + 20·log(ht) + 20·log(hr)) / 40)
-            ht = max(1.0, tx_height_m)
-            hr = max(1.0, rx_height_m)
-            log_d_m = (max_loss + 20.0 * math.log10(ht) + 20.0 * math.log10(hr)) / 40.0
-            distance_km = (10.0 ** log_d_m) / 1000.0
-        else:
-            # Egli inverse: d = 10^((max_loss - correction - A_egli) / 40)
-            ht = max(1.0, tx_height_m)
-            hr = max(1.0, rx_height_m)
-            correction = _egli_terrain_correction_db(terrain_type)
-            A_egli = (20.0 * math.log10(freq_mhz)
-                      - 20.0 * math.log10(ht)
-                      - 20.0 * math.log10(hr)
-                      + _EGLI_K)
-            distance_km = 10.0 ** ((max_loss - correction - A_egli) / 40.0)
+        log_d_m = (max_loss + 20.0 * math.log10(ht) + 20.0 * math.log10(hr)) / 40.0
+        distance_km = (10.0 ** log_d_m) / 1000.0
+    elif model == MODEL_COST231_HATA:
+        # COST-231 Hata inverse: d = 10^((max_loss - A) / B)
+        f_c = max(150.0, min(2000.0, freq_mhz))
+        h_b = max(2.0, tx_height_m)
+        h_m = max(1.0, rx_height_m)
+        a_hm = (1.1 * math.log10(f_c) - 0.7) * h_m - (1.56 * math.log10(f_c) - 0.8)
+        c_m  = 3.0 if category == 'dense' else 0.0
+        A = 46.3 + 33.9 * math.log10(f_c) - 13.82 * math.log10(h_b) - a_hm + c_m
+        B = 44.9 - 6.55 * math.log10(h_b)
+        if category in ('open', 'free_space'):
+            A += -4.78 * math.log10(f_c) ** 2 + 18.33 * math.log10(f_c) - 40.94
+        elif category == 'light':
+            A += -2.0 * (math.log10(f_c / 28.0)) ** 2 - 5.4
+        if B <= 0:
+            B = 1.0
+        distance_km = 10.0 ** ((max_loss - A) / B)
     else:
-        if is_free_space or upper_uhf:
-            uhf_correction = 0.0 if is_free_space else _egli_terrain_correction_db(terrain_type)
-            log_d = (max_loss - uhf_correction - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
-            distance_km = 10.0 ** log_d
-        elif hata_ok:
-            # COST-231 Hata inverse: d = 10^((max_loss - A) / B)
-            f_c = max(150.0, min(2000.0, freq_mhz))
-            h_b = max(2.0, tx_height_m)
-            h_m = max(1.0, rx_height_m)
-            a_hm = (1.1 * math.log10(f_c) - 0.7) * h_m - (1.56 * math.log10(f_c) - 0.8)
-            cat  = _classify_terrain(terrain_type)
-            c_m  = 3.0 if cat == 'dense' else 0.0
-            A = 46.3 + 33.9 * math.log10(f_c) - 13.82 * math.log10(h_b) - a_hm + c_m
-            B = 44.9 - 6.55 * math.log10(h_b)
-            if cat in ('open', 'free_space'):
-                A += -4.78 * math.log10(f_c) ** 2 + 18.33 * math.log10(f_c) - 40.94
-            elif cat == 'light':
-                A += -2.0 * (math.log10(f_c / 28.0)) ** 2 - 5.4
-            if B <= 0:
-                B = 1.0
-            distance_km = 10.0 ** ((max_loss - A) / B)
-        else:
-            # Egli inverse: d = 10^((max_loss - correction - A_egli) / 40)
-            ht = max(1.0, tx_height_m)
-            hr = max(1.0, rx_height_m)
-            correction = _egli_terrain_correction_db(terrain_type)
-            A_egli = (20.0 * math.log10(freq_mhz)
-                      - 20.0 * math.log10(ht)
-                      - 20.0 * math.log10(hr)
-                      + _EGLI_K)
-            distance_km = 10.0 ** ((max_loss - correction - A_egli) / 40.0)
-
-    # At 1–2 GHz with low antennas, ground-wave is negligible — signal is horizon-limited.
-    # Apply the same strict 1× radio horizon cap used by the SHF branch.
-    # is_free_space paths (aerial/drone) are exempt: they share the upper_uhf code path
-    # but "free space" terrain means no Earth surface is involved.
-    if upper_uhf and not is_free_space:
+        # Egli inverse: d = 10^((max_loss - correction - A_egli) / 40)
         ht = max(1.0, tx_height_m)
         hr = max(1.0, rx_height_m)
-        distance_km = min(distance_km, _egli_horizon_km(ht, hr))
+        correction = _egli_terrain_correction_db(terrain_type)
+        A_egli = (20.0 * math.log10(freq_mhz)
+                  - 20.0 * math.log10(ht)
+                  - 20.0 * math.log10(hr)
+                  + _EGLI_K)
+        distance_km = 10.0 ** ((max_loss - correction - A_egli) / 40.0)
 
-    return round(max(0.001, distance_km), 3)
+    uncapped_km = distance_km
+    # Strict 1× radio horizon cap for SHF (no over-horizon propagation) and for
+    # 1–2 GHz low antennas (ground-wave negligible, signal is horizon-limited).
+    # Free-space paths (aerial/drone) are exempt: no Earth surface is involved.
+    if model in (MODEL_SHF, MODEL_FSPL_UPPER_UHF):
+        ht = max(1.0, tx_height_m)
+        hr = max(1.0, rx_height_m)
+        horizon_km = _egli_horizon_km(ht, hr)
+        distance_km = min(distance_km, horizon_km)
+
+    return {
+        'distance_km': round(max(0.001, distance_km), 3),
+        'model': model,
+        'budget_db': round(max_loss + diffraction_loss_db, 2),
+        'uncapped_distance_km': round(max(0.001, uncapped_km), 3),
+        'horizon_km': None if horizon_km is None else round(horizon_km, 3),
+        'horizon_capped': horizon_km is not None and uncapped_km > horizon_km,
+    }
+
+
+def calculate_sensing_distance(enemy_eirp, freq_mhz, terrain_type, rx_gain,
+                               rx_sensitivity, diffraction_loss_db=0.0,
+                               tx_height_m=0.0, rx_height_m=0.0, is_los=False):
+    """Maximum detection distance (km) for ES mode.
+    See sensing_distance_breakdown() for routing and the horizon cap."""
+    return sensing_distance_breakdown(
+        enemy_eirp, freq_mhz, terrain_type, rx_gain, rx_sensitivity,
+        diffraction_loss_db, tx_height_m, rx_height_m, is_los)['distance_km']

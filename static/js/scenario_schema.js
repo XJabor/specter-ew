@@ -3,7 +3,7 @@
 // Scenario/profile-pack validation, migration, and serialization helpers.
 
 const SCENARIO_SCHEMA_VERSION = 5;
-const SPECTER_APP_VERSION = 'release-1-dev';
+const SPECTER_APP_VERSION = '1.2.0'; // keep in sync with APP_VERSION in app.py
 
 const PROFILE_CATEGORIES = ['radio', 'receiver', 'jammer', 'antenna'];
 const PROFILE_NUMERIC_RANGES = {
