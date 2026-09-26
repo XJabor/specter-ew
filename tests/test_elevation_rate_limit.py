@@ -33,8 +33,8 @@ class _Resp:
         return {'status': 'OK', 'results': [{'elevation': 10.0}] * self._n}
 
 
-def _locations(n):
-    return [{'latitude': 35.0 + i * 1e-3, 'longitude': -117.0} for i in range(n)]
+def _locations(n, lon=-117.0):
+    return [{'latitude': 35.0 + i * 1e-3, 'longitude': lon} for i in range(n)]
 
 
 class RateLimitTests(unittest.TestCase):
@@ -43,6 +43,7 @@ class RateLimitTests(unittest.TestCase):
             patch.object(elevation, '_RATE_LIMIT_DELAY', DELAY),
             patch.object(elevation, '_MAX_BACKOFF_S', 0.2),
             patch.object(elevation, '_last_api_request', float('-inf')),
+            patch.object(elevation, '_point_cache', {}),
         ]
         for p in patches:
             p.start()
@@ -72,8 +73,9 @@ class RateLimitTests(unittest.TestCase):
     def test_concurrent_callers_are_serialized_and_paced(self):
         with patch.object(elevation.requests, 'post', self._fake_post()):
             results = [None] * 6
+            # Distinct coordinates per caller, so every call needs the API.
             threads = [threading.Thread(target=lambda i=i: results.__setitem__(
-                i, elevation._fetch_online(_locations(3)))) for i in range(6)]
+                i, elevation._fetch_online(_locations(3, lon=-117.0 - i)))) for i in range(6)]
             for t in threads:
                 t.start()
             for t in threads:
@@ -111,6 +113,42 @@ class RateLimitTests(unittest.TestCase):
             with self.assertRaises(requests.HTTPError):
                 elevation._fetch_online(_locations(2))
         self.assertEqual(len(self.calls), 1)
+
+    def test_concurrent_identical_requests_share_one_api_call(self):
+        # Callers that queued behind an identical request re-check the point
+        # cache after acquiring the slot instead of repeating the fetch.
+        with patch.object(elevation.requests, 'post', self._fake_post()):
+            results = [None] * 6
+            threads = [threading.Thread(target=lambda i=i: results.__setitem__(
+                i, elevation._fetch_online(_locations(5)))) for i in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertTrue(all(r == [10.0] * 5 for r in results))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_partially_cached_request_fetches_only_missing_points(self):
+        with patch.object(elevation.requests, 'post', self._fake_post()) as _:
+            elevation._fetch_online(_locations(3))
+            seen = []
+            real = elevation.requests.post
+            def spy(url, json, timeout):
+                seen.append(len(json['locations'].split('|')))
+                return real(url, json=json, timeout=timeout)
+            with patch.object(elevation.requests, 'post', spy):
+                out = elevation._fetch_online(_locations(5))
+        self.assertEqual(out, [10.0] * 5)
+        self.assertEqual(seen, [2])
+
+    def test_queue_wait_is_bounded(self):
+        with patch.object(elevation, '_QUEUE_TIMEOUT_S', 0.05):
+            elevation._API_LOCK.acquire()
+            try:
+                with self.assertRaises(requests.RequestException):
+                    elevation._fetch_online(_locations(2, lon=-100.0))
+            finally:
+                elevation._API_LOCK.release()
 
     def test_retry_after_parsing(self):
         self.assertEqual(elevation._retry_after_seconds(_Resp(429, retry_after='0.15'), 0), 0.15)

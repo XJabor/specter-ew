@@ -25,28 +25,114 @@ function latLngToPlain(latlng) {
     return { lat: latlng.lat, lon: latlng.lng };
 }
 
+// Node / system ids are interpolated into generated markup and inline
+// handlers throughout the UI, so a scenario file may only carry ids the app
+// itself would generate (R1, B2, M3, EP4, R1_S2, ...): letters, digits, "_"
+// and "-". Anything else is rejected before the current scenario is touched.
+const SCENARIO_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const SCENARIO_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const SYSTEM_NUMERIC_FIELDS = ['freq_mhz', 'tx_power_w', 'tx_gain_dbi', 'antenna_azimuth',
+                               'antenna_beamwidth', 'antenna_height_agl'];
+const MAX_NAME_LENGTH = 200;
+
+function isPlainObject(v) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function assertScenarioId(id, what) {
+    if (typeof id !== 'string' || !SCENARIO_ID_PATTERN.test(id)) {
+        throw new Error(`${what} has an invalid id (use letters, digits, "_" or "-", up to 64 characters).`);
+    }
+}
+
+function assertOptionalName(name, what) {
+    if (name == null) return;
+    if (!['string', 'number'].includes(typeof name) || String(name).length > MAX_NAME_LENGTH) {
+        throw new Error(`${what} has an invalid name.`);
+    }
+}
+
+function validateScenarioSystems(systems, nodeId) {
+    if (systems == null) return;
+    if (!Array.isArray(systems)) throw new Error(`Scenario node ${nodeId} systems must be an array.`);
+    const ids = new Set();
+    systems.forEach((sys, i) => {
+        const what = `Scenario node ${nodeId} system ${i + 1}`;
+        if (!isPlainObject(sys)) throw new Error(`${what} must be an object.`);
+        if (sys.id != null) {
+            assertScenarioId(sys.id, what);
+            if (ids.has(sys.id)) throw new Error(`${what} duplicates id ${sys.id}.`);
+            ids.add(sys.id);
+        }
+        assertOptionalName(sys.name, what);
+        SYSTEM_NUMERIC_FIELDS.forEach(field => {
+            if (sys[field] != null && !Number.isFinite(Number(sys[field]))) {
+                throw new Error(`${what} has an invalid ${field}.`);
+            }
+        });
+        if (sys.color != null && !SCENARIO_COLOR_PATTERN.test(String(sys.color))) {
+            throw new Error(`${what} has an invalid color.`);
+        }
+        if (sys.antenna_type != null && !['omni', 'directional'].includes(sys.antenna_type)) {
+            throw new Error(`${what} has an invalid antenna_type.`);
+        }
+    });
+}
+
+function validateScenarioLinks(links, kind, fromKey) {
+    const items = links[kind] || [];
+    if (!Array.isArray(items)) throw new Error(`Scenario links.${kind} must be an array.`);
+    items.forEach((link, i) => {
+        if (!isPlainObject(link)) throw new Error(`Scenario links.${kind}[${i}] must be an object.`);
+        assertScenarioId(link[fromKey], `Scenario links.${kind}[${i}] ${fromKey}`);
+        assertScenarioId(link.rx_id, `Scenario links.${kind}[${i}] rx_id`);
+    });
+}
+
+// Full structural validation. loadScenario() runs this (via migrateScenario)
+// BEFORE clearing the current scenario, so a malformed file can never leave
+// the user with an emptied map.
 function validateScenario(data) {
     if (!data || typeof data !== 'object') throw new Error('Scenario file is not valid JSON.');
     if (data.schema_version == null) throw new Error('Scenario is missing schema_version.');
     if (Number(data.schema_version) > SCENARIO_SCHEMA_VERSION) {
         throw new Error(`Scenario schema v${data.schema_version} is newer than this app supports.`);
     }
-    if (!data.nodes || typeof data.nodes !== 'object') throw new Error('Scenario is missing nodes.');
-    if (!data.links || typeof data.links !== 'object') throw new Error('Scenario is missing links.');
+    if (!isPlainObject(data.nodes)) throw new Error('Scenario is missing nodes.');
+    if (!isPlainObject(data.links)) throw new Error('Scenario is missing links.');
+    const nodeIds = new Set();
     ['red', 'blue', 'black', 'ep'].forEach(kind => {
         const items = data.nodes[kind] || [];
         if (!Array.isArray(items)) throw new Error(`Scenario nodes.${kind} must be an array.`);
         items.forEach(item => {
-            if (!item.id || !item.location) throw new Error(`Scenario ${kind} node is missing id or location.`);
+            if (!isPlainObject(item) || !item.id || !isPlainObject(item.location)) {
+                throw new Error(`Scenario ${kind} node is missing id or location.`);
+            }
+            assertScenarioId(item.id, `Scenario ${kind} node`);
+            if (nodeIds.has(item.id)) throw new Error(`Scenario has more than one node with id ${item.id}.`);
+            nodeIds.add(item.id);
+            assertOptionalName(item.name, `Scenario ${kind} node ${item.id}`);
             const lat = Number(item.location.lat);
             const lon = Number(item.location.lon);
             if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
                 throw new Error(`Scenario ${kind} node ${item.id} has an invalid location.`);
             }
+            if (item.equipment != null && !isPlainObject(item.equipment)) {
+                throw new Error(`Scenario ${kind} node ${item.id} equipment must be an object.`);
+            }
+            if (kind === 'red' || kind === 'ep') validateScenarioSystems(item.systems, item.id);
         });
     });
-    if (!Array.isArray(data.links.enemy || [])) throw new Error('Scenario links.enemy must be an array.');
-    if (!Array.isArray(data.links.jamming || [])) throw new Error('Scenario links.jamming must be an array.');
+    validateScenarioLinks(data.links, 'enemy', 'tx_id');
+    validateScenarioLinks(data.links, 'jamming', 'blue_id');
+    if (data.settings != null && !isPlainObject(data.settings)) throw new Error('Scenario settings must be an object.');
+    if (data.overlays != null) {
+        if (!isPlainObject(data.overlays)) throw new Error('Scenario overlays must be an object.');
+        const checked = data.overlays.overlap_checked;
+        if (checked != null && (!Array.isArray(checked) || checked.some(v => typeof v !== 'string'))) {
+            throw new Error('Scenario overlays.overlap_checked must be a list of strings.');
+        }
+    }
     if (data.profile_library != null) {
         if (!data.profile_library || typeof data.profile_library !== 'object') throw new Error('Scenario profile_library must be an object.');
         if (!Array.isArray(data.profile_library.packs || [])) throw new Error('Scenario profile_library.packs must be an array.');

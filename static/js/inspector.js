@@ -6,6 +6,36 @@
 
 let inspectorRef = null;   // what the panel is showing; re-resolved on every refresh
 
+// Markup attribute for a button that opens the inspector on `ref`. The ref is
+// carried as escaped JSON data rather than an inline onclick, and opened by
+// the delegated handleInspectorClick() listener wired in app_init.js.
+function inspectDataAttr(ref) {
+    return `data-inspect="${escapeHtml(JSON.stringify(ref))}"`;
+}
+
+// Delegated (capture-phase) click handler for [data-inspect] buttons and the
+// inspector's own [data-inspector-remove] actions. Capture phase so the click
+// never reaches the results-table row underneath (which would toggle selection).
+function handleInspectorClick(e) {
+    const opener = e.target.closest('[data-inspect]');
+    if (opener) {
+        e.stopPropagation();
+        e.preventDefault();
+        let ref;
+        try { ref = JSON.parse(opener.dataset.inspect); } catch (err) { return; }
+        openInspector(ref, opener);
+        return;
+    }
+    const remover = e.target.closest('[data-inspector-remove]');
+    if (remover) {
+        e.stopPropagation();
+        const id = remover.dataset.linkId;
+        if (remover.dataset.inspectorRemove === 'jamming') removeJammingLinkById(id);
+        else if (remover.dataset.inspectorRemove === 'enemy') removeEnemyLinkById(id);
+        closeInspector();
+    }
+}
+
 // Ring layers and link lines call this so a click opens the inspector. In a
 // placement / linking mode the click falls through to the map as before.
 function bindInspectOnClick(layer, ref) {
@@ -137,7 +167,17 @@ function collectResultRecords() {
 
 // ── Panel ─────────────────────────────────────────────────────────────────
 
-function openInspector(ref) {
+// Where focus goes back to when the inspector closes: the opening element,
+// or — if a re-render replaced it (results rows are rebuilt on every refresh)
+// — the button that now carries the same data-inspect ref.
+let inspectorReturnFocus = null;   // { el, key }
+
+function openInspector(ref, opener = null) {
+    const panel = document.getElementById('inspector-panel');
+    const active = opener || document.activeElement;
+    if (!inspectorRef && active && active !== document.body && !panel?.contains(active)) {
+        inspectorReturnFocus = { el: active, key: active.dataset?.inspect || null };
+    }
     inspectorRef = { ...ref };
     if (ref.kind === 'ea-link') {
         const target = resolveInspectorTarget(ref);
@@ -150,12 +190,23 @@ function openInspector(ref) {
         renderResults();
     }
     renderInspector();
+    // Move keyboard / screen-reader focus into the panel.
+    panel?.querySelector('.insp-head h3')?.focus();
 }
 
 function closeInspector() {
+    const wasOpen = !!inspectorRef;
     inspectorRef = null;
     const panel = document.getElementById('inspector-panel');
-    if (panel) { panel.hidden = true; panel.innerHTML = ''; }
+    if (panel) { panel.hidden = true; panel.innerHTML = ''; delete panel.dataset.ref; }
+    if (!wasOpen || !inspectorReturnFocus) return;
+    const { el, key } = inspectorReturnFocus;
+    inspectorReturnFocus = null;
+    let target = el && el.isConnected ? el : null;
+    if (!target && key) {
+        target = [...document.querySelectorAll('[data-inspect]')].find(b => b.dataset.inspect === key) || null;
+    }
+    target?.focus();
 }
 
 function refreshInspector() {
@@ -166,7 +217,7 @@ function inspectorHeader(kindLabel, title, subtitle) {
     return `<div class="insp-head">
         <div>
             <div class="insp-kind">${escapeHtml(kindLabel)}</div>
-            <h3>${escapeHtml(title)}</h3>
+            <h3 tabindex="-1">${escapeHtml(title)}</h3>
             ${subtitle ? `<div class="insp-sub">${escapeHtml(subtitle)}</div>` : ''}
         </div>
         <button class="insp-close" onclick="closeInspector()" title="Close (Esc)" aria-label="Close inspector">✕</button>
@@ -222,7 +273,7 @@ function renderEnemyLinkInspector(eLink) {
         const res = (j.results || []).find(r => r?.enemyLinkId === eLink.id);
         const label = `${plainNodeName(getNodeDisplayName('blue', j.blueId))}: ${res?.record ? R.fmtSignedDb(res.margin) + ' J/S' : 'pending'}`;
         return res?.record
-            ? `<button class="workbench-btn" onclick="openInspector({kind:'ea-link', jammingLinkId:'${j.id}', enemyLinkId:'${eLink.id}'})">${escapeHtml(label)}</button>`
+            ? `<button class="workbench-btn" ${inspectDataAttr({ kind: 'ea-link', jammingLinkId: j.id, enemyLinkId: eLink.id })}>${escapeHtml(label)}</button>`
             : `<div class="insp-empty">${escapeHtml(label)}</div>`;
     }).join('');
     return inspectorHeader('Enemy comms link', `${rows[0][1]} → ${rows[1][1]}`, 'The signal the jammers below are trying to deny') +
@@ -231,7 +282,7 @@ function renderEnemyLinkInspector(eLink) {
         `<details class="insp-section" open><summary>Jamming results on this link</summary>
             ${jammers || '<p class="insp-empty">No jammer is linked to this receiver.</p>'}
         </details>` +
-        `<div class="insp-foot"><span></span><button class="insp-action danger" onclick="removeEnemyLinkById('${eLink.id}'); closeInspector();">Remove link</button></div>`;
+        `<div class="insp-foot"><span></span><button class="insp-action danger" data-inspector-remove="enemy" data-link-id="${escapeHtml(eLink.id)}">Remove link</button></div>`;
 }
 
 function renderInspector() {
@@ -257,19 +308,22 @@ function renderInspector() {
                 ? target.siblings.map(id => {
                     const eLink = enemyLinks.find(l => l.id === id);
                     const label = eLink ? `${plainNodeName(getNodeDisplayName('red', eLink.txId))} → ${plainNodeName(getNodeDisplayName('red', eLink.rxId))}` : id;
-                    return `<button class="insp-action${id === target.enemyLinkId ? ' active' : ''}" onclick="openInspector({kind:'ea-link', jammingLinkId:'${target.jLink.id}', enemyLinkId:'${id}'})">${escapeHtml(label)}</button>`;
+                    return `<button class="insp-action${id === target.enemyLinkId ? ' active' : ''}" ${inspectDataAttr({ kind: 'ea-link', jammingLinkId: target.jLink.id, enemyLinkId: id })}>${escapeHtml(label)}</button>`;
                 }).join('')
                 : '';
             actions = pairButtons +
-                `<button class="insp-action danger" onclick="removeJammingLinkById('${target.jLink.id}'); closeInspector();">Remove jamming link</button>`;
+                `<button class="insp-action danger" data-inspector-remove="jamming" data-link-id="${escapeHtml(target.jLink.id)}">Remove jamming link</button>`;
         }
         html = renderInspectorView(view, record, actions);
     }
     // Re-renders happen on every results refresh; keep the reader's place.
     const sameTarget = panel.dataset.ref === JSON.stringify(inspectorRef);
     const scrollTop = sameTarget ? panel.scrollTop : 0;
+    const hadFocus = panel.contains(document.activeElement);
     panel.innerHTML = html;
     panel.dataset.ref = JSON.stringify(inspectorRef);
     panel.hidden = false;
     panel.scrollTop = scrollTop;
+    // Replacing innerHTML drops focus to <body>; keep keyboard users in the panel.
+    if (hadFocus) panel.querySelector('.insp-head h3')?.focus({ preventScroll: true });
 }

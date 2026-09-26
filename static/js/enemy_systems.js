@@ -75,8 +75,12 @@ function redSystemScenarioState(sys) {
 // TEARDOWN
 // ============================================================
 
+// Every invalidation bumps the node's run counter, so a calculateRedNodeSystems()
+// still awaiting responses from before the edit/move/removal drops them
+// instead of drawing rings from stale inputs.
 function clearRedSystemRings(node) {
     if (!node || !Array.isArray(node.systems)) return;
+    node.sysCalcRun = (node.sysCalcRun || 0) + 1;
     node.systems.forEach(sys => {
         removeLayerRef(sys, 'layer', 'label');
         sys.rangeKm       = null;
@@ -190,6 +194,8 @@ window.calculateRedNodeSystems = async function(nodeId) {
     const sensor  = selectedSensorReference();
     const ll      = node.marker.getLatLng();
     clearRedSystemRings(node);
+    const run = node.sysCalcRun;
+    const stillCurrent = () => node.sysCalcRun === run && redNodes.includes(node);
 
     for (let sysIdx = 0; sysIdx < node.systems.length; sysIdx++) {
         const sys = node.systems[sysIdx];
@@ -203,6 +209,10 @@ window.calculateRedNodeSystems = async function(nodeId) {
                 body:    JSON.stringify(payload)
             });
             const data = await r.json();
+            // Node moved/edited/removed or recalculated meanwhile: stop.
+            if (!stillCurrent()) return;
+            // This system was deleted mid-run: skip only it.
+            if (!node.systems.includes(sys)) continue;
             if (data.status !== 'success') continue;
 
             sys.rangeKm = data.base_range_km;
@@ -218,7 +228,7 @@ window.calculateRedNodeSystems = async function(nodeId) {
                 response: data,
             });
             const style = { color: sys.color, fillColor: sys.color, fillOpacity: 0.13, weight: 2 };
-            const label = `${sensor.name} detects ${sys.name}: ~${data.base_range_km.toFixed(1)} km`;
+            const label = `${sensor.name} detects ${escapeHtml(sys.name)}: ~${data.base_range_km.toFixed(1)} km`;
 
             if (data.polygon_points) {
                 sys.polygonPoints = data.polygon_points;
@@ -292,7 +302,7 @@ function updateRedSystemsWorkbench() {
                         oninput="redUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
                     <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
-                    ${sys.result ? `<button class="inspect-btn" onclick="openInspector({kind:'red-system', nodeId:'${node.id}', sysId:'${sys.id}'})" title="Explain this ring">ⓘ</button>` : ''}
+                    ${sys.result ? `<button class="inspect-btn" ${inspectDataAttr({ kind: 'red-system', nodeId: node.id, sysId: sys.id })} title="Explain this ring" aria-label="Explain ${escapeHtml(sys.name)} ring">ⓘ</button>` : ''}
                     <button class="sys-delete" onclick="removeSystemFromRedNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
                     <div class="sys-params">
                         <label class="sys-label">Freq (MHz)

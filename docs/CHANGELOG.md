@@ -9,7 +9,7 @@
 - Fixed a major error in the low-antenna VHF/UHF model (Egli): an incorrect constant made ranges about ten times too long, so rings in that band are now much smaller and more realistic
 - Fixed detection ranges running slightly too far for tall antennas at short range; above 1 GHz, low antennas now include the ground reflection, which previously made ranges look far longer than realistic
 - Added automated checks that compare the models against hand calculations from published formulas and alert on any unexpected change in results
-- EP mode now assumes Rural / Open terrain by default instead of Free Space, which had drawn ground-level EP rings hundreds of kilometres wide
+- EP mode now assumes Rural / Open terrain by default instead of Free Space; scenario files are now fully checked before loading, so a damaged or tampered file can no longer run code in the page or wipe the current plan (a failed load restores the previous plan)
 - Terrain lookups from the free online elevation service now wait their turn instead of arriving all at once, so loading a saved scenario no longer gets most requests refused and drawn as plain circles (large scenarios take longer to finish loading, so a progress bar now shows how many calculations remain)
 
 -----

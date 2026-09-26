@@ -375,15 +375,21 @@ function updateLoadProgress() {
     }
 }
 
-async function loadScenario(data) {
+async function loadScenario(data, { isRollback = false } = {}) {
     const originalSchema = Number(data?.schema_version);
+    // Validates the whole file first: nothing below runs for a malformed one.
     const scenario = migrateScenario(data);
+    // Snapshot the current plan so an unexpected failure part-way through the
+    // rebuild restores it instead of leaving a half-loaded map.
+    const backup = isRollback || scenarioIsEmpty() ? null : serializeScenario();
+    const wasDirty = scenarioDirty;
     if (scenario.profile_library?.packs) {
         mergeUserProfilePacks(scenario.profile_library.packs);
     }
     scenarioLoading = true;
     beginLoadProgress();
     let loaded = false;
+    let failure = null;
     try {
         resetScenarioState();
         if (Number.isFinite(originalSchema) && originalSchema < SCENARIO_SCHEMA_VERSION) {
@@ -433,6 +439,8 @@ async function loadScenario(data) {
             setTimeout(() => computeAndShowOverlap(true), 1200);
         }
         loaded = true;
+    } catch (e) {
+        failure = e;
     } finally {
         scenarioLoading = false;
         if (loaded && loadProgress) {
@@ -443,6 +451,21 @@ async function loadScenario(data) {
         } else {
             endLoadProgress(null);
         }
+    }
+    if (failure) {
+        scenarioLoading = true;
+        resetScenarioState();
+        scenarioLoading = false;
+        if (backup) {
+            try {
+                await loadScenario(backup, { isRollback: true });
+                if (wasDirty) markDirty();
+                scenarioStatus('Scenario could not be loaded; the previous scenario was restored.', true);
+            } catch (restoreError) {
+                console.error('Scenario rollback failed', restoreError);
+            }
+        }
+        throw failure;
     }
     markClean('Scenario loaded.');
 }

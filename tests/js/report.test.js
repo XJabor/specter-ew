@@ -372,3 +372,21 @@ test('map rejects non-hex colours from the snapshot', () => {
     const model = P.buildMapModel(snapshot({ shapes: [{ kind: 'ring', color: 'red" onload="alert(1)', center: [35, -117], radiusKm: 1 }] }));
     assert.equal(model.shapes[0].color, '#888888');
 });
+
+test('map stays contiguous across the antimeridian', () => {
+    const snap = snapshot({ shapes: [], enemyLinks: [], jammingLinks: [], results: [] });
+    snap.nodes = {
+        red: [{ id: 'R1', name: 'East', lat: -17.0, lon: 179.95, systems: [] },
+              { id: 'R2', name: 'West', lat: -17.0, lon: -179.95, systems: [] }],
+        blue: [], black: [], ep: [],
+    };
+    const model = P.buildMapModel(snap);
+    const [e, w] = [model.markers.find(m => m.name === 'East'), model.markers.find(m => m.name === 'West')];
+    // 0.1° of longitude apart (~10.6 km), not 359.9°: both well inside the frame,
+    // with West drawn east of East.
+    assert.ok(w.xy[0] > e.xy[0]);
+    const km = Math.abs(w.xy[0] - e.xy[0]) * model.scaleBar.km / model.scaleBar.px;
+    assert.ok(Math.abs(km - 10.64) < 0.2, `measured ${km} km`);
+    const plan = P.basemapTilePlan(model);
+    plan.tiles.forEach(t => assert.ok(t.x >= 0 && t.x < 2 ** t.z));
+});

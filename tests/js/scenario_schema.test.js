@@ -203,3 +203,57 @@ test('normalizeProfileId lowercases and strips unsafe characters', () => {
 test('latLngToPlain maps Leaflet lng to scenario lon', () => {
     assert.deepEqual(schema.latLngToPlain({ lat: 1.5, lng: -2.5 }), { lat: 1.5, lon: -2.5 });
 });
+
+// ── Untrusted-file hardening (v1.2.0) ─────────────────────────────────────────
+
+function oneRed(extra = {}) {
+    return minimalScenario(5, {
+        nodes: { red: [{ id: 'R1', location: { lat: 30, lon: -86 }, ...extra }], blue: [], black: [], ep: [] },
+    });
+}
+
+test('validateScenario rejects ids that could break out of generated markup', () => {
+    ["R1');alert(1);//", 'R1" onmouseover="x', '<img>', 'a b', '', 'x'.repeat(65)].forEach(id => {
+        const data = oneRed();
+        data.nodes.red[0].id = id;
+        assert.throws(() => schema.validateScenario(data), /invalid id|missing id/, `accepted ${JSON.stringify(id)}`);
+    });
+    assert.ok(schema.validateScenario(oneRed()));
+});
+
+test('validateScenario rejects duplicate node ids across kinds', () => {
+    const data = oneRed();
+    data.nodes.ep = [{ id: 'R1', location: { lat: 30, lon: -86 } }];
+    assert.throws(() => schema.validateScenario(data), /more than one node/);
+});
+
+test('validateScenario rejects malformed systems before anything is loaded', () => {
+    [
+        [{ systems: {} }, /systems must be an array/],
+        [{ systems: [42] }, /must be an object/],
+        [{ systems: [{ id: "S1')" }] }, /invalid id/],
+        [{ systems: [{ id: 'R1_S1' }, { id: 'R1_S1' }] }, /duplicates id/],
+        [{ systems: [{ freq_mhz: 'abc' }] }, /invalid freq_mhz/],
+        [{ systems: [{ color: 'red;" onclick="x' }] }, /invalid color/],
+        [{ systems: [{ antenna_type: 'laser' }] }, /invalid antenna_type/],
+        [{ equipment: [] }, /equipment must be an object/],
+        [{ name: { toString: 1 } }, /invalid name/],
+    ].forEach(([extra, re]) => assert.throws(() => schema.validateScenario(oneRed(extra)), re, JSON.stringify(extra)));
+    assert.ok(schema.validateScenario(oneRed({ systems: [{ id: 'R1_S1', name: 'Net', freq_mhz: 150, color: '#ff7043', antenna_type: 'omni' }] })));
+});
+
+test('validateScenario rejects malformed links and overlays', () => {
+    const bad = [
+        { links: { enemy: [{ tx_id: 'R1', rx_id: "R2')" }], jamming: [] } },
+        { links: { enemy: ['R1-R2'], jamming: [] } },
+        { links: { enemy: [], jamming: {} } },
+        { overlays: { overlap_checked: [{}] } },
+        { settings: [] },
+    ];
+    bad.forEach(extra => assert.throws(() => schema.validateScenario({ ...oneRed(), ...extra }), undefined, JSON.stringify(extra)));
+});
+
+test('migrateScenario validates before migrating older files', () => {
+    const v4 = minimalScenario(4, { nodes: { red: [{ id: 'R1', location: { lat: 30, lon: -86 }, systems: 'x' }], blue: [], black: [], ep: [] } });
+    assert.throws(() => schema.migrateScenario(v4), /systems must be an array/);
+});
