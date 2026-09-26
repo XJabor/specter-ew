@@ -34,10 +34,10 @@ function newRedSystem(node, idx, fields) {
 
 // Runtime system from its persisted snake_case form. Mirrors the EP mapping in
 // makeEpNodeFromScenario; runtime-only layer/label/geometry fields stay null.
-function redSystemFromScenario(sys, idx, nodeId) {
+function redSystemFromScenario(sys, idx, nodeId, id = sys.id || nodeId + '_S' + (idx + 1)) {
     return {
-        id:               sys.id || nodeId + '_S' + (idx + 1),
-        name:             sys.name || 'System ' + (idx + 1),
+        id,
+        name:             cappedName(sys.name || 'System ' + (idx + 1)),
         freqMhz:          Number(sys.freq_mhz || 150),
         txPowerW:         Number(sys.tx_power_w || 5),
         txGainDbi:        Number(sys.tx_gain_dbi || 0),
@@ -75,12 +75,17 @@ function redSystemScenarioState(sys) {
 // TEARDOWN
 // ============================================================
 
+// Every invalidation bumps the node's run counter, so a calculateRedNodeSystems()
+// still awaiting responses from before the edit/move/removal drops them
+// instead of drawing rings from stale inputs.
 function clearRedSystemRings(node) {
     if (!node || !Array.isArray(node.systems)) return;
+    node.sysCalcRun = (node.sysCalcRun || 0) + 1;
     node.systems.forEach(sys => {
         removeLayerRef(sys, 'layer', 'label');
         sys.rangeKm       = null;
         sys.polygonPoints = null;
+        sys.result        = null;
     });
     clearOverlapLayer();
 }
@@ -107,7 +112,7 @@ window.addLibrarySystemToRedNode = function(nodeId) {
     if (!node || !template) return;
     const idx = nextSystemIndex(node);
     node.systems.push(newRedSystem(node, idx, {
-        name:             template.name || ('System ' + idx),
+        name:             cappedName(template.name || ('System ' + idx)),
         freqMhz:          Number(template.frequency_mhz || 150),
         txPowerW:         Number(template.tx_power_w || 5),
         txGainDbi:        Number(template.antenna_gain_dbi || 0),
@@ -136,7 +141,7 @@ window.removeSystemFromRedNode = function(nodeId, sysId) {
 window.redUpdateSysName = function(nodeId, sysId, val) {
     const node = findNode('red', nodeId);
     const sys  = node && node.systems.find(s => s.id === sysId);
-    if (sys) { sys.name = val; renderOverlapControls(); markDirty('Enemy system renamed.'); }
+    if (sys) { sys.name = cappedName(val); renderOverlapControls(); markDirty('Enemy system renamed.'); }
 };
 
 // Normalizers mirror the EA setters in nodes_links.js so both agree.
@@ -185,42 +190,49 @@ window.calculateRedNodeSystems = async function(nodeId) {
     if (!node || !node.systems || node.systems.length === 0) return;
     markDirty('Enemy system rings updated.');
 
-    const terrain = document.getElementById('enemy_terrain').value;
     // Same reference the node's own ES ring uses, so both answer one question.
     const sensor  = selectedSensorReference();
     const ll      = node.marker.getLatLng();
     clearRedSystemRings(node);
+    const run = node.sysCalcRun;
+    const stillCurrent = () => node.sysCalcRun === run && redNodes.includes(node);
 
-    for (let sysIdx = 0; sysIdx < node.systems.length; sysIdx++) {
-        const sys = node.systems[sysIdx];
+    // Iterate a snapshot: deleting a system mid-run shifts the live array, and
+    // indexing it would skip the system after the deleted one. Membership is
+    // re-checked after each response instead.
+    const systems = node.systems.slice();
+    for (let sysIdx = 0; sysIdx < systems.length; sysIdx++) {
+        const sys = systems[sysIdx];
         // Offset by one slot so system labels stack below the node's own ES label.
         const labelOffset = [0, (sysIdx + 1) * 20];
-        const payload = {
-            freq_mhz:            sys.freqMhz,
-            enemy_terrain:       terrain,
-            enemy_tx_w:          sys.txPowerW,
-            enemy_tx_gain:       sys.txGainDbi,
-            rx_sensitivity:      sensor.rxSensitivityDbm,
-            friendly_rx_gain:    sensor.rxGainDbi,
-            enemy_lat:           ll.lat,
-            enemy_lon:           ll.lng,
-            tx_antenna_type:     sys.antennaType,
-            tx_azimuth_deg:      sys.antennaAzimuth,
-            tx_beamwidth_deg:    sys.antennaBeamwidth,
-            tx_antenna_height_m: sys.antennaHeightAgl
-        };
+        const payload = buildRedSystemPayload(node, sys, sensor);
         try {
-            const r = await fetch('/calculate_es_terrain', {
+            const r = await calcFetch('/calculate_es_terrain', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(payload)
             });
             const data = await r.json();
+            // Node moved/edited/removed or recalculated meanwhile: stop.
+            if (!stillCurrent()) return;
+            // This system was deleted mid-run: skip only it.
+            if (!node.systems.includes(sys)) continue;
             if (data.status !== 'success') continue;
 
             sys.rangeKm = data.base_range_km;
+            sys.result = SpecterResults.buildFootprintResult({
+                kind: 'red-system',
+                id: `sys:${sys.id}`,
+                subject: {
+                    node: nodeRef('red', node.id),
+                    system: { id: sys.id, name: sys.name },
+                    sensor: sensor.id ? nodeRef('blue', sensor.id) : { name: sensor.name },
+                },
+                request: payload,
+                response: data,
+            });
             const style = { color: sys.color, fillColor: sys.color, fillOpacity: 0.13, weight: 2 };
-            const label = `${sensor.name} detects ${sys.name}: ~${data.base_range_km.toFixed(1)} km`;
+            const label = `${sensor.name} detects ${escapeHtml(sys.name)}: ~${data.base_range_km.toFixed(1)} km`;
 
             if (data.polygon_points) {
                 sys.polygonPoints = data.polygon_points;
@@ -233,6 +245,7 @@ window.calculateRedNodeSystems = async function(nodeId) {
                 sys.layer = L.circle(ll, { ...style, radius: radiusMeters }).addTo(map);
                 sys.label = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label, labelOffset);
             }
+            bindInspectOnClick(sys.layer, { kind: 'red-system', nodeId: node.id, sysId: sys.id });
         } catch (e) {
             console.error('Enemy system calculate error for', sys.id, e);
         }
@@ -240,6 +253,25 @@ window.calculateRedNodeSystems = async function(nodeId) {
     updateRedSystemsWorkbench();
     renderOverlapControls();
 };
+
+function buildRedSystemPayload(node, sys, sensor = selectedSensorReference()) {
+    const ll = node.marker.getLatLng();
+    return {
+        freq_mhz:            sys.freqMhz,
+        enemy_terrain:       document.getElementById('enemy_terrain').value,
+        enemy_tx_w:          sys.txPowerW,
+        enemy_tx_gain:       sys.txGainDbi,
+        rx_sensitivity:      sensor.rxSensitivityDbm,
+        friendly_rx_gain:    sensor.rxGainDbi,
+        rx_antenna_height_m: sensor.heightM,
+        enemy_lat:           ll.lat,
+        enemy_lon:           ll.lng,
+        tx_antenna_type:     sys.antennaType,
+        tx_azimuth_deg:      sys.antennaAzimuth,
+        tx_beamwidth_deg:    sys.antennaBeamwidth,
+        tx_antenna_height_m: sys.antennaHeightAgl
+    };
+}
 
 // ============================================================
 // WORKBENCH
@@ -249,6 +281,7 @@ function updateRedSystemsWorkbench() {
     const container = document.getElementById('red-systems-list');
     if (!container) return;
 
+    refreshInspector();
     if (redNodes.length === 0) {
         container.innerHTML = '<p class="results-empty">No enemy nodes placed.</p>';
         return;
@@ -270,10 +303,11 @@ function updateRedSystemsWorkbench() {
                 : node.systems.map(sys => `
                 <div class="sys-row">
                     <span class="sys-color-dot" style="background:${sys.color};"></span>
-                    <input type="text" class="sys-name" value="${escapeHtml(sys.name)}"
+                    <input type="text" class="sys-name" maxlength="${MAX_PLAIN_NAME_LENGTH}" value="${escapeHtml(sys.name)}"
                         oninput="redUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
                     <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
+                    ${sys.result ? `<button class="inspect-btn" ${inspectDataAttr({ kind: 'red-system', nodeId: node.id, sysId: sys.id })} title="Explain this ring" aria-label="Explain ${escapeHtml(sys.name)} ring">ⓘ</button>` : ''}
                     <button class="sys-delete" onclick="removeSystemFromRedNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
                     <div class="sys-params">
                         <label class="sys-label">Freq (MHz)

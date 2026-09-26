@@ -12,23 +12,23 @@ The calculation engine uses a hybrid empirical-deterministic propagation model. 
 |---|---|---|---|
 | Free-space/aerial terrain, up to 2 GHz | FSPL | FSPL | No terrain correction; upper-UHF aerial paths are exempt from the ground horizon cap |
 | Below 1 GHz and COST-231 invalid | Egli + flat terrain correction | Egli + terrain correction + obstruction loss | No artificial horizon cap |
-| 1-2 GHz, transmitter below 30 m | FSPL + flat terrain correction | FSPL + terrain correction + obstruction loss | Capped at the 4/3-Earth radio horizon unless free-space/aerial |
-| 150 MHz-2 GHz, transmitter at least 30 m | Two-Ray Ground Reflection | COST-231 Hata + obstruction loss | Closed-form inverse of the selected model |
-| Above 2 GHz | FSPL + SHF clutter + near-ground penalty | Same baseline + obstruction penalty | Binary search when clutter is nonzero; capped at the 4/3-Earth radio horizon |
+| 1-2 GHz, transmitter below 30 m | Two-ray ground (max of FSPL, plane-earth) + flat terrain correction | Same + obstruction loss | Capped at the 4/3-Earth radio horizon unless free-space/aerial |
+| 150 MHz-2 GHz, transmitter at least 30 m | Two-Ray Ground Reflection | COST-231 Hata + obstruction loss | Closed-form inverse of the selected model, limited by the FSPL floor |
+| Above 2 GHz | Two-ray ground (FSPL for free-space terrain) + SHF clutter + near-ground penalty | Same baseline + obstruction penalty | Binary search when clutter is nonzero; capped at the 4/3-Earth radio horizon |
 
 `_cost231_valid()` requires frequency at least 150 MHz and transmitter height at least 30 m AGL. The SHF branch is selected first for frequencies above 2 GHz. Frequencies below 1 GHz that do not meet the COST-231 gate use Egli; its intended calibration region is tactical VHF/UHF, approximately 40-900 MHz.
 
 ### Model Details
 
-- **Egli:** Uses a 40 dB/decade distance slope, actual antenna heights floored at 1 m, a terrain correction, and an FSPL floor. It is used for low-antenna tactical VHF/UHF links.
-- **Upper-UHF FSPL branch:** Avoids extending Egli above its calibrated band, where Egli can over-predict loss. Ground paths receive the same flat terrain corrections as Egli.
+- **Egli:** Egli (1957) median loss, plane-earth × (f/40 MHz)², giving L = 20 log f + 40 log d_km − 20 log h_t − 20 log h_r + 87.96 (heights floored at 1 m), plus a terrain correction and an FSPL floor. It is used for low-antenna tactical VHF/UHF links. Releases before v1.2.0 used a mis-derived constant of 47.39, which under-stated loss by about 40 dB.
+- **Upper-UHF branch (1-2 GHz, low antennas):** Plane-earth two-ray loss — FSPL inside the ground-reflection breakpoint 4π·h_t·h_r/λ, 40 dB/decade beyond it — plus the same flat terrain corrections as Egli. Egli is not extended above 1 GHz; the switch leaves a step of about 28 dB (Egli's empirical (f/40)² factor at 1 GHz), which reports list as a limitation.
 - **Two-Ray:** Used for confirmed LOS paths in the COST-231-valid domain. Its distance term follows a 40 dB/decade slope and retains an FSPL floor.
 - **COST-231 Hata:** Used for NLOS paths in the valid elevated-antenna domain, with rural, suburban/light, and urban/dense corrections.
-- **SHF:** Uses FSPL plus a distance- and frequency-proportional clutter term. When either endpoint is below 5 m AGL, vegetated/cluttered terrain receives an additional near-ground penalty.
+- **SHF:** Uses plane-earth two-ray loss over ground (pure FSPL when terrain is free space) plus a distance- and frequency-proportional clutter term. When either endpoint is below 5 m AGL, vegetated/cluttered terrain receives an additional near-ground penalty.
 
 ## 3. Terrain and Clutter Corrections
 
-| Terrain type | Egli / upper-UHF FSPL | SHF clutter coefficient | SHF near-ground penalty below 5 m AGL |
+| Terrain type | Egli / upper-UHF | SHF clutter coefficient | SHF near-ground penalty below 5 m AGL |
 |---|---:|---:|---:|
 | Free Space / Aerial | 0 dB | 0 dB/GHz-km | 0 dB |
 | Rural / Open | 0 dB | 0 dB/GHz-km | 0 dB |
@@ -73,7 +73,7 @@ At SHF, the computed knife-edge value is treated as blockage severity rather tha
 - **SHF:** Capped at one 4/3-Earth radio horizon.
 - **Free-space/aerial terrain:** Exempt from the upper-UHF ground horizon cap.
 
-`calculate_sensing_distance()` mirrors the routing in `calculate_path_loss()`. It uses closed-form inverses for FSPL, Egli, Two-Ray, and COST-231 Hata. SHF clutter adds a linear distance term, so that branch uses a monotonic binary search.
+`calculate_sensing_distance()` mirrors the routing in `calculate_path_loss()`. It uses closed-form inverses for FSPL, Egli, Two-Ray, plane-earth, and COST-231 Hata. Because path loss is max(FSPL, model), the range is the smaller of the model inverse and the FSPL inverse. SHF clutter adds a linear distance term, so that branch uses a monotonic binary search. `sensing_distance_breakdown()` / `path_loss_breakdown()` return the selected model and component terms (horizon cap, FSPL-floor limit, terrain/clutter/diffraction) that the calculation inspector and reports display.
 
 ## 7. Link Budgets and Antennas
 

@@ -70,7 +70,9 @@
             <hr style="border-top: 1px solid #555; margin: 15px 0;">
             <label id="rx-sensitivity-row"><span id="rx-sensitivity-label">Sensor Rx Sensitivity (dBm)</span>: <input type="number" id="rx_sensitivity" value="-100"></label>
             <label id="friendly-rx-gain-row"><span id="friendly-rx-gain-label">Sensor Rx Ant Gain (dBi)</span>: <input type="number" id="friendly_rx_gain" value="0"></label>
+            <label id="sensor-height-row" title="Used for detection rings when no friendly sensor node is selected. A selected sensor node, and every sensor-coverage ring, uses that node's own antenna height.">Generic Sensor Height AGL (m): <input type="number" id="sensor_height_m" value="1" min="1" max="500" step="0.5"></label>
             <label id="footprint-rx-sensitivity-row">Reference Receiver Threshold (dBm): <input type="number" id="footprint_rx_sensitivity" value="-90"></label>
+            <label id="footprint-rx-height-row" title="Antenna height of the notional receiver that jammer footprints are drawn for.">Reference Receiver Height AGL (m): <input type="number" id="footprint_rx_height_m" value="1" min="1" max="500" step="0.5"></label>
         </div>
 
         <div class="control-group ea-only" style="border-left: 4px solid #aaaaaa;">
@@ -87,13 +89,16 @@
             <label>Terrain Type:
                 <select id="ep_terrain">
                     <option value="free space">Free Space (Air)</option>
-                    <option value="rural">Rural / Open</option>
+                    <option value="rural" selected>Rural / Open</option>
                     <option value="light forest">Light Forest / Suburbs</option>
                     <option value="dense forest">Dense Forest / Urban</option>
                 </select>
             </label>
             <label>Enemy Rx Sensitivity (dBm):
                 <input type="number" id="ep_rx_sensitivity" value="-90">
+            </label>
+            <label>Enemy Rx Height AGL (m):
+                <input type="number" id="ep_rx_height_m" value="1" min="1" max="500" step="0.5">
             </label>
         </div>
 
@@ -176,6 +181,20 @@
             </div>
             <input type="file" id="scenario-file-input" accept=".specter.json,application/json" style="display:none">
             <div id="scenario-status"></div>
+        </div>
+        <div class="workbench-section" id="report-section">
+            <div class="workbench-section-label">REPORT</div>
+            <label class="workbench-label">Report Title
+                <input type="text" id="report-title" maxlength="120" placeholder="Defaults to the scenario name">
+            </label>
+            <label class="workbench-label">Marking (optional)
+                <input type="text" id="report-marking" maxlength="80" placeholder="Printed at top and bottom">
+            </label>
+            <label class="workbench-label report-check">
+                <input type="checkbox" id="report-imagery" checked> Include map imagery (current base layer)
+            </label>
+            <button class="workbench-btn scenario-btn" id="btn-generate-report" title="Open a print-friendly report of every node, result, assumption and warning">Generate Report</button>
+            <div id="report-status"></div>
         </div>
         </div>
         <div class="workbench-tab-panel" id="tab-library">
@@ -301,6 +320,7 @@
             <div class="workbench-section-label">EXPORT</div>
             <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportKML(false)" title="Export nodes, links, and detection rings to KML">Export KML</button>
             <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportKML(true)" title="Export with distance and range labels">Export KML (w/ Labels)</button>
+            <button class="workbench-btn" style="border-left: 4px solid #c9a227;" onclick="openReport()" title="Open a print-friendly report (title and marking are set in the Scenario tab)">Generate Report</button>
         </div>
         </div><!-- #ea-workbench -->
         <div id="ep-workbench" style="display:none;">
@@ -315,6 +335,7 @@
                 <div class="workbench-section-label">EXPORT</div>
                 <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportEpKML(false)" title="Export EP nodes and detection rings to KML">Export KML</button>
                 <button class="workbench-btn" style="border-left: 4px solid #66aaff;" onclick="exportEpKML(true)" title="Export with system names and range labels">Export KML (w/ Labels)</button>
+                <button class="workbench-btn" style="border-left: 4px solid #c9a227;" onclick="openReport()" title="Open a print-friendly report (title and marking are set in the Scenario tab)">Generate Report</button>
             </div>
         </div><!-- #ep-workbench -->
         </div>
@@ -330,12 +351,21 @@
     </div>
 
     <button id="clear-nodes-btn">Clear All Nodes</button>
+    <div id="load-progress" class="load-progress" hidden role="status" aria-live="polite">
+        <div class="load-progress-title">Loading scenario</div>
+        <div class="load-progress-bar"><div class="load-progress-fill"></div></div>
+        <div class="load-progress-text"></div>
+        <div class="load-progress-note"></div>
+    </div>
+    <aside id="inspector-panel" class="inspector" hidden aria-live="polite" aria-label="Calculation inspector"></aside>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
     <!-- Load order is load-bearing: scenario_schema and map_core declare the shared
          globals; app_init (last) runs all event wiring and bootstrap calls. -->
     <script src="/static/js/scenario_schema.js"></script>
+    <script src="/static/js/calc_results.js"></script>
+    <script src="/static/js/report_model.js"></script>
     <script src="/static/js/map_core.js"></script>
     <script src="/static/js/equipment_library.js"></script>
     <script src="/static/js/nodes_links.js"></script>
@@ -343,6 +373,8 @@
     <script src="/static/js/enemy_systems.js"></script>
     <script src="/static/js/ep_mode.js"></script>
     <script src="/static/js/scenario_io.js"></script>
+    <script src="/static/js/inspector.js"></script>
+    <script src="/static/js/report.js"></script>
     <script src="/static/js/app_init.js"></script>
     {% if clerk_publishable_key %}
     <script

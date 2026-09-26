@@ -16,8 +16,8 @@ from flask_wtf.csrf import CSRFProtect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
-from core.propagation import calculate_path_loss, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
-from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight
+from core.propagation import path_loss_breakdown, calculate_received_power, evaluate_jamming_effect, calculate_sensing_distance
+from core.elevation import get_elevation_profile, get_point_elevations, check_line_of_sight, elevation_tally, elevation_summary
 from core.footprint import compute_terrain_footprint
 import core.local_data as _local_data
 from core.local_data import scan_local_data, get_imagery_for_tile, render_tile_png, get_status
@@ -56,7 +56,7 @@ def _runtime_root():
 
 BUNDLED_ROOT = _bundled_root()
 RUNTIME_ROOT = _runtime_root()
-APP_VERSION = 'release-1-dev'
+APP_VERSION = '1.2.0'  # keep in sync with SPECTER_APP_VERSION in static/js/scenario_schema.js
 
 app = Flask(
     __name__,
@@ -196,6 +196,29 @@ def _parse_antenna(data, prefix, default_beamwidth=90):
             float(data.get(f'{prefix}_antenna_height_m', 0)))
 
 
+def _ea_path_diagnostics(dist_km, terrain, tx_dbm, tx_gain_peak, tx_gain_eff,
+                         eirp, rx_gain_peak, rx_gain_eff, path_loss, rx_dbm,
+                         tx_height_m, rx_height_m, los, elevation):
+    """One transmitter→target-receiver path of an EA calculation, as the
+    inspector shows it: inputs, antenna adjustments, path loss terms, result."""
+    return {
+        'distance_km': dist_km,
+        'terrain': terrain,
+        'tx_power_dbm': tx_dbm,
+        'tx_gain_peak_dbi': tx_gain_peak,
+        'tx_gain_effective_dbi': round(tx_gain_eff, 2),
+        'eirp_dbm': eirp,
+        'rx_gain_peak_dbi': rx_gain_peak,
+        'rx_gain_effective_dbi': round(rx_gain_eff, 2),
+        'tx_height_m': tx_height_m,
+        'rx_height_m': rx_height_m,
+        'terrain_profile_used': los is not None,
+        'path_loss': path_loss,
+        'rx_dbm': rx_dbm,
+        'elevation': elevation,
+    }
+
+
 def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
     """Shared body of /calculate_es_terrain (prefix='enemy', antenna_prefix='tx')
     and /calculate_jammer_footprint (both 'jammer'): parse the prefixed link
@@ -209,6 +232,9 @@ def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
     lat            = float(data[f'{prefix}_lat'])
     lon            = float(data[f'{prefix}_lon'])
     num_bearings   = int(data.get('num_bearings', 36))
+    # Optional receiver (sensor / reference receiver) antenna height AGL. Absent
+    # means ground level, which the models floor to 1 m (pre-1.2.0 behaviour).
+    rx_height_m    = float(data.get('rx_antenna_height_m', 0))
 
     antenna_type, azimuth_deg, beamwidth_deg, antenna_height_m = \
         _parse_antenna(data, antenna_prefix)
@@ -219,6 +245,8 @@ def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
     ]) or _validate_latlon([(lat, f'{prefix}_lat')], [(lon, f'{prefix}_lon')])
     if error is None and not (1 <= num_bearings <= 360):
         error = 'num_bearings must be between 1 and 360.'
+    if error is None and not (0 <= rx_height_m <= 500):
+        error = 'Receiver height must be between 0 and 500 m.'
     if error:
         return _json_error(error)
 
@@ -226,7 +254,7 @@ def _terrain_footprint_response(data, prefix, antenna_prefix, log_label):
         lat, lon, tx_w, tx_gain,
         antenna_type, azimuth_deg, beamwidth_deg,
         antenna_height_m, freq_mhz, terrain,
-        rx_gain, rx_sensitivity, log_label=log_label,
+        rx_gain, rx_sensitivity, log_label=log_label, rx_height_m=rx_height_m,
     )
     return jsonify({'status': 'success', **result})
 
@@ -405,29 +433,34 @@ def calculate_ea():
         if error:
             return _json_error(error)
 
+        jammer_elev = enemy_elev = None
         if all(v is not None for v in [jammer_lat, jammer_lon, rx_lat, rx_lon]):
-            try:
-                profile = get_elevation_profile(
-                    float(jammer_lat), float(jammer_lon),
-                    float(rx_lat), float(rx_lon),
-                    num_samples=_ea_profile_samples(jammer_dist_km)
-                )
-                jammer_los = check_line_of_sight(profile, freq_mhz, jammer_antenna_height_m, rx_antenna_height_m)
-            except Exception as e:
-                app.logger.warning("calculate_ea: jammer terrain lookup failed: %s", e)
-                terrain_warnings.append("Jammer-to-target terrain data unavailable; used non-terrain path loss.")
+            with elevation_tally() as tally:
+                try:
+                    profile = get_elevation_profile(
+                        float(jammer_lat), float(jammer_lon),
+                        float(rx_lat), float(rx_lon),
+                        num_samples=_ea_profile_samples(jammer_dist_km)
+                    )
+                    jammer_los = check_line_of_sight(profile, freq_mhz, jammer_antenna_height_m, rx_antenna_height_m)
+                except Exception as e:
+                    app.logger.warning("calculate_ea: jammer terrain lookup failed: %s", e)
+                    terrain_warnings.append("Jammer-to-target terrain data unavailable; used non-terrain path loss.")
+            jammer_elev = elevation_summary(tally)
 
         if all(v is not None for v in [tx_lat, tx_lon, rx_lat, rx_lon]):
-            try:
-                profile = get_elevation_profile(
-                    float(tx_lat), float(tx_lon),
-                    float(rx_lat), float(rx_lon),
-                    num_samples=_ea_profile_samples(enemy_dist_km)
-                )
-                enemy_los = check_line_of_sight(profile, freq_mhz, tx_antenna_height_m, rx_antenna_height_m)
-            except Exception as e:
-                app.logger.warning("calculate_ea: enemy terrain lookup failed: %s", e)
-                terrain_warnings.append("Enemy-link terrain data unavailable; used non-terrain path loss.")
+            with elevation_tally() as tally:
+                try:
+                    profile = get_elevation_profile(
+                        float(tx_lat), float(tx_lon),
+                        float(rx_lat), float(rx_lon),
+                        num_samples=_ea_profile_samples(enemy_dist_km)
+                    )
+                    enemy_los = check_line_of_sight(profile, freq_mhz, tx_antenna_height_m, rx_antenna_height_m)
+                except Exception as e:
+                    app.logger.warning("calculate_ea: enemy terrain lookup failed: %s", e)
+                    terrain_warnings.append("Enemy-link terrain data unavailable; used non-terrain path loss.")
+            enemy_elev = elevation_summary(tally)
 
         jammer_diff_db = jammer_los['diffraction_loss_db'] if jammer_los else 0.0
         enemy_diff_db  = enemy_los['diffraction_loss_db']  if enemy_los  else 0.0
@@ -471,11 +504,12 @@ def calculate_ea():
         # Enemy Math
         enemy_tx_dbm = watts_to_dbm(enemy_tx_w)
         enemy_eirp = calculate_eirp(enemy_tx_dbm, eff_enemy_tx_gain)
-        enemy_path_loss = calculate_path_loss(
+        enemy_pl = path_loss_breakdown(
             enemy_dist_km, freq_mhz, enemy_terrain, enemy_diff_db,
             tx_antenna_height_m, rx_antenna_height_m,
             enemy_los['is_los'] if enemy_los else False
         )
+        enemy_path_loss = enemy_pl['loss_db']
         enemy_rx_signal = calculate_received_power(enemy_eirp, enemy_path_loss) + eff_enemy_rx_gain_signal
 
         # Jammer Math
@@ -487,15 +521,43 @@ def calculate_ea():
         else:
             jammer_eirp_taxed = jammer_eirp_raw
 
-        jammer_path_loss = calculate_path_loss(
+        jammer_pl = path_loss_breakdown(
             jammer_dist_km, freq_mhz, jammer_terrain, jammer_diff_db,
             jammer_antenna_height_m, rx_antenna_height_m,
             jammer_los['is_los'] if jammer_los else False
         )
+        jammer_path_loss = jammer_pl['loss_db']
         jammer_rx_signal = calculate_received_power(jammer_eirp_taxed, jammer_path_loss) + eff_enemy_rx_gain_jammer
 
         effect_text = evaluate_jamming_effect(jammer_rx_signal, enemy_rx_signal, lower_threshold, upper_threshold)
         margin = round(jammer_rx_signal - enemy_rx_signal, 2)
+
+        diagnostics = {
+            'freq_mhz': freq_mhz,
+            'thresholds_db': {'no_effect_at_or_below': lower_threshold,
+                              'complete_at_or_above': upper_threshold},
+            'bearing_gains_applied': all_coords,
+            'enemy': _ea_path_diagnostics(
+                enemy_dist_km, enemy_terrain, enemy_tx_dbm, enemy_tx_gain,
+                eff_enemy_tx_gain, enemy_eirp, enemy_rx_gain,
+                eff_enemy_rx_gain_signal, enemy_pl, enemy_rx_signal,
+                tx_antenna_height_m, rx_antenna_height_m, enemy_los, enemy_elev),
+            'jammer': {
+                **_ea_path_diagnostics(
+                    jammer_dist_km, jammer_terrain, jammer_tx_dbm, jammer_tx_gain,
+                    eff_jammer_tx_gain, jammer_eirp_taxed, enemy_rx_gain,
+                    eff_enemy_rx_gain_jammer, jammer_pl, jammer_rx_signal,
+                    jammer_antenna_height_m, rx_antenna_height_m, jammer_los,
+                    jammer_elev),
+                'eirp_before_fh_dbm': jammer_eirp_raw,
+                'fh': {
+                    'applied': bool(apply_fh),
+                    'enemy_bw_khz': enemy_bw_khz,
+                    'jammer_bw_khz': jammer_bw_khz,
+                    'tax_db': round(jammer_eirp_raw - jammer_eirp_taxed, 2),
+                },
+            },
+        }
 
         return jsonify({
             'status': 'success',
@@ -506,6 +568,7 @@ def calculate_ea():
             'jammer_los': jammer_los,
             'enemy_los': enemy_los,
             'terrain_warnings': terrain_warnings,
+            'diagnostics': diagnostics,
         })
     except Exception as e:
         app.logger.error("calculate_ea error: %s", e)

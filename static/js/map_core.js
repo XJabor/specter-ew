@@ -141,6 +141,13 @@ const RED_SYSTEM_COLORS = ['#ff7043','#ffb300','#d81b60','#8e24aa',
 
 const DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM = -100;
 
+// Receiver antenna height AGL (m) from a sidebar setting, clamped to the
+// range the backend accepts; models floor anything below 1 m to 1 m.
+function receiverHeightSetting(id) {
+    const v = parseFloat(document.getElementById(id)?.value);
+    return Number.isFinite(v) ? Math.max(1, Math.min(500, v)) : 1;
+}
+
 function activeBaseLayerName() {
     if (map.hasLayer(streetLayer)) return 'Streets';
     return 'Satellite';
@@ -200,6 +207,30 @@ function escapeHtml(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// renameNode() stores names HTML-escaped (they are injected into popup/table
+// markup raw). Result records and reports escape at render time instead, so
+// they take the plain text.
+function plainNodeName(name) {
+    return String(name ?? '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+}
+
+// Red/blue/black node names are stored HTML-escaped (renameNode escapes on
+// input) because popups, tooltips and the results table interpolate them into
+// markup. Any name arriving from outside the app — a scenario file or a
+// library pack — goes through this so it lands in that same safe form.
+// (EP node and system names are stored raw and escaped at each display site.)
+function storedNodeName(name) {
+    return escapeHtml(plainNodeName(name).slice(0, MAX_PLAIN_NAME_LENGTH));
+}
+
+// EP node and system names: stored raw, capped like every other UI name so a
+// saved scenario always passes validateScenario() on reload.
+function cappedName(name) {
+    return String(name ?? '').slice(0, MAX_PLAIN_NAME_LENGTH);
+}
+
 function makeEdgeLabel(polygonPoints, centerLat, centerLon, radiusM, text, offsetPx = [0, 0]) {
     let edgePt;
     if (polygonPoints && polygonPoints.length > 0) {
@@ -244,16 +275,36 @@ function updateMGRSTooltips() {
     epNodes.forEach(function(node) {
         const latlng = node.marker.getLatLng();
         const mgrsStr = mgrs.forward([latlng.lng, latlng.lat]);
-        node.marker.bindTooltip(`${node.name} — ${mgrsStr}`, {
+        node.marker.bindTooltip(`${escapeHtml(node.name)} — ${mgrsStr}`, {   // EP names are stored raw
             permanent: true, direction: 'top', className: 'mgrs-label'
         });
+    });
+}
+
+// ============================================================
+// CALCULATION REQUEST TRACKING
+// ============================================================
+// Every calculation / elevation request goes through calcFetch() so the
+// scenario-load progress bar (scenario_io.js) can count started and finished
+// requests. Aborted and failed requests count as finished.
+
+const calcActivity = { inFlight: 0, started: 0, finished: 0 };
+
+function calcFetch(url, options) {
+    calcActivity.inFlight++;
+    calcActivity.started++;
+    updateLoadProgress();
+    return fetch(url, options).finally(() => {
+        calcActivity.inFlight--;
+        calcActivity.finished++;
+        updateLoadProgress();
     });
 }
 
 async function fetchAndStoreElevation(node) {
     const latlng = node.marker.getLatLng();
     try {
-        const resp = await fetch('/get_elevations', {
+        const resp = await calcFetch('/get_elevations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify([{ lat: latlng.lat, lon: latlng.lng }])
