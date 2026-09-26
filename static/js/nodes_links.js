@@ -466,7 +466,9 @@ function createEnemyLink(txId, rxId) {
 
     enemyLinks.push({ id: linkId, txId, rxId, line });
     markDirty('Enemy link added.');
-    recalculateAll();
+    // loadScenario() recreates every link, then recalculates once at the end;
+    // a round per link would queue N duplicate batches of terrain requests.
+    if (!scenarioLoading) recalculateAll();
 }
 
 function createJammingLink(blueId, rxId) {
@@ -494,7 +496,7 @@ function createJammingLink(blueId, rxId) {
 
     jammingLinks.push({ id: linkId, blueId, rxId, line, results: null });
     markDirty('Jamming link added.');
-    recalculateAll();
+    if (!scenarioLoading) recalculateAll();   // see createEnemyLink
 }
 
 // ============================================================
