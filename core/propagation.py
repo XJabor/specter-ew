@@ -130,28 +130,54 @@ def _cost231_hata_path_loss(distance_km, frequency_mhz, terrain_type, tx_height_
     return max(fspl, loss)
 
 
+def _plane_earth_db(distance_km, tx_height_m, rx_height_m):
+    """Plane-earth (two-ray, beyond the breakpoint) loss in dB, frequency-independent:
+    L = 40·log10(d_m) − 20·log10(ht) − 20·log10(hr), heights floored at 1 m."""
+    ht = max(1.0, tx_height_m)
+    hr = max(1.0, rx_height_m)
+    return (40.0 * math.log10(distance_km * 1000.0)
+            - 20.0 * math.log10(ht) - 20.0 * math.log10(hr))
+
+
+def _two_ray_inverse_km(budget_db, frequency_mhz, tx_height_m, rx_height_m, over_ground=True):
+    """Largest distance (km) whose max(FSPL, plane-earth) loss stays within
+    budget_db — the smaller of the two inverses, since both terms must fit.
+    With over_ground=False only FSPL applies. Returns (distance_km,
+    fspl_limited) where fspl_limited means the free-space term set the range
+    (target inside the two-ray breakpoint)."""
+    d_fspl = 10.0 ** ((budget_db - 20.0 * math.log10(frequency_mhz) - 32.44) / 20.0)
+    if not over_ground:
+        return d_fspl, False
+    ht = max(1.0, tx_height_m)
+    hr = max(1.0, rx_height_m)
+    d_pe = 10.0 ** ((budget_db + 20.0 * math.log10(ht) + 20.0 * math.log10(hr)) / 40.0) / 1000.0
+    return min(d_fspl, d_pe), d_fspl < d_pe
+
+
 def _two_ray_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m):
     """
-    Two-ray ground reflection path loss (dB).
-    L = 40·log10(d_m) − 20·log10(ht) − 20·log10(hr)
-    Heights floored at 1 m. Returns at least FSPL.
+    Two-ray ground reflection path loss (dB): max(FSPL, plane-earth).
+
+    Inside the breakpoint d_c = 4π·ht·hr/λ the direct ray dominates and FSPL
+    applies; beyond it the ground-reflected ray cancels the direct one and
+    loss rises 40 dB/decade independent of frequency.
     """
-    ht  = max(1.0, tx_height_m)
-    hr  = max(1.0, rx_height_m)
-    d_m = distance_km * 1000.0
-
-    loss = 40.0 * math.log10(d_m) - 20.0 * math.log10(ht) - 20.0 * math.log10(hr)
-
     fspl = 20.0 * math.log10(distance_km) + 20.0 * math.log10(frequency_mhz) + 32.44
-    return max(fspl, loss)
+    return max(fspl, _plane_earth_db(distance_km, tx_height_m, rx_height_m))
 
 
-def _shf_path_loss(distance_km, frequency_mhz, terrain_type):
+_SHF_CLUTTER_K = {'light': 2.0, 'dense': 5.0}  # dB per GHz·km
+
+
+def _shf_path_loss(distance_km, frequency_mhz, terrain_type, tx_height_m=1.0, rx_height_m=1.0):
     """
     SHF model for frequencies > 2000 MHz.
 
-    FSPL + ITU-R P.833-inspired linear foliage/clutter absorption.
-    Open/rural terrain → pure FSPL (no clutter term).
+    Ground reflection + ITU-R P.833-inspired linear foliage/clutter absorption:
+      L = max(FSPL, plane-earth) + k·f_GHz·d_km
+    Over ground the two-ray floor applies beyond the breakpoint (≈1 km for
+    2 m antennas at 5.8 GHz); "free space" terrain (aerial paths) has no
+    ground and stays on pure FSPL. Open/rural terrain → no clutter term.
     No diffraction component: at SHF, Fresnel zones are centimetres wide
     and knife-edge bending is negligible.
 
@@ -160,12 +186,13 @@ def _shf_path_loss(distance_km, frequency_mhz, terrain_type):
       suburban/light:  2.0  →  ~10 dB at 2.4 GHz / 2 km
       urban/dense:     5.0  →  ~24 dB at 2.4 GHz / 2 km (12 dB/km)
     """
-    fspl = (20.0 * math.log10(distance_km)
-            + 20.0 * math.log10(frequency_mhz) + 32.44)
-
-    f_ghz = frequency_mhz / 1000.0
-    k = {'light': 2.0, 'dense': 5.0}.get(_classify_terrain(terrain_type), 0.0)
-    return fspl + k * f_ghz * distance_km
+    category = _classify_terrain(terrain_type)
+    if category == 'free_space':
+        ground = _fspl_db(distance_km, frequency_mhz)
+    else:
+        ground = _two_ray_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m)
+    k = _SHF_CLUTTER_K.get(category, 0.0)
+    return ground + k * (frequency_mhz / 1000.0) * distance_km
 
 
 def _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type):
@@ -194,7 +221,7 @@ def _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type):
 # names; keep the two in sync.
 MODEL_SHF = 'shf'
 MODEL_FREE_SPACE = 'free_space'
-MODEL_FSPL_UPPER_UHF = 'fspl_upper_uhf'
+MODEL_UPPER_UHF = 'upper_uhf'
 MODEL_TWO_RAY = 'two_ray'
 MODEL_COST231_HATA = 'cost231_hata'
 MODEL_EGLI = 'egli'
@@ -211,11 +238,13 @@ def _select_model(frequency_mhz, tx_height_m, terrain_category, is_los):
     if terrain_category == 'free_space':
         return MODEL_FREE_SPACE
     hata_ok = _cost231_valid(frequency_mhz, tx_height_m)
-    # Egli was calibrated for 40–900 MHz VHF/UHF ground scenarios.  At 1–2 GHz with
-    # low antennas (where COST-231 Hata is unavailable) it over-predicts path loss by
-    # 20–30 dB relative to measured values.  Use FSPL as the baseline instead.
+    # 1–2 GHz with low antennas (COST-231 Hata unavailable): Egli's empirical
+    # (f/40)² terrain factor is poorly supported this far above its VHF/UHF
+    # calibration data, so use the physical plane-earth two-ray floor plus the
+    # flat terrain correction instead.  (Before v1.2.0 this was bare FSPL,
+    # which ignores ground reflection and ran ~25–30 dB optimistic at km ranges.)
     if frequency_mhz >= 1000.0 and not hata_ok:
-        return MODEL_FSPL_UPPER_UHF
+        return MODEL_UPPER_UHF
     if hata_ok:
         return MODEL_TWO_RAY if is_los else MODEL_COST231_HATA
     return MODEL_EGLI
@@ -233,16 +262,17 @@ def path_loss_breakdown(distance_km, frequency_mhz, terrain_type="free space",
     Routing (checked against raw tx_height_m before any model-internal flooring):
 
       LOS paths (diffraction not applied):
-        freq > 2000 MHz         → SHF (FSPL + clutter, no diffraction)
+        freq > 2000 MHz         → SHF (two-ray floor + clutter, no diffraction;
+                                  FSPL + clutter for free-space terrain)
         free space              → FSPL
-        freq ≥ 1000, Hata n/a   → FSPL + flat terrain correction (upper UHF)
+        freq ≥ 1000, Hata n/a   → two-ray floor + flat terrain correction (upper UHF)
         COST-231 valid domain   → Two-Ray Ground Reflection
         tactical exception      → Egli
 
       NLOS paths (+ Deygout diffraction_loss_db):
-        freq > 2000 MHz         → SHF (FSPL + clutter + diffraction_loss_db as blockage penalty)
+        freq > 2000 MHz         → SHF (as LOS + diffraction_loss_db as blockage penalty)
         free space              → FSPL
-        freq ≥ 1000, Hata n/a   → FSPL + flat terrain correction (upper UHF)
+        freq ≥ 1000, Hata n/a   → two-ray floor + flat terrain correction (upper UHF)
         COST-231 valid domain   → COST-231 Hata
         tactical exception      → Egli
 
@@ -277,17 +307,22 @@ def path_loss_breakdown(distance_km, frequency_mhz, terrain_type="free space",
     if model == MODEL_SHF:
         # SHF doesn't diffract meaningfully, so on NLOS paths diffraction_loss_db
         # represents terrain blockage severity rather than a bending loss.
-        shf = _shf_path_loss(distance_km, frequency_mhz, terrain_type)
+        ground = (fspl if category == 'free_space'
+                  else _two_ray_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m))
+        shf = _shf_path_loss(distance_km, frequency_mhz, terrain_type, tx_height_m, rx_height_m)
         penalty = _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
         base_loss = shf + penalty
-        out['clutter_db'] = round(shf - fspl, 2)
+        out['clutter_db'] = round(shf - ground, 2)
         out['near_ground_penalty_db'] = penalty
-    elif model in (MODEL_FREE_SPACE, MODEL_FSPL_UPPER_UHF):
+        out['fspl_floor_applied'] = category != 'free_space' and ground == fspl
+    elif model == MODEL_UPPER_UHF:
+        ground = _two_ray_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m)
+        correction = _egli_terrain_correction_db(terrain_type)
+        base_loss = ground + correction
+        out['terrain_correction_db'] = correction
+        out['fspl_floor_applied'] = ground == fspl
+    elif model == MODEL_FREE_SPACE:
         base_loss = fspl
-        if model == MODEL_FSPL_UPPER_UHF:
-            correction = _egli_terrain_correction_db(terrain_type)
-            base_loss += correction
-            out['terrain_correction_db'] = correction
     elif model == MODEL_TWO_RAY:
         base_loss = _two_ray_path_loss(distance_km, frequency_mhz, tx_height_m, rx_height_m)
         out['fspl_floor_applied'] = base_loss == fspl
@@ -365,33 +400,41 @@ def sensing_distance_breakdown(enemy_eirp, freq_mhz, terrain_type, rx_gain,
     model = _select_model(freq_mhz, tx_height_m, category, is_los)
     horizon_km = None
 
+    fspl_floor_limited = False
     if model == MODEL_SHF:
-        f_ghz = freq_mhz / 1000.0
-        k = {'light': 2.0, 'dense': 5.0}.get(category, 0.0) * f_ghz
+        k = _SHF_CLUTTER_K.get(category, 0.0) * (freq_mhz / 1000.0)
+        over_ground = category != 'free_space'
 
         # Subtract near-ground penalty from the available link budget before solving for distance.
         shf_penalty = _shf_near_ground_penalty_db(tx_height_m, rx_height_m, terrain_type)
         effective_max_loss = max_loss - shf_penalty
 
+        d_ground, ground_fspl_limited = _two_ray_inverse_km(
+            effective_max_loss, freq_mhz, tx_height_m, rx_height_m, over_ground)
         if k == 0.0:
-            log_d = (effective_max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
-            distance_km = 10.0 ** log_d
+            distance_km = d_ground
+            fspl_floor_limited = ground_fspl_limited
         else:
-            # Binary search: L(d) = FSPL(d) + k*d is monotonically increasing in d.
-            # Upper bound = FSPL-only inverse (actual range is shorter with clutter).
-            d_hi = 10.0 ** ((effective_max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0)
+            # Binary search: L(d) = ground(d) + k*d is monotonically increasing in d.
+            # Upper bound = the clutter-free inverse (actual range is shorter with clutter).
+            d_hi = d_ground
             d_lo = 0.001
             for _ in range(60):
                 mid = (d_lo + d_hi) / 2.0
-                if _shf_path_loss(mid, freq_mhz, terrain_type) < effective_max_loss:
+                if _shf_path_loss(mid, freq_mhz, terrain_type, tx_height_m, rx_height_m) < effective_max_loss:
                     d_lo = mid
                 else:
                     d_hi = mid
             distance_km = (d_lo + d_hi) / 2.0
-    elif model in (MODEL_FREE_SPACE, MODEL_FSPL_UPPER_UHF):
-        uhf_correction = 0.0 if model == MODEL_FREE_SPACE else _egli_terrain_correction_db(terrain_type)
-        log_d = (max_loss - uhf_correction - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
+            fspl_floor_limited = over_ground and (
+                _fspl_db(distance_km, freq_mhz) >= _plane_earth_db(distance_km, tx_height_m, rx_height_m))
+    elif model == MODEL_FREE_SPACE:
+        log_d = (max_loss - 20.0 * math.log10(freq_mhz) - 32.44) / 20.0
         distance_km = 10.0 ** log_d
+    elif model == MODEL_UPPER_UHF:
+        distance_km, fspl_floor_limited = _two_ray_inverse_km(
+            max_loss - _egli_terrain_correction_db(terrain_type),
+            freq_mhz, tx_height_m, rx_height_m)
     elif model == MODEL_TWO_RAY:
         # Two-ray inverse: d_m = 10^((max_loss + 20·log(ht) + 20·log(hr)) / 40)
         ht = max(1.0, tx_height_m)
@@ -428,7 +471,6 @@ def sensing_distance_breakdown(enemy_eirp, freq_mhz, terrain_type, rx_gain,
     # Two-Ray, COST-231 Hata and Egli return max(FSPL, model), so the loss
     # stays within budget only while BOTH terms do: the range is the smaller
     # of the two inverses.  (Hata's floor uses its clamped frequency.)
-    fspl_floor_limited = False
     if model in (MODEL_TWO_RAY, MODEL_COST231_HATA, MODEL_EGLI):
         f_floor = max(150.0, min(2000.0, freq_mhz)) if model == MODEL_COST231_HATA else freq_mhz
         fspl_d = 10.0 ** ((max_loss - 20.0 * math.log10(f_floor) - 32.44) / 20.0)
@@ -440,7 +482,7 @@ def sensing_distance_breakdown(enemy_eirp, freq_mhz, terrain_type, rx_gain,
     # Strict 1× radio horizon cap for SHF (no over-horizon propagation) and for
     # 1–2 GHz low antennas (ground-wave negligible, signal is horizon-limited).
     # Free-space paths (aerial/drone) are exempt: no Earth surface is involved.
-    if model in (MODEL_SHF, MODEL_FSPL_UPPER_UHF):
+    if model in (MODEL_SHF, MODEL_UPPER_UHF):
         ht = max(1.0, tx_height_m)
         hr = max(1.0, rx_height_m)
         horizon_km = _egli_horizon_km(ht, hr)

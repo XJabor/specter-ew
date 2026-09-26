@@ -15,7 +15,7 @@ from unittest.mock import patch
 import app
 import core.elevation as elevation
 from core.propagation import (
-    MODEL_COST231_HATA, MODEL_EGLI, MODEL_FREE_SPACE, MODEL_FSPL_UPPER_UHF,
+    MODEL_COST231_HATA, MODEL_EGLI, MODEL_FREE_SPACE, MODEL_UPPER_UHF,
     MODEL_SHF, MODEL_TWO_RAY, calculate_path_loss, path_loss_breakdown,
     sensing_distance_breakdown,
 )
@@ -51,7 +51,7 @@ class PathLossBreakdownTests(unittest.TestCase):
         # (freq, tx_h, terrain, is_los, expected model)
         (5800.0, 2.0, 'dense forest', True, MODEL_SHF),
         (150.0, 2.0, 'free space', False, MODEL_FREE_SPACE),
-        (1500.0, 2.0, 'rural', True, MODEL_FSPL_UPPER_UHF),
+        (1500.0, 2.0, 'rural', True, MODEL_UPPER_UHF),
         (450.0, 40.0, 'rural', True, MODEL_TWO_RAY),
         (450.0, 40.0, 'rural', False, MODEL_COST231_HATA),
         (60.0, 2.0, 'rural', False, MODEL_EGLI),
