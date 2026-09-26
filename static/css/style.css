@@ -1391,3 +1391,5 @@ body.ep-mode .ep-only { display: block; }
         border-radius: 8px 8px 0 0;
     }
 }
+#report-section .report-check { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+#report-section .report-check input { width: auto; margin: 0; }
