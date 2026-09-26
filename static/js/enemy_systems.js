@@ -34,10 +34,10 @@ function newRedSystem(node, idx, fields) {
 
 // Runtime system from its persisted snake_case form. Mirrors the EP mapping in
 // makeEpNodeFromScenario; runtime-only layer/label/geometry fields stay null.
-function redSystemFromScenario(sys, idx, nodeId) {
+function redSystemFromScenario(sys, idx, nodeId, id = sys.id || nodeId + '_S' + (idx + 1)) {
     return {
-        id:               sys.id || nodeId + '_S' + (idx + 1),
-        name:             sys.name || 'System ' + (idx + 1),
+        id,
+        name:             cappedName(sys.name || 'System ' + (idx + 1)),
         freqMhz:          Number(sys.freq_mhz || 150),
         txPowerW:         Number(sys.tx_power_w || 5),
         txGainDbi:        Number(sys.tx_gain_dbi || 0),
@@ -112,7 +112,7 @@ window.addLibrarySystemToRedNode = function(nodeId) {
     if (!node || !template) return;
     const idx = nextSystemIndex(node);
     node.systems.push(newRedSystem(node, idx, {
-        name:             template.name || ('System ' + idx),
+        name:             cappedName(template.name || ('System ' + idx)),
         freqMhz:          Number(template.frequency_mhz || 150),
         txPowerW:         Number(template.tx_power_w || 5),
         txGainDbi:        Number(template.antenna_gain_dbi || 0),
@@ -141,7 +141,7 @@ window.removeSystemFromRedNode = function(nodeId, sysId) {
 window.redUpdateSysName = function(nodeId, sysId, val) {
     const node = findNode('red', nodeId);
     const sys  = node && node.systems.find(s => s.id === sysId);
-    if (sys) { sys.name = val; renderOverlapControls(); markDirty('Enemy system renamed.'); }
+    if (sys) { sys.name = cappedName(val); renderOverlapControls(); markDirty('Enemy system renamed.'); }
 };
 
 // Normalizers mirror the EA setters in nodes_links.js so both agree.
@@ -197,8 +197,12 @@ window.calculateRedNodeSystems = async function(nodeId) {
     const run = node.sysCalcRun;
     const stillCurrent = () => node.sysCalcRun === run && redNodes.includes(node);
 
-    for (let sysIdx = 0; sysIdx < node.systems.length; sysIdx++) {
-        const sys = node.systems[sysIdx];
+    // Iterate a snapshot: deleting a system mid-run shifts the live array, and
+    // indexing it would skip the system after the deleted one. Membership is
+    // re-checked after each response instead.
+    const systems = node.systems.slice();
+    for (let sysIdx = 0; sysIdx < systems.length; sysIdx++) {
+        const sys = systems[sysIdx];
         // Offset by one slot so system labels stack below the node's own ES label.
         const labelOffset = [0, (sysIdx + 1) * 20];
         const payload = buildRedSystemPayload(node, sys, sensor);
@@ -298,7 +302,7 @@ function updateRedSystemsWorkbench() {
                 : node.systems.map(sys => `
                 <div class="sys-row">
                     <span class="sys-color-dot" style="background:${sys.color};"></span>
-                    <input type="text" class="sys-name" value="${escapeHtml(sys.name)}"
+                    <input type="text" class="sys-name" maxlength="${MAX_PLAIN_NAME_LENGTH}" value="${escapeHtml(sys.name)}"
                         oninput="redUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
                     <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
