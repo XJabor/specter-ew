@@ -20,7 +20,8 @@ function createRedNode(latlng, opts) {
                    systems: [] };
     applyEquipmentToNode(node, opts.equipment, 'red');
     node.antennaAzimuth = Number(opts.antennaAzimuth || 0);
-    node.systems = (opts.systems || []).map((sys, idx) => redSystemFromScenario(sys, idx, node.id));
+    const sysIds = scenarioSystemIds(opts.systems, node.id);
+    node.systems = (opts.systems || []).map((sys, idx) => redSystemFromScenario(sys, idx, node.id, sysIds[idx]));
     marker.on('click', function() { handleNodeClick('red', node.id); });
     marker.on('dragend', function() {
         // Every system polygon is position-derived, so a move invalidates them all.

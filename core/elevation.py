@@ -212,7 +212,12 @@ def _fetch_online(locations):
     for c in range(0, len(missing), _BATCH_SIZE):
         chunk_idx = missing[c:c + _BATCH_SIZE]
         with _api_slot():
-            todo = [i for i in chunk_idx if _point_key(locations[i]) not in _point_cache]
+            # Read this chunk's cached values and write fetched ones straight
+            # into `out` while holding the slot, so a cache clear — by this
+            # request or another thread — can never leave a gap in the result.
+            for i in chunk_idx:
+                out[i] = _point_cache.get(_point_key(locations[i]))
+            todo = [i for i in chunk_idx if out[i] is None]
             if todo:
                 loc_string = "|".join(
                     f"{locations[i]['latitude']},{locations[i]['longitude']}" for i in todo
@@ -226,12 +231,11 @@ def _fetch_online(locations):
                     raise ValueError(
                         f"Elevation API returned {len(results)} results for {len(todo)} locations"
                     )
-                if len(_point_cache) > _POINT_CACHE_MAX:
+                if len(_point_cache) + len(todo) > _POINT_CACHE_MAX:
                     _point_cache.clear()
                 for i, r in zip(todo, results):
+                    out[i] = r["elevation"]
                     _point_cache[_point_key(locations[i])] = r["elevation"]
-        for i in chunk_idx:
-            out[i] = _point_cache.get(_point_key(locations[i]))
 
     return out
 

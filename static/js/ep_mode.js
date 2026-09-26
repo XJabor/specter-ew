@@ -11,15 +11,16 @@ function makeEpNodeFromScenario(item) {
         iconAnchor: [12, 12]
     });
     const marker = L.marker(ll, { icon, draggable: true }).addTo(map);
+    const sysIds = scenarioSystemIds(item.systems, item.id);
     const node = {
         id: item.id,
-        name: item.name || item.id,
+        name: cappedName(item.name || item.id),
         lat: ll[0],
         lon: ll[1],
         marker,
         systems: (item.systems || []).map((sys, idx) => ({
-            id: sys.id || item.id + '_S' + (idx + 1),
-            name: sys.name || 'System ' + (idx + 1),
+            id: sysIds[idx],
+            name: cappedName(sys.name || 'System ' + (idx + 1)),
             freqMhz: Number(sys.freq_mhz || 150),
             txPowerW: Number(sys.tx_power_w || 5),
             txGainDbi: Number(sys.tx_gain_dbi || 0),
@@ -195,7 +196,7 @@ window.addLibrarySystemToEpNode = function(nodeId) {
     const sysIdx = nextSystemIndex(node);
     node.systems.push({
         id:               nodeId + '_S' + sysIdx,
-        name:             template.name || ('System ' + sysIdx),
+        name:             cappedName(template.name || ('System ' + sysIdx)),
         freqMhz:          Number(template.frequency_mhz || 150),
         txPowerW:         Number(template.tx_power_w || 5),
         txGainDbi:        Number(template.antenna_gain_dbi || 0),
@@ -228,13 +229,13 @@ window.removeSystemFromEpNode = function(nodeId, sysId) {
 
 window.epUpdateNodeName = function(nodeId, val) {
     const node = epNodes.find(n => n.id === nodeId);
-    if (node) { node.name = val; updateMGRSTooltips(); markDirty('EP node renamed.'); }
+    if (node) { node.name = cappedName(val); updateMGRSTooltips(); markDirty('EP node renamed.'); }
 };
 
 window.epUpdateSysName = function(nodeId, sysId, val) {
     const node = epNodes.find(n => n.id === nodeId);
     const sys  = node && node.systems.find(s => s.id === sysId);
-    if (sys) { sys.name = val; markDirty('EP system renamed.'); }
+    if (sys) { sys.name = cappedName(val); markDirty('EP system renamed.'); }
 };
 
 // Normalizers mirror the EA setters in nodes_links.js so both modes agree.
@@ -283,8 +284,12 @@ window.calculateEpNode = async function(nodeId) {
     // True until this run is superseded by a newer one or the node disappears.
     const stillCurrent = () => _epAbortControllers[nodeId] === controller && epNodes.includes(node);
 
-    for (let sysIdx = 0; sysIdx < node.systems.length; sysIdx++) {
-        const sys = node.systems[sysIdx];
+    // Iterate a snapshot: deleting a system mid-run shifts the live array, and
+    // indexing it would skip the system after the deleted one. Membership is
+    // re-checked after each response instead.
+    const systems = node.systems.slice();
+    for (let sysIdx = 0; sysIdx < systems.length; sysIdx++) {
+        const sys = systems[sysIdx];
         const labelOffset = [0, sysIdx * 20];
         const payload = buildEpSystemPayload(node, sys);
         try {
@@ -369,7 +374,7 @@ function updateEpWorkbench() {
     container.innerHTML = epNodes.map(node => `
         <div class="sys-card ep-theme" id="ep-card-${node.id}">
             <div class="sys-card-header">
-                <input type="text" class="sys-card-name-input" value="${escapeHtml(node.name)}"
+                <input type="text" class="sys-card-name-input" maxlength="${MAX_PLAIN_NAME_LENGTH}" value="${escapeHtml(node.name)}"
                     oninput="epUpdateNodeName('${node.id}', this.value)"
                     onclick="this.select()" title="Click to rename node">
                 <button class="sys-card-delete-btn" onclick="removeEpNode('${node.id}')" title="Remove node">✕</button>
@@ -385,7 +390,7 @@ function updateEpWorkbench() {
                 : node.systems.map(sys => `
                 <div class="sys-row">
                     <span class="sys-color-dot" style="background:${sys.color};"></span>
-                    <input type="text" class="sys-name" value="${escapeHtml(sys.name)}"
+                    <input type="text" class="sys-name" maxlength="${MAX_PLAIN_NAME_LENGTH}" value="${escapeHtml(sys.name)}"
                         oninput="epUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
                     <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>

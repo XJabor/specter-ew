@@ -221,10 +221,14 @@ test('validateScenario rejects ids that could break out of generated markup', ()
     assert.ok(schema.validateScenario(oneRed()));
 });
 
-test('validateScenario rejects duplicate node ids across kinds', () => {
+test('validateScenario rejects duplicate node ids', () => {
     const data = oneRed();
-    data.nodes.ep = [{ id: 'R1', location: { lat: 30, lon: -86 } }];
+    data.nodes.red.push({ id: 'R1', location: { lat: 31, lon: -86 } });
     assert.throws(() => schema.validateScenario(data), /more than one node/);
+    // A red id reused as an EP id is impossible: the per-kind prefix rejects it.
+    const cross = oneRed();
+    cross.nodes.ep = [{ id: 'R1', location: { lat: 30, lon: -86 } }];
+    assert.throws(() => schema.validateScenario(cross), /invalid id/);
 });
 
 test('validateScenario rejects malformed systems before anything is loaded', () => {
@@ -256,4 +260,50 @@ test('validateScenario rejects malformed links and overlays', () => {
 test('migrateScenario validates before migrating older files', () => {
     const v4 = minimalScenario(4, { nodes: { red: [{ id: 'R1', location: { lat: 30, lon: -86 }, systems: 'x' }], blue: [], black: [], ep: [] } });
     assert.throws(() => schema.migrateScenario(v4), /systems must be an array/);
+});
+
+test('node ids must use the app format for their kind', () => {
+    const ok = { red: 'R12', blue: 'B3', black: 'M4', ep: 'EP2' };
+    Object.entries(ok).forEach(([kind, id]) => {
+        const d = minimalScenario(5);
+        d.nodes[kind] = [{ id, location: { lat: 1, lon: 1 } }];
+        assert.ok(schema.validateScenario(d), `${kind} ${id}`);
+    });
+    // Wrong prefix (would collide with setCounterFromIds), hyphens (ambiguous link ids).
+    [['red', 'B1'], ['red', 'A-B'], ['blue', 'R1'], ['ep', 'E1'], ['black', 'M1-2'], ['red', 'R']].forEach(([kind, id]) => {
+        const d = minimalScenario(5);
+        d.nodes[kind] = [{ id, location: { lat: 1, lon: 1 } }];
+        assert.throws(() => schema.validateScenario(d), /invalid id/, `${kind} ${id}`);
+    });
+});
+
+test('link endpoints must be node ids of the right kind', () => {
+    const d = oneRed();
+    d.links = { enemy: [{ tx_id: 'R1', rx_id: 'B1' }], jamming: [] };
+    assert.throws(() => schema.validateScenario(d), /rx_id has an invalid id/);
+    d.links = { enemy: [], jamming: [{ blue_id: 'R1', rx_id: 'R1' }] };
+    assert.throws(() => schema.validateScenario(d), /blue_id has an invalid id/);
+});
+
+test('system ids must belong to their node', () => {
+    assert.throws(() => schema.validateScenario(oneRed({ systems: [{ id: 'R2_S1' }] })), /expected R1_S<number>/);
+    assert.throws(() => schema.validateScenario(oneRed({ systems: [{ id: 'R1_X1' }] })), /expected R1_S<number>/);
+    assert.ok(schema.validateScenario(oneRed({ systems: [{ id: 'R1_S7' }] })));
+});
+
+test('missing system ids are assigned without colliding with explicit ones', () => {
+    // The old fallback gave the 2nd entry R1_S2, colliding with the explicit R1_S2.
+    const ids = schema.scenarioSystemIds([{ id: 'R1_S2' }, {}, { id: 'R1_S1' }, {}], 'R1');
+    assert.deepEqual(ids, ['R1_S2', 'R1_S3', 'R1_S1', 'R1_S4']);
+    assert.equal(new Set(ids).size, ids.length);
+    assert.deepEqual(schema.scenarioSystemIds(undefined, 'R1'), []);
+});
+
+test('any name the app can save reloads (escaped storage worst case)', () => {
+    // Red/blue/black names are stored HTML-escaped: a maximal plain name of
+    // "&" characters becomes 6x longer on disk.
+    const worst = '&amp;'.repeat(schema.MAX_PLAIN_NAME_LENGTH).replace(/&amp;/g, '&quot;');
+    assert.ok(worst.length >= schema.MAX_PLAIN_NAME_LENGTH * 6);
+    assert.ok(schema.validateScenario(oneRed({ name: worst, systems: [{ name: 'x'.repeat(schema.MAX_PLAIN_NAME_LENGTH) }] })));
+    assert.throws(() => schema.validateScenario(oneRed({ name: worst + 'x' })), /invalid name/);
 });

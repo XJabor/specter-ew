@@ -215,7 +215,13 @@ function plainNodeName(name) {
 // library pack — goes through this so it lands in that same safe form.
 // (EP node and system names are stored raw and escaped at each display site.)
 function storedNodeName(name) {
-    return escapeHtml(plainNodeName(name));
+    return escapeHtml(plainNodeName(name).slice(0, MAX_PLAIN_NAME_LENGTH));
+}
+
+// EP node and system names: stored raw, capped like every other UI name so a
+// saved scenario always passes validateScenario() on reload.
+function cappedName(name) {
+    return String(name ?? '').slice(0, MAX_PLAIN_NAME_LENGTH);
 }
 
 function makeEdgeLabel(polygonPoints, centerLat, centerLon, radiusM, text, offsetPx = [0, 0]) {

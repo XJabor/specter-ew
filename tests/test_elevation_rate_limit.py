@@ -7,6 +7,7 @@ callers are serialized behind one pacing clock and that rate-limited
 requests are retried. requests.post is faked; no network access occurs.
 """
 
+import contextlib
 import threading
 import time
 import unittest
@@ -140,6 +141,41 @@ class RateLimitTests(unittest.TestCase):
                 out = elevation._fetch_online(_locations(5))
         self.assertEqual(out, [10.0] * 5)
         self.assertEqual(seen, [2])
+
+    def test_cache_eviction_after_release_cannot_drop_results(self):
+        # Another thread may clear the cache the instant this request releases
+        # the API slot. Simulate exactly that: the result must already be
+        # complete, not read back from the (now empty) cache.
+        real_slot = elevation._api_slot
+
+        @contextlib.contextmanager
+        def slot_then_evict():
+            with real_slot():
+                yield
+            elevation._point_cache.clear()
+
+        with patch.object(elevation, '_api_slot', slot_then_evict), \
+             patch.object(elevation.requests, 'post', self._fake_post()):
+            out = elevation._fetch_online(_locations(4))
+        self.assertEqual(out, [10.0] * 4)
+
+    def test_capacity_clear_keeps_points_already_cached_for_this_request(self):
+        # A point cached by another thread between this request's first cache
+        # read and its slot must survive this request's own capacity clear.
+        with patch.object(elevation, '_POINT_CACHE_MAX', 0), \
+             patch.object(elevation.requests, 'post', self._fake_post()):
+            locs = _locations(3, lon=-105.0)
+            real_slot = elevation._api_slot
+
+            @contextlib.contextmanager
+            def slot_after_other_thread_cached():
+                elevation._point_cache[elevation._point_key(locs[0])] = 10.0
+                with real_slot():
+                    yield
+
+            with patch.object(elevation, '_api_slot', slot_after_other_thread_cached):
+                out = elevation._fetch_online(locs)
+        self.assertEqual(out, [10.0] * 3)
 
     def test_queue_wait_is_bounded(self):
         with patch.object(elevation, '_QUEUE_TIMEOUT_S', 0.05):
