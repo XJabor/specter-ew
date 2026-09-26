@@ -8,16 +8,19 @@ here and differ only in how the HTTP request fields are named.
 """
 
 import logging
+import statistics
 
 from core.antenna import directional_gain_db
 from core.elevation import (
     check_line_of_sight,
     destination_point,
+    elevation_summary,
+    elevation_tally,
     get_elevation_profiles_batch,
 )
 from core.link_budget import calculate_eirp, watts_to_dbm
 from core.local_data import is_locally_covered
-from core.propagation import calculate_path_loss, calculate_sensing_distance
+from core.propagation import path_loss_breakdown, sensing_distance_breakdown
 
 _logger = logging.getLogger(__name__)
 
@@ -32,6 +35,12 @@ MIN_RING_RANGE_KM = 0.05
 
 
 def walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m):
+    """Detection/sensing range (km) along one bearing; see _walk_profile()."""
+    return _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain,
+                         rx_sensitivity, tx_height_m)['range_km']
+
+
+def _walk_profile(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitivity, tx_height_m):
     """
     Find the detection/sensing range by walking the elevation profile outward.
 
@@ -45,10 +54,16 @@ def walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitiv
     Egli already capture Earth-curvature effects in their measured rolloff; adding
     Deygout on top would double-count Earth curvature and shrink flat-terrain
     rings by ~10× relative to the simple sensing-distance calculation.
+
+    Returns {'range_km', 'blocked' (terrain obstructed the path at the range
+    point), 'model' (propagation model at the range point), 'reached_end'
+    (signal still above threshold at the end of the sampled profile)}.
     """
     max_loss = eirp + rx_gain - rx_sensitivity
     prev_d   = 0.0
     prev_pl  = 0.0
+    blocked  = False
+    model    = None
 
     for i in range(1, len(profile)):
         d_i = profile[i]['distance_km']
@@ -75,19 +90,25 @@ def walk_profile_to_range(profile, freq_mhz, terrain, eirp, rx_gain, rx_sensitiv
             diff_db = 0.0
             is_los  = True  # let the empirical model handle Earth curvature
 
-        pl_i = calculate_path_loss(
+        pl = path_loss_breakdown(
             d_i, freq_mhz, terrain, diff_db, tx_height_m, 0.0, is_los
         )
+        pl_i = pl['loss_db']
+        blocked, model = terrain_blocked, pl['model']
         if pl_i > max_loss:
             if prev_d <= 0:
-                return max(MIN_RING_RANGE_KM, d_i / 2.0)
-            frac = (max_loss - prev_pl) / max(pl_i - prev_pl, 1e-9)
-            frac = max(0.0, min(1.0, frac))
-            return prev_d + frac * (d_i - prev_d)
+                range_km = max(MIN_RING_RANGE_KM, d_i / 2.0)
+            else:
+                frac = (max_loss - prev_pl) / max(pl_i - prev_pl, 1e-9)
+                frac = max(0.0, min(1.0, frac))
+                range_km = prev_d + frac * (d_i - prev_d)
+            return {'range_km': range_km, 'blocked': blocked,
+                    'model': model, 'reached_end': False}
         prev_pl = pl_i
         prev_d  = d_i
 
-    return profile[-1]['distance_km']
+    return {'range_km': profile[-1]['distance_km'], 'blocked': blocked,
+            'model': model, 'reached_end': True}
 
 
 def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
@@ -97,9 +118,11 @@ def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
     """
     Compute a terrain-shaped coverage polygon around a transmitter.
 
-    Returns {'base_range_km': float, 'polygon_points': list | None} where
-    polygon_points holds one [lat, lon] per azimuth bearing, or None when
-    elevation data is unavailable (callers fall back to a plain circle).
+    Returns {'base_range_km': float, 'polygon_points': list | None,
+    'diagnostics': dict} where polygon_points holds one [lat, lon] per azimuth
+    bearing, or None when elevation data is unavailable (callers fall back to
+    a plain circle).  diagnostics is the inspector/report provenance record;
+    see _footprint_diagnostics().
     """
     tx_dbm = watts_to_dbm(tx_w)
 
@@ -115,20 +138,20 @@ def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
     # LOS (Two-Ray) is used for the label — it matches what flat terrain will actually show.
     # Profile endpoints use the larger of LOS and NLOS so elevation data always extends
     # to the furthest possible detection distance regardless of actual terrain.
-    peak_eirp     = eirp_at_bearing(azimuth_deg if antenna_type == 'directional' else 0)
-    base_range_km = calculate_sensing_distance(
+    peak_eirp = eirp_at_bearing(azimuth_deg if antenna_type == 'directional' else 0)
+    los_sense = sensing_distance_breakdown(
         peak_eirp, freq_mhz, terrain, rx_gain, rx_sensitivity,
         tx_height_m=antenna_height_m, is_los=True
     )
-    proj_range_km = max(
-        base_range_km,
-        calculate_sensing_distance(
-            peak_eirp, freq_mhz, terrain, rx_gain, rx_sensitivity,
-            tx_height_m=antenna_height_m, is_los=False
-        )
+    nlos_sense = sensing_distance_breakdown(
+        peak_eirp, freq_mhz, terrain, rx_gain, rx_sensitivity,
+        tx_height_m=antenna_height_m, is_los=False
     )
+    base_range_km = los_sense['distance_km']
+    proj_range_km = max(base_range_km, nlos_sense['distance_km'])
 
-    if is_locally_covered(lat, lon, proj_range_km):
+    locally_covered = is_locally_covered(lat, lon, proj_range_km)
+    if locally_covered:
         num_bearings = LOCAL_RES_BEARINGS
         num_samples  = LOCAL_RES_SAMPLES
     else:
@@ -143,20 +166,94 @@ def compute_terrain_footprint(lat, lon, tx_w, tx_gain, antenna_type,
         paths.append((lat, lon, end_lat, end_lon))
 
     polygon_points = None
-    try:
-        profiles = get_elevation_profiles_batch(paths, num_samples=num_samples)
-        polygon_points = []
-        for bearing, profile in zip(bearings, profiles):
-            eirp = eirp_at_bearing(bearing)
-            range_km = walk_profile_to_range(
-                profile, freq_mhz, terrain,
-                eirp, rx_gain, rx_sensitivity, antenna_height_m
-            )
-            range_km = max(range_km, MIN_RING_RANGE_KM)
-            pt_lat, pt_lon = destination_point(lat, lon, bearing, range_km)
-            polygon_points.append([pt_lat, pt_lon])
-    except Exception as e:
-        _logger.warning("%s: elevation API failed, falling back to circle: %s", log_label, e)
-        polygon_points = None
+    walks = []
+    with elevation_tally() as tally:
+        try:
+            profiles = get_elevation_profiles_batch(paths, num_samples=num_samples)
+            polygon_points = []
+            for bearing, profile in zip(bearings, profiles):
+                eirp = eirp_at_bearing(bearing)
+                walk = _walk_profile(
+                    profile, freq_mhz, terrain,
+                    eirp, rx_gain, rx_sensitivity, antenna_height_m
+                )
+                walk['range_km'] = max(walk['range_km'], MIN_RING_RANGE_KM)
+                walks.append(walk)
+                pt_lat, pt_lon = destination_point(lat, lon, bearing, walk['range_km'])
+                polygon_points.append([pt_lat, pt_lon])
+        except Exception as e:
+            _logger.warning("%s: elevation API failed, falling back to circle: %s", log_label, e)
+            polygon_points = None
+            walks = []
 
-    return {'base_range_km': base_range_km, 'polygon_points': polygon_points}
+    diagnostics = _footprint_diagnostics(
+        freq_mhz=freq_mhz, terrain=terrain, tx_dbm=tx_dbm, peak_eirp=peak_eirp,
+        rx_gain=rx_gain, rx_sensitivity=rx_sensitivity,
+        antenna=(antenna_type, azimuth_deg, beamwidth_deg, antenna_height_m),
+        los_sense=los_sense, nlos_sense=nlos_sense, proj_range_km=proj_range_km,
+        locally_covered=locally_covered, num_bearings=num_bearings,
+        num_samples=num_samples, walks=walks,
+        elevation=elevation_summary(tally),
+    )
+    return {'base_range_km': base_range_km, 'polygon_points': polygon_points,
+            'diagnostics': diagnostics}
+
+
+def _range_stats(ranges):
+    return {
+        'min_km':    round(min(ranges), 3),
+        'max_km':    round(max(ranges), 3),
+        'mean_km':   round(statistics.fmean(ranges), 3),
+        'median_km': round(statistics.median(ranges), 3),
+    }
+
+
+def _footprint_diagnostics(*, freq_mhz, terrain, tx_dbm, peak_eirp, rx_gain,
+                           rx_sensitivity, antenna, los_sense, nlos_sense,
+                           proj_range_km, locally_covered, num_bearings,
+                           num_samples, walks, elevation):
+    """Provenance record for one terrain footprint: the inputs as the backend
+    parsed them, the model(s) used, per-bearing range statistics, and the data
+    quality flags the frontend inspector turns into warnings."""
+    antenna_type, azimuth_deg, beamwidth_deg, antenna_height_m = antenna
+    fallback = not walks
+    if fallback:
+        # Circle fallback: the ring is drawn at the flat LOS range on every bearing.
+        bearing_ranges = []
+        ranges = _range_stats([los_sense['distance_km']])
+    else:
+        bearing_ranges = [round(w['range_km'], 3) for w in walks]
+        ranges = _range_stats([w['range_km'] for w in walks])
+
+    models_used = {}
+    for w in walks:
+        if w['model']:
+            models_used[w['model']] = models_used.get(w['model'], 0) + 1
+
+    return {
+        'freq_mhz': freq_mhz,
+        'terrain': terrain,
+        'tx_power_dbm': tx_dbm,
+        'peak_eirp_dbm': peak_eirp,
+        'rx_gain_dbi': rx_gain,
+        'rx_sensitivity_dbm': rx_sensitivity,
+        'antenna': {
+            'type': antenna_type,
+            'azimuth_deg': azimuth_deg,
+            'beamwidth_deg': beamwidth_deg,
+            'height_m': antenna_height_m,
+        },
+        'flat_los': los_sense,
+        'flat_nlos': nlos_sense,
+        'projection_range_km': round(proj_range_km, 3),
+        'locally_covered': locally_covered,
+        'num_bearings': num_bearings,
+        'num_samples': num_samples,
+        'fallback_circle': fallback,
+        'ranges': ranges,
+        'bearing_ranges_km': bearing_ranges,
+        'blocked_bearings': sum(1 for w in walks if w['blocked']),
+        'bearings_at_projection_limit': sum(1 for w in walks if w['reached_end']),
+        'models_used': models_used,
+        'elevation': elevation,
+    }
