@@ -1,4 +1,16 @@
 -----
+26SEP26 Claude Code
+
+- Version 1.2.0: every calculated result can now be explained, reported, and checked
+- Clicking a jamming link, detection ring, or jammer footprint opens an "inspector" panel showing the inputs, each step of the math, which propagation model was used, and the final answer
+- The inspector flags anything that weakens a result, such as missing terrain data, online instead of local terrain, a range cut off at the horizon, or settings changed since the last calculation
+- Clicking a link line now opens the inspector instead of deleting the link; links can still be removed from the inspector or the results table
+- A new Generate Report button produces a print-ready page (save as PDF from the browser) with a map sketch, every node and result, settings, assumptions, warnings, and a planning-estimate disclaimer
+- Fixed a major error in the low-antenna VHF/UHF model (Egli): an incorrect constant made ranges about ten times too long, so rings in that band are now much smaller and more realistic
+- Fixed detection ranges running slightly too far for tall antennas at short range
+- Added automated checks that compare the models against hand calculations from published formulas and alert on any unexpected change in results
+
+-----
 16AUG26 Claude Code
 
 - EP nodes can now hide and show their rings, using the same wording as the enemy node ring control, from either the map popup or the EP workbench card
