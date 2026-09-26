@@ -34,7 +34,7 @@ const REPORT_ASSUMPTIONS = [
     'Every model is floored at free-space loss. Detection ranges are the exact inverse of the path-loss model, including that floor.',
     'Terrain correction is flat: rural/open +0 dB, light forest/suburban +8 dB, dense forest/urban +20 dB (Egli and 1–2 GHz branches). Above 2 GHz, foliage absorption grows with distance (2 or 5 dB per GHz·km) and a 5/10 dB canopy penalty applies when either antenna is below 5 m in vegetation.',
     'Terrain heights come from local DTED Level 2 where available, otherwise the online SRTM 30 m service. Obstructed paths add dominant-obstacle knife-edge diffraction loss (ITU-R P.526) using a 4/3-earth radius; above 2 GHz that value is applied as a blockage penalty.',
-    'Detection rings and jammer footprints walk the terrain profile outward on each bearing to the range where received power falls to the reference threshold. The receiver is assumed at ground level (1 m). Ring labels on the map show the flat-terrain line-of-sight range.',
+    'Detection rings and jammer footprints walk the terrain profile outward on each bearing to the range where received power falls to the reference threshold. The receiver antenna height is the friendly node’s own antenna height for sensor-coverage rings, the selected sensor’s height (or the generic sensor height setting) for enemy detection and enemy-system rings, and the reference receiver height settings for jammer footprints and EP rings; heights below 1 m are treated as 1 m. Ring labels on the map show the flat-terrain line-of-sight range.',
     'Directional antennas use a Gaussian main-lobe approximation of the stated half-power beamwidth.',
     'J/S margin is jamming power minus enemy signal power at the target receiver. The capture-effect thresholds listed under Settings classify it as No Effect, Contested (warbling/popcorn), or Complete Jamming.',
     'Frequency-hopping tax reduces jammer EIRP by 10·log10(jammer sweep bandwidth ÷ target channel bandwidth).',
@@ -256,9 +256,12 @@ function buildReportData(snapshot) {
         ['Jammer-to-target terrain', _R.terrainLabel(st.jammerTerrain)],
         ['Capture thresholds', `No effect ≤ ${_R.fmtSignedDb(st.lowerThreshold)} · Complete jamming ≥ ${_R.fmtSignedDb(st.upperThreshold)}`],
         ['ES ring reference sensor', `${str(sensor.name, 40) || '—'} (${_R.fmtDbm(sensor.rxSensitivityDbm)}, ${_R.fmtDbi(sensor.rxGainDbi)})`],
+        ['Generic sensor height', `${_R.fmtNum(st.sensorHeightM, 1)} m AGL`],
         ['Jammer footprint threshold', _R.fmtDbm(st.footprintRxSensitivity)],
+        ['Footprint reference receiver height', `${_R.fmtNum(st.footprintRxHeightM, 1)} m AGL`],
         ['EP terrain', _R.terrainLabel(st.epTerrain)],
         ['EP enemy receiver sensitivity', _R.fmtDbm(st.epRxSensitivity)],
+        ['EP enemy receiver height', `${_R.fmtNum(st.epRxHeightM, 1)} m AGL`],
         ['Workbench mode at export', snap.mode === 'EP' ? 'EP' : 'EA / ES'],
     ].map(([label, value]) => ({ label, value }));
 

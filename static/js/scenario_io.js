@@ -25,7 +25,10 @@ const SCENARIO_SETTING_IDS = [
     'lower_threshold',
     'upper_threshold',
     'ep_terrain',
-    'ep_rx_sensitivity'
+    'ep_rx_sensitivity',
+    'sensor_height_m',
+    'footprint_rx_height_m',
+    'ep_rx_height_m'
 ];
 
 let scenarioDirty = false;

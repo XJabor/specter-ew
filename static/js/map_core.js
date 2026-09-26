@@ -141,6 +141,13 @@ const RED_SYSTEM_COLORS = ['#ff7043','#ffb300','#d81b60','#8e24aa',
 
 const DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM = -100;
 
+// Receiver antenna height AGL (m) from a sidebar setting, clamped to the
+// range the backend accepts; models floor anything below 1 m to 1 m.
+function receiverHeightSetting(id) {
+    const v = parseFloat(document.getElementById(id)?.value);
+    return Number.isFinite(v) ? Math.max(1, Math.min(500, v)) : 1;
+}
+
 function activeBaseLayerName() {
     if (map.hasLayer(streetLayer)) return 'Streets';
     return 'Satellite';

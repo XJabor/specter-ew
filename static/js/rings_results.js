@@ -593,6 +593,7 @@ function buildSensorCoveragePayload(sensor, txNode) {
     const txEq = nodeEquipment(txNode, 'red');
     const ll = txNode.marker.getLatLng();
     return {
+        rx_antenna_height_m: sensorEq.antenna_height_m || sensor.antennaHeightAgl,
         enemy_terrain:       document.getElementById('enemy_terrain').value,
         freq_mhz:            txEq.frequency_mhz,
         enemy_tx_w:          txEq.tx_power_w,
@@ -613,6 +614,7 @@ function buildRedRingPayload(node, sensor = selectedSensorReference()) {
     const ll = node.marker.getLatLng();
     const eq = nodeEquipment(node, 'red');
     return {
+        rx_antenna_height_m: sensor.heightM,
         enemy_terrain:       document.getElementById('enemy_terrain').value,
         freq_mhz:            eq.frequency_mhz,
         enemy_tx_w:          eq.tx_power_w,
@@ -635,6 +637,7 @@ function selectedSensorReference() {
         return {
             id: selected.id,
             name: selected.name,
+            heightM: eq.antenna_height_m || selected.antennaHeightAgl,
             rxSensitivityDbm: eq.rx_sensitivity_dbm,
             rxGainDbi: eq.rx_gain_dbi
         };
@@ -642,6 +645,7 @@ function selectedSensorReference() {
     return {
         name: 'Generic Friendly Sensor',
         rxSensitivityDbm: DEFAULT_GENERIC_FRIENDLY_SENSOR_SENSITIVITY_DBM,
+        heightM: receiverHeightSetting('sensor_height_m'),
         rxGainDbi: Number(document.getElementById('friendly_rx_gain')?.value || 0)
     };
 }
@@ -744,6 +748,7 @@ function buildFootprintPayload(node) {
         jammer_tx_w:             eq.tx_power_w,
         jammer_tx_gain:          eq.antenna_gain_dbi,
         rx_sensitivity:          document.getElementById('footprint_rx_sensitivity').value,
+        rx_antenna_height_m:     receiverHeightSetting('footprint_rx_height_m'),
         friendly_rx_gain:        0,
         jammer_lat:              ll.lat,
         jammer_lon:              ll.lng,
