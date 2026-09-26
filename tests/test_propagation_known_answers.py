@@ -147,43 +147,61 @@ class Cost231HataBranchTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 4. Upper-UHF FSPL
 # ---------------------------------------------------------------------------
-class UpperUhfFsplBranchTests(unittest.TestCase):
-    """1000 <= f <= 2000 MHz, tx < 30 m, not free space: FSPL + 0/8/20."""
+class UpperUhfTwoRayBranchTests(unittest.TestCase):
+    """1000 <= f <= 2000 MHz, tx < 30 m, not free space:
+    max(FSPL, plane-earth) + 0/8/20.
 
-    # FSPL(5 km, 1500) = 13.9794 + 63.5218 + 32.44 = 109.9412
+    FSPL(5 km, 1500)   = 13.9794 + 63.5218 + 32.44 = 109.9412
+    PE(5 km, 2 m, 2 m) = 40 log 5000 - 6.0206 - 6.0206 = 147.9588 - 12.0412 = 135.9176
+    Breakpoint 4 pi ht hr / lambda = 4 pi * 4 / 0.2 = 251 m, so PE governs at 5 km.
+    """
+
     def test_rural(self):
-        self.assertAlmostEqual(_pl(5.0, 1500.0, 'rural', 0.0, 2.0, 2.0, True), 109.94, delta=DELTA)
+        self.assertAlmostEqual(_pl(5.0, 1500.0, 'rural', 0.0, 2.0, 2.0, True), 135.92, delta=DELTA)
 
     def test_light(self):
-        self.assertAlmostEqual(_pl(5.0, 1500.0, 'light forest', 0.0, 2.0, 2.0, True), 117.94, delta=DELTA)
+        self.assertAlmostEqual(_pl(5.0, 1500.0, 'light forest', 0.0, 2.0, 2.0, True), 143.92, delta=DELTA)
 
     def test_dense(self):
-        self.assertAlmostEqual(_pl(5.0, 1500.0, 'dense forest', 0.0, 2.0, 2.0, True), 129.94, delta=DELTA)
+        self.assertAlmostEqual(_pl(5.0, 1500.0, 'dense forest', 0.0, 2.0, 2.0, True), 155.92, delta=DELTA)
 
     def test_nlos_adds_diffraction(self):
-        # 117.9412 + 4.0 = 121.9412
-        self.assertAlmostEqual(_pl(5.0, 1500.0, 'light forest', 4.0, 2.0, 2.0, False), 121.94, delta=DELTA)
+        # 143.9176 + 4.0 = 147.9176
+        self.assertAlmostEqual(_pl(5.0, 1500.0, 'light forest', 4.0, 2.0, 2.0, False), 147.92, delta=DELTA)
+
+    def test_inside_breakpoint_is_fspl(self):
+        # 0.2 km: FSPL = -13.9794 + 63.5218 + 32.44 = 81.9824 ; PE = 40 log 200 - 12.0412 = 80.0 -> FSPL
+        self.assertAlmostEqual(_pl(0.2, 1500.0, 'rural', 0.0, 2.0, 2.0, True), 81.98, delta=DELTA)
 
 
 # ---------------------------------------------------------------------------
 # 5. SHF
 # ---------------------------------------------------------------------------
 class ShfBranchTests(unittest.TestCase):
-    """f > 2000 MHz: FSPL + k f_GHz d + near-ground penalty (+ diffraction NLOS).
+    """f > 2000 MHz: max(FSPL, plane-earth) + k f_GHz d + near-ground penalty
+    (+ diffraction NLOS); free-space terrain uses FSPL without the ground term.
 
     FSPL(1 km, 5800) = 0 + 75.2686 + 32.44 = 107.7086 ; f_GHz = 5.8
+    PE(1 km, 2 m, 2 m) = 120 - 12.0412 = 107.9588 (just past the 0.97 km breakpoint)
+    PE(1 km) for 5 m+ antennas is <= 92.04, so FSPL governs the elevated cases.
     """
 
-    def test_open_is_pure_fspl_even_low(self):
-        self.assertAlmostEqual(_pl(1.0, 5800.0, 'rural', 0.0, 2.0, 2.0, True), 107.71, delta=DELTA)
+    def test_open_low_antennas_use_two_ray_floor(self):
+        self.assertAlmostEqual(_pl(1.0, 5800.0, 'rural', 0.0, 2.0, 2.0, True), 107.96, delta=DELTA)
+        # 5 km: PE = 147.9588 - 12.0412 = 135.9176 vs FSPL 121.6880
+        self.assertAlmostEqual(_pl(5.0, 5800.0, 'rural', 0.0, 2.0, 2.0, True), 135.92, delta=DELTA)
+
+    def test_free_space_terrain_has_no_ground_term(self):
+        # FSPL(5 km, 5800) = 13.9794 + 75.2686 + 32.44 = 121.6880
+        self.assertAlmostEqual(_pl(5.0, 5800.0, 'free space', 0.0, 2.0, 2.0, True), 121.69, delta=DELTA)
 
     def test_light_clutter_elevated(self):
         # 107.7086 + 2*5.8*1 = 119.3086 ; both antennas >= 5 m -> no penalty
         self.assertAlmostEqual(_pl(1.0, 5800.0, 'light forest', 0.0, 10.0, 10.0, True), 119.31, delta=DELTA)
 
     def test_light_clutter_near_ground(self):
-        # 119.3086 + 5 = 124.3086
-        self.assertAlmostEqual(_pl(1.0, 5800.0, 'light forest', 0.0, 2.0, 2.0, True), 124.31, delta=DELTA)
+        # PE 107.9588 + 11.6 + 5 = 124.5588
+        self.assertAlmostEqual(_pl(1.0, 5800.0, 'light forest', 0.0, 2.0, 2.0, True), 124.56, delta=DELTA)
 
     def test_dense_clutter_elevated(self):
         # 107.7086 + 5*5.8*1 = 136.7086
@@ -304,15 +322,21 @@ class BranchBoundaryTests(unittest.TestCase):
     def test_999_9_vs_1000_low_antenna(self):
         # 999.9 -> Egli: 59.9991 + 27.9588 - 12.0412 + 87.9588 = 163.8755 (> FSPL 106.4185)
         self.assertAlmostEqual(_pl(5.0, 999.9, 'rural', 0.0, 2.0, 2.0, True), 163.88, delta=DELTA)
-        # 1000 -> upper-UHF FSPL: 13.9794 + 60 + 32.44 = 106.4194 (57.5 dB drop —
-        # the upper-UHF FSPL branch is far more optimistic than Egli at the seam)
-        self.assertAlmostEqual(_pl(5.0, 1000.0, 'rural', 0.0, 2.0, 2.0, True), 106.42, delta=DELTA)
+        # 1000 -> upper-UHF plane-earth: 147.9588 - 12.0412 = 135.9176 (> FSPL 106.4194).
+        # Remaining step 27.96 dB = Egli's empirical (f/40)^2 factor, 20 log(1000/40).
+        self.assertAlmostEqual(_pl(5.0, 1000.0, 'rural', 0.0, 2.0, 2.0, True), 135.92, delta=DELTA)
 
     def test_2000_vs_2000_1_light_low_antenna(self):
-        # 2000 -> upper-UHF: 13.9794 + 66.0206 + 32.44 + 8 = 120.4400
-        self.assertAlmostEqual(_pl(5.0, 2000.0, 'light forest', 0.0, 2.0, 2.0, True), 120.44, delta=DELTA)
-        # 2000.1 -> SHF: FSPL 112.4404 + 2*2.0001*5 (20.001) + 5 = 137.4414 (17 dB jump)
-        self.assertAlmostEqual(_pl(5.0, 2000.1, 'light forest', 0.0, 2.0, 2.0, True), 137.44, delta=DELTA)
+        # 2000 -> upper-UHF: PE 135.9176 + 8 = 143.9176
+        self.assertAlmostEqual(_pl(5.0, 2000.0, 'light forest', 0.0, 2.0, 2.0, True), 143.92, delta=DELTA)
+        # 2000.1 -> SHF: PE 135.9176 + 2*2.0001*5 (20.001) + 5 = 160.9186 (17 dB step: the
+        # flat +8 becomes distance-proportional foliage + canopy penalty)
+        self.assertAlmostEqual(_pl(5.0, 2000.1, 'light forest', 0.0, 2.0, 2.0, True), 160.92, delta=DELTA)
+
+    def test_2000_vs_2000_1_rural_is_continuous(self):
+        # Both sides are the plane-earth floor with no terrain term: 135.9176
+        self.assertAlmostEqual(_pl(5.0, 2000.0, 'rural', 0.0, 2.0, 2.0, True), 135.92, delta=DELTA)
+        self.assertAlmostEqual(_pl(5.0, 2000.1, 'rural', 0.0, 2.0, 2.0, True), 135.92, delta=DELTA)
 
 
 # ---------------------------------------------------------------------------
@@ -382,11 +406,15 @@ class SensingDistanceInverseTests(unittest.TestCase):
         self.assertAlmostEqual(d, 10 ** (34.0382 / 20), delta=0.01)
 
     def test_upper_uhf_below_horizon(self):
-        # 1500 light, 2/2 m: 20 log d = 100 - 8 - 63.5218 - 32.44 = -3.9618 -> 0.634 km < 11.66
+        # 1500 light, 2/2 m, budget 100 - 8 = 92:
+        #   FSPL inverse 20 log d = 92 - 63.5218 - 32.44 -> 0.634 km
+        #   PE inverse   40 log d_m = 92 + 12.0412        -> 0.399 km  <- smaller, PE governs
         for los, diff in ((True, 0.0), (False, 3.0)):
             with self.subTest(los=los):
-                self._check(1500.0, 'light forest', 2.0, 2.0, los, diff, 10.0, 0.0, -90.0,
-                            lambda d: _slope_log(20, d))
+                d = self._check(1500.0, 'light forest', 2.0, 2.0, los, diff, 10.0, 0.0, -90.0,
+                                lambda d: _slope_log(40, d))
+                if los:
+                    self.assertAlmostEqual(d, 10 ** (104.0412 / 40) / 1000, delta=0.001)
 
     def test_shf_below_horizon(self):
         # Horizon 30/30 m = 2 sqrt(510) = 45.17 km ; 2/2 m = 11.66 km.
@@ -399,8 +427,9 @@ class SensingDistanceInverseTests(unittest.TestCase):
         for terrain, ht, hr, diff in cases:
             k = {'light forest': 2.0, 'dense forest': 5.0}.get(terrain, 0.0) * 5.8
             with self.subTest(terrain=terrain, diff=diff):
+                # Either the FSPL (20) or plane-earth (40 dB/decade) term can govern.
                 self._check(5800.0, terrain, ht, hr, diff == 0.0, diff, 40.0, 0.0, -90.0,
-                            lambda d, k=k: _slope_log(20, d) + k)
+                            lambda d, k=k: _slope_log(40, d) + k)
 
 
 class SensingDistanceHorizonTests(unittest.TestCase):
@@ -415,18 +444,20 @@ class SensingDistanceHorizonTests(unittest.TestCase):
         return d
 
     def test_shf_open_2m(self):
-        # sqrt(34) + sqrt(34) = 11.6619 km ; uncapped FSPL inverse at 150 dB -> ~130 km
-        self._capped(5800.0, 'rural', 2.0, 2.0, True, 0.0, 150.0, 11.6619)
+        # sqrt(34) + sqrt(34) = 11.6619 km ; budget 160, open 2/2 m:
+        # PE inverse 40 log d_m = 160 + 12.0412 -> 20.0 km (FSPL inverse ~410 km) -> capped
+        self._capped(5800.0, 'rural', 2.0, 2.0, True, 0.0, 160.0, 11.6619)
 
     def test_shf_open_asymmetric_heights(self):
         # sqrt(170) + sqrt(34) = 13.0384 + 5.8310 = 18.8694 km ; 10 m and 2 m
-        # open, budget 150: uncapped FSPL inverse 20 log d = 150 - 107.7086 -> 130 km
+        # open, budget 150: PE inverse 40 log d_m = 150 + 20 + 6.0206 -> 25.2 km -> capped
         self._capped(5800.0, 'rural', 10.0, 2.0, True, 0.0, 150.0, 18.8694)
 
     def test_upper_uhf_light_los_and_nlos(self):
-        # 1500 light 2/2: 20 log d = 150 - 8 - 63.5218 - 32.44 = 46.0382 -> 200 km -> cap 11.6619
-        self._capped(1500.0, 'light forest', 2.0, 2.0, True, 0.0, 150.0, 11.6619)
-        self._capped(1500.0, 'dense forest', 2.0, 2.0, False, 5.0, 170.0, 11.6619)
+        # 1500 light 2/2, budget 165: 40 log d_m = 165 - 8 + 12.0412 -> 16.8 km -> cap 11.6619
+        self._capped(1500.0, 'light forest', 2.0, 2.0, True, 0.0, 165.0, 11.6619)
+        # dense NLOS, budget 185, diff 5: 40 log d_m = 185 - 5 - 20 + 12.0412 -> 20.0 km -> cap
+        self._capped(1500.0, 'dense forest', 2.0, 2.0, False, 5.0, 185.0, 11.6619)
 
     def test_shf_free_space_is_capped_unlike_upper_uhf_free_space(self):
         # FINDING (behavioural inconsistency, not a formula error): 2400 MHz

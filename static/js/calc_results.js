@@ -24,9 +24,9 @@ const MODEL_INFO = {
         summary: 'Empirical macro-cell model for elevated transmitters on obstructed paths, with urban / suburban / open-area corrections.',
         validity: 'Published for 1500–2000 MHz, 30–200 m masts, 1–20 km; applied here from 150 MHz.',
     },
-    fspl_upper_uhf: {
-        name: 'Free-space + clutter (1–2 GHz)',
-        summary: 'Free-space loss plus a flat terrain/clutter correction for 1–2 GHz with low antennas; range limited to the radio horizon.',
+    upper_uhf: {
+        name: 'Two-ray ground + clutter (1–2 GHz)',
+        summary: 'Plane-earth two-ray loss (free-space inside the ground-reflection breakpoint, 40 dB per decade beyond it) plus a flat terrain/clutter correction, for 1–2 GHz with low antennas; range limited to the radio horizon.',
         validity: '1000–2000 MHz, transmitter below 30 m.',
     },
     free_space: {
@@ -35,8 +35,8 @@ const MODEL_INFO = {
         validity: 'Terrain set to "Free space".',
     },
     shf: {
-        name: 'SHF free-space + foliage',
-        summary: 'Free-space loss plus distance-proportional foliage absorption and a near-ground canopy penalty; terrain obstruction is treated as blockage; range limited to the radio horizon.',
+        name: 'SHF two-ray ground + foliage',
+        summary: 'Plane-earth two-ray loss over ground (free-space loss for "Free space" terrain) plus distance-proportional foliage absorption and a near-ground canopy penalty; terrain obstruction is treated as blockage; range limited to the radio horizon.',
         validity: 'Above 2 GHz.',
     },
 };

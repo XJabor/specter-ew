@@ -30,7 +30,7 @@ const REPORT_SUPPORT = {
 };
 
 const REPORT_ASSUMPTIONS = [
-    'Path loss is routed by frequency, antenna height, terrain setting and line of sight: Egli below 1 GHz for low antennas; Two-Ray (line of sight) or COST-231 Hata (obstructed) when the transmitter is at least 30 m high and at 150 MHz or above; free-space loss plus a flat clutter correction at 1–2 GHz with low antennas; free-space plus foliage absorption above 2 GHz; pure free-space loss when terrain is set to "Free space".',
+    'Path loss is routed by frequency, antenna height, terrain setting and line of sight: Egli below 1 GHz for low antennas; Two-Ray (line of sight) or COST-231 Hata (obstructed) when the transmitter is at least 30 m high and at 150 MHz or above; plane-earth two-ray loss plus a flat clutter correction at 1–2 GHz with low antennas; plane-earth two-ray loss plus foliage absorption above 2 GHz; pure free-space loss when terrain is set to "Free space".',
     'Every model is floored at free-space loss. Detection ranges are the exact inverse of the path-loss model, including that floor.',
     'Terrain correction is flat: rural/open +0 dB, light forest/suburban +8 dB, dense forest/urban +20 dB (Egli and 1–2 GHz branches). Above 2 GHz, foliage absorption grows with distance (2 or 5 dB per GHz·km) and a 5/10 dB canopy penalty applies when either antenna is below 5 m in vegetation.',
     'Terrain heights come from local DTED Level 2 where available, otherwise the online SRTM 30 m service. Obstructed paths add dominant-obstacle knife-edge diffraction loss (ITU-R P.526) using a 4/3-earth radius; above 2 GHz that value is applied as a blockage penalty.',
@@ -43,7 +43,7 @@ const REPORT_ASSUMPTIONS = [
 const REPORT_LIMITATIONS = [
     'Models do not include multipath fading, atmospheric ducting, ionospheric propagation, rain fade, building-level clutter, or co-channel interference other than the modelled jammer.',
     'Terrain is sampled at 11–25 points per path, so narrow ridges or gaps between samples can be missed.',
-    'Switching between propagation models at 150 MHz, 30 m mast height, 1 GHz and 2 GHz can produce step changes in predicted loss.',
+    'Switching between propagation models at 150 MHz, 30 m mast height, 1 GHz and 2 GHz can produce step changes in predicted loss. The largest is at 1 GHz for low antennas: about 28 dB less loss just above 1 GHz, where Egli’s empirical (f/40)² terrain factor gives way to the physical two-ray model.',
     'COST-231 Hata is used below its published 1500–2000 MHz range as the elevated-transmitter obstructed-path model.',
     'Results beyond about 50 km are less reliable; the radio horizon is applied only where noted.',
 ];
