@@ -130,6 +130,69 @@ function gatherReportSnapshot() {
     };
 }
 
+// ── Imagery basemap ───────────────────────────────────────────────────────
+// Draws the tiles of the map's current base layer (plus the local imagery
+// overlay when it is on) under the report map, as one inline JPEG. Tile
+// servers must allow CORS (Esri and OSM do) or the canvas cannot be exported;
+// any failure returns null and the report falls back to the plain schematic.
+
+const BASEMAP_TILE_TIMEOUT_MS = 8000;
+const BASEMAP_ATTRIBUTION = {
+    Satellite: 'Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    Streets: 'Map data © OpenStreetMap contributors',
+};
+
+function loadTileImage(url) {
+    return new Promise(resolve => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const timer = setTimeout(() => resolve(null), BASEMAP_TILE_TIMEOUT_MS);
+        img.onload = () => { clearTimeout(timer); resolve(img); };
+        img.onerror = () => { clearTimeout(timer); resolve(null); };  // e.g. 204 = no local coverage
+        img.src = url;
+    });
+}
+
+function tileUrl(layer, t) {
+    const sub = layer.options.subdomains;
+    return L.Util.template(layer._url, { z: t.z, x: t.x, y: t.y, s: sub ? sub[0] : '', r: '' });
+}
+
+async function renderReportBasemap(mapModel) {
+    if (!mapModel?.mercator) return null;
+    const baseName = activeBaseLayerName();
+    const base = baseName === 'Streets' ? streetLayer : satelliteLayer;
+    const layers = [base];
+    if (map.hasLayer(localImageryLayer)) layers.push(localImageryLayer);
+
+    const plan = SpecterReport.basemapTilePlan(mapModel, { maxZoom: base.options.maxZoom || 18 });
+    const canvas = document.createElement('canvas');
+    canvas.width = plan.width;
+    canvas.height = plan.height;
+    const ctx = canvas.getContext('2d');
+    let drawn = 0;
+    for (const layer of layers) {
+        const images = await Promise.all(plan.tiles.map(t => loadTileImage(tileUrl(layer, t))));
+        images.forEach((img, i) => {
+            if (!img) return;
+            const t = plan.tiles[i];
+            // +1 px overlap hides hairline seams between scaled tiles.
+            ctx.drawImage(img, t.dx, t.dy, t.size + 1, t.size + 1);
+            if (layer === base) drawn++;
+        });
+    }
+    if (drawn < plan.tiles.length / 2) return null;   // mostly missing: not worth showing
+    try {
+        return {
+            href: canvas.toDataURL('image/jpeg', 0.85),
+            attribution: BASEMAP_ATTRIBUTION[baseName] +
+                (layers.length > 1 ? ' · Local imagery overlay' : ''),
+        };
+    } catch (e) {
+        return null;  // tainted canvas: a tile server without CORS
+    }
+}
+
 function reportStatus(message, isError = false) {
     const el = document.getElementById('report-status');
     if (!el) return;
@@ -137,18 +200,31 @@ function reportStatus(message, isError = false) {
     el.textContent = message || '';
 }
 
-function openReport() {
+async function openReport() {
+    // Open the window now, inside the click, so pop-up blockers allow it;
+    // imagery tiles load asynchronously afterwards.
+    const w = window.open('', '_blank');
+    if (w) {
+        w.document.write('<!DOCTYPE html><title>Generating report…</title>' +
+            '<p style="font:14px system-ui,sans-serif;padding:24px">Generating report…</p>');
+    }
     let html, report;
     try {
-        report = SpecterReport.buildReportData(gatherReportSnapshot());
+        const snapshot = gatherReportSnapshot();
+        const wantImagery = document.getElementById('report-imagery')?.checked !== false;
+        if (wantImagery) {
+            reportStatus('Loading map imagery…');
+            snapshot.basemap = await renderReportBasemap(SpecterReport.buildMapModel(snapshot));
+        }
+        report = SpecterReport.buildReportData(snapshot);
         html = SpecterReport.renderReportHtml(report);
     } catch (e) {
         console.error('Report generation failed', e);
         reportStatus('Could not build the report.', true);
+        if (w) w.close();
         return;
     }
-    const w = window.open('', '_blank');
-    if (w) {
+    if (w && !w.closed) {
         w.document.open();
         w.document.write(html);
         w.document.close();
@@ -164,5 +240,7 @@ function openReport() {
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
     }
-    reportStatus(`Report generated: ${report.counts.links} J/S result(s), ${report.counts.rings} ring(s), ${report.warnings.length} note(s).`);
+    const imageryNote = document.getElementById('report-imagery')?.checked === false ? ''
+        : report.basemap ? ' Map imagery included.' : ' Map imagery unavailable; plain map used.';
+    reportStatus(`Report generated: ${report.counts.links} J/S result(s), ${report.counts.rings} ring(s), ${report.warnings.length} note(s).${imageryNote}`);
 }

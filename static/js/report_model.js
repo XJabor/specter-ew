@@ -343,6 +343,7 @@ function buildReportData(snapshot) {
         disclaimer: REPORT_DISCLAIMER,
         support: { ...REPORT_SUPPORT },
         map: buildMapModel(snap),
+        basemap: safeBasemap(snap.basemap),
     };
 }
 
@@ -421,23 +422,26 @@ function buildMapModel(snap) {
             color: LINK_TONES[tone?.classification || 'unknown'] });
     });
 
-    const lats = points.map(p => p[0]);
-    const lons = points.map(p => p[1]);
-    const lat0 = (Math.min(...lats) + Math.max(...lats)) / 2;
-    const lon0 = (Math.min(...lons) + Math.max(...lons)) / 2;
-    const cos0 = Math.cos(lat0 * Math.PI / 180) || 1e-6;
-    const toKm = ([lat, lon]) => [(lon - lon0) * KM_PER_DEG * cos0, (lat - lat0) * KM_PER_DEG];
-    const kms = points.map(toKm);
-    const spanX = Math.max(0.5, Math.max(...kms.map(k => k[0])) - Math.min(...kms.map(k => k[0])));
-    const spanY = Math.max(0.5, Math.max(...kms.map(k => k[1])) - Math.min(...kms.map(k => k[1])));
-    const scale = Math.min((MAP_W - 2 * MAP_PAD) / spanX, (MAP_H - 2 * MAP_PAD) / spanY); // px per km
+    // Web Mercator, the projection map tiles use, so an imagery basemap drawn
+    // from mercator.{cx, cy, scale} lines up exactly with the vectors.
+    const ws = points.map(mercatorWorld);
+    const minX = Math.min(...ws.map(w => w[0])), maxX = Math.max(...ws.map(w => w[0]));
+    const minY = Math.min(...ws.map(w => w[1])), maxY = Math.max(...ws.map(w => w[1]));
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const lat0 = mercatorLat(cy);
+    const kmPerWorld = EARTH_CIRCUMFERENCE_KM * (Math.cos(lat0 * Math.PI / 180) || 1e-6);
+    const minSpan = 0.5 / kmPerWorld;  // never zoom in past ~0.5 km across
+    const scale = Math.min((MAP_W - 2 * MAP_PAD) / Math.max(minSpan, maxX - minX),
+                           (MAP_H - 2 * MAP_PAD) / Math.max(minSpan, maxY - minY)); // px per world unit
     const project = p => {
-        const [x, y] = toKm(p);
-        return [MAP_W / 2 + x * scale, MAP_H / 2 - y * scale];
+        const [x, y] = mercatorWorld(p);
+        return [MAP_W / 2 + (x - cx) * scale, MAP_H / 2 + (y - cy) * scale];
     };
+    const pxPerKm = scale / kmPerWorld;
 
     // Scale bar: largest 1/2/5×10^n km that fits in a quarter of the width.
-    const maxKm = (MAP_W / 4) / scale;
+    const maxKm = (MAP_W / 4) / pxPerKm;
     const pow = Math.pow(10, Math.floor(Math.log10(maxKm)));
     const barKm = [5, 2, 1].map(m => m * pow).find(v => v <= maxKm) || pow;
 
@@ -447,16 +451,71 @@ function buildMapModel(snap) {
         shapes: shapes.map(s => ({ ...s, points: s.points.map(project) })),
         lines: lines.map(l => ({ ...l, a: project(l.a), b: project(l.b) })),
         markers: markers.map(m => ({ ...m, xy: project([m.lat, m.lon]) })),
-        scaleBar: { km: barKm, px: barKm * scale },
+        scaleBar: { km: barKm, px: barKm * pxPerKm },
+        mercator: { cx, cy, scale },
         clipped,
     };
 }
 
-function renderMapSvg(model) {
+const EARTH_CIRCUMFERENCE_KM = 40075.017;
+
+// [lat, lon] -> Web Mercator world coordinates in [0, 1] (y grows southward).
+function mercatorWorld([lat, lon]) {
+    const phi = Math.max(-85.0511, Math.min(85.0511, lat)) * Math.PI / 180;
+    return [(lon + 180) / 360, (1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2];
+}
+
+function mercatorLat(y) {
+    return Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180 / Math.PI;
+}
+
+// Tiles covering a map model's frame at a given pixel ratio: the zoom whose
+// tile pixels are at least as fine as the output (fewer zooms if that would
+// exceed maxTiles), and where each tile lands on the output canvas.
+function basemapTilePlan(model, { pixelRatio = 2, maxZoom = 18, maxTiles = 64 } = {}) {
+    const { cx, cy, scale } = model.mercator;
+    const W = model.width * pixelRatio, H = model.height * pixelRatio;
+    const worldPx = scale * pixelRatio;                 // canvas px per world unit
+    const left = cx - (W / 2) / worldPx, top = cy - (H / 2) / worldPx;
+    const right = cx + (W / 2) / worldPx, bottom = cy + (H / 2) / worldPx;
+    let z = Math.max(0, Math.min(maxZoom, Math.ceil(Math.log2(worldPx / 256))));
+    for (;;) {
+        const n = 2 ** z;
+        const x0 = Math.floor(left * n), x1 = Math.floor(right * n);
+        const y0 = Math.max(0, Math.floor(top * n)), y1 = Math.min(n - 1, Math.floor(bottom * n));
+        const count = (x1 - x0 + 1) * (y1 - y0 + 1);
+        if (count <= maxTiles || z === 0) {
+            const size = worldPx / n;
+            const tiles = [];
+            for (let ty = y0; ty <= y1; ty++) {
+                for (let tx = x0; tx <= x1; tx++) {
+                    tiles.push({ z, x: ((tx % n) + n) % n, y: ty,
+                        dx: (tx / n - left) * worldPx, dy: (ty / n - top) * worldPx, size });
+                }
+            }
+            return { width: W, height: H, zoom: z, tiles };
+        }
+        z--;
+    }
+}
+
+const BASEMAP_HREF = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/;
+
+// Only an inline raster produced by report.js is accepted, never a URL.
+function safeBasemap(basemap) {
+    if (!basemap || !BASEMAP_HREF.test(String(basemap.href || ''))) return null;
+    return { href: basemap.href, attribution: str(basemap.attribution, 200) };
+}
+
+function renderMapSvg(model, basemap = null) {
     if (!model) return '<p class="muted">No nodes placed.</p>';
     const f = v => Number(v).toFixed(1);
-    const parts = [`<svg class="map" viewBox="0 0 ${model.width} ${model.height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Scenario schematic" overflow="hidden">`];
+    const bm = safeBasemap(basemap);
+    const parts = [`<svg class="map${bm ? ' imagery' : ''}" viewBox="0 0 ${model.width} ${model.height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Scenario map" overflow="hidden">`];
     parts.push(`<rect width="${model.width}" height="${model.height}" fill="#f6f7f4" stroke="#c9ccc4"/>`);
+    if (bm) {
+        parts.push(`<image href="${bm.href}" x="0" y="0" width="${model.width}" height="${model.height}" preserveAspectRatio="none"/>`);
+    }
     model.shapes.forEach(s => {
         const d = s.points.map(p => `${f(p[0])},${f(p[1])}`).join(' ');
         parts.push(s.kind === 'overlap'
@@ -464,7 +523,7 @@ function renderMapSvg(model) {
             : `<polygon points="${d}" fill="${s.color}" fill-opacity="0.12" stroke="${s.color}" stroke-width="1.2"/>`);
     });
     model.lines.forEach(l => parts.push(
-        `<line x1="${f(l.a[0])}" y1="${f(l.a[1])}" x2="${f(l.b[0])}" y2="${f(l.b[1])}" stroke="${l.color}" stroke-width="${l.kind === 'jammer' ? 3 : 1.6}"${l.kind === 'enemy' ? ' stroke-dasharray="6 4"' : ''}/>`));
+        `<line class="link-${l.kind}" x1="${f(l.a[0])}" y1="${f(l.a[1])}" x2="${f(l.b[0])}" y2="${f(l.b[1])}" stroke="${l.color}" stroke-width="${l.kind === 'jammer' ? 3 : 1.6}"${l.kind === 'enemy' ? ' stroke-dasharray="6 4"' : ''}/>`));
     model.markers.forEach(m => {
         const [x, y] = m.xy;
         const color = NODE_COLORS[m.type] || '#333';
@@ -475,6 +534,11 @@ function renderMapSvg(model) {
     });
     const sb = model.scaleBar;
     const y0 = model.height - 18;
+    if (bm) {
+        // Light backing so the black scale bar and north arrow read on imagery.
+        parts.push(`<rect x="12" y="${y0 - 24}" width="${f(sb.px + 18)}" height="34" rx="3" fill="#fff" fill-opacity="0.8"/>`);
+        parts.push(`<rect x="${model.width - 42}" y="8" width="28" height="46" rx="3" fill="#fff" fill-opacity="0.8"/>`);
+    }
     parts.push(`<g class="scale"><line x1="20" y1="${y0}" x2="${f(20 + sb.px)}" y2="${y0}" stroke="#222" stroke-width="2"/>` +
         `<line x1="20" y1="${y0 - 5}" x2="20" y2="${y0 + 5}" stroke="#222"/><line x1="${f(20 + sb.px)}" y1="${y0 - 5}" x2="${f(20 + sb.px)}" y2="${y0 + 5}" stroke="#222"/>` +
         `<text x="20" y="${y0 - 8}" class="lbl">${sb.km} km</text></g>`);
@@ -524,7 +588,7 @@ table{width:100%;border-collapse:collapse;margin:6px 0 4px;font-size:12px}
 th,td{border:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}th{background:var(--head);font-weight:600}
 tr.complete td:nth-child(9){color:var(--good);font-weight:600}tr.contested td:nth-child(9){color:var(--mixed);font-weight:600}tr.none td:nth-child(9){color:var(--bad);font-weight:600}
 tr.stale td{background:#fff4e5}
-svg.map{width:100%;height:auto;border-radius:4px}svg .lbl{font:11px system-ui,sans-serif;fill:#1d2327;paint-order:stroke;stroke:#fff;stroke-width:3px}
+svg.map{width:100%;height:auto;border-radius:4px}svg.imagery polygon{stroke-width:2;fill-opacity:.18}svg.imagery line.link-jammer{stroke-width:4}svg.imagery line.link-enemy{stroke-width:2.5}svg .lbl{font:11px system-ui,sans-serif;fill:#1d2327;paint-order:stroke;stroke:#fff;stroke-width:3px}
 .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--muted);margin-top:4px}.legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:4px}
 ul{margin:4px 0;padding-left:20px}li{margin:2px 0}.warns li.warn{color:var(--bad)}.warns li.info{color:var(--muted)}
 .muted{color:var(--muted)}.small{font-size:11px}
@@ -573,8 +637,8 @@ ${marking}
 <p class="disclaimer"><strong>Planning estimates.</strong> ${esc(r.disclaimer)}</p>
 
 <h2>Map</h2>
-${renderMapSvg(r.map)}
-<div class="legend"><span><i style="background:#c62828"></i>Enemy comms (dashed)</span><span><i style="background:#2e7d32"></i>Jamming: complete</span><span><i style="background:#ef6c00"></i>contested</span><span><i style="background:#c62828;height:4px"></i>no effect</span><span><i style="background:#f2d600"></i>Overlap</span><span>Schematic, north up; not a navigation product.</span>${r.map?.clipped ? '<span>Some rings extend beyond the frame.</span>' : ''}</div>
+${renderMapSvg(r.map, r.basemap)}
+<div class="legend"><span><i style="background:#c62828"></i>Enemy comms (dashed)</span><span><i style="background:#2e7d32"></i>Jamming: complete</span><span><i style="background:#ef6c00"></i>contested</span><span><i style="background:#c62828;height:4px"></i>no effect</span><span><i style="background:#f2d600"></i>Overlap</span><span>North up; not a navigation product.</span>${r.map?.clipped ? '<span>Some rings extend beyond the frame.</span>' : ''}${r.basemap?.attribution ? `<span>${esc(r.basemap.attribution)}</span>` : ''}</div>
 
 <h2>Node inventory</h2>
 ${table([['role', 'Role'], ['id', 'ID'], ['name', 'Name'], ['mgrs', 'MGRS'], ['latlon', 'Lat, Lon'], ['elevation', 'Elev.'], ['frequency', 'Frequency'], ['equipment', 'Equipment'], ['antenna', 'Antenna']], r.nodeRows)}
@@ -635,7 +699,8 @@ ${m.marking ? `<div class="marking bottom">${esc(m.marking)}</div>` : ''}
 // ── Dual-mode export ──────────────────────────────────────────────────────
 const SpecterReport = {
     REPORT_DISCLAIMER, REPORT_ASSUMPTIONS, REPORT_LIMITATIONS, REPORT_SUPPORT,
-    buildReportData, renderReportHtml, buildMapModel, renderMapSvg, escapeReportHtml: esc,
+    buildReportData, renderReportHtml, buildMapModel, renderMapSvg, basemapTilePlan,
+    escapeReportHtml: esc,
 };
 if (typeof window !== 'undefined') window.SpecterReport = SpecterReport;
 if (typeof module !== 'undefined' && module.exports) module.exports = SpecterReport;

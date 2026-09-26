@@ -307,6 +307,67 @@ test('map frames the nodes when one ring is far larger than the layout', () => {
     assert.equal(P.buildMapModel(snapshot()).clipped, false);
 });
 
+// Web Mercator world coordinates, written independently of report_model.js.
+function worldXY(lat, lon) {
+    const phi = lat * Math.PI / 180;
+    return [(lon + 180) / 360, (1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2];
+}
+
+test('basemap tiles line up with the vector markers', () => {
+    const snap = snapshot();
+    const model = P.buildMapModel(snap);
+    const plan = P.basemapTilePlan(model, { pixelRatio: 2 });
+    assert.equal(plan.width, model.width * 2);
+    assert.ok(plan.tiles.length > 0 && plan.tiles.length <= 64);
+    // Where a node falls on the canvas, computed from the tile grid, must equal
+    // its SVG marker position × pixel ratio.
+    const n = 2 ** plan.zoom;
+    const origin = plan.tiles[0];
+    snap.nodes.red.concat(snap.nodes.blue).forEach(node => {
+        const [wx, wy] = worldXY(node.lat, node.lon);
+        const canvasX = origin.dx + (wx * n - (origin.x)) * origin.size;
+        const canvasY = origin.dy + (wy * n - origin.y) * origin.size;
+        const m = model.markers.find(mk => mk.name === node.name);
+        assert.ok(Math.abs(canvasX - m.xy[0] * 2) < 0.01, `${node.name} x: ${canvasX} vs ${m.xy[0] * 2}`);
+        assert.ok(Math.abs(canvasY - m.xy[1] * 2) < 0.01, `${node.name} y: ${canvasY} vs ${m.xy[1] * 2}`);
+    });
+    // The tiles cover the whole canvas.
+    const minX = Math.min(...plan.tiles.map(t => t.dx)), minY = Math.min(...plan.tiles.map(t => t.dy));
+    const maxX = Math.max(...plan.tiles.map(t => t.dx + t.size)), maxY = Math.max(...plan.tiles.map(t => t.dy + t.size));
+    assert.ok(minX <= 0 && minY <= 0 && maxX >= plan.width && maxY >= plan.height);
+});
+
+test('basemap tile plan drops zoom rather than exceed the tile budget', () => {
+    const model = P.buildMapModel(snapshot());
+    const fine = P.basemapTilePlan(model, { maxTiles: 500 });
+    const capped = P.basemapTilePlan(model, { maxTiles: 6 });
+    assert.ok(capped.zoom < fine.zoom);
+    assert.ok(capped.tiles.length <= 6);
+    assert.ok(P.basemapTilePlan(model, { maxZoom: 10 }).zoom <= 10);
+});
+
+test('scale bar matches ground distance under the Mercator projection', () => {
+    const model = P.buildMapModel(snapshot());
+    const [a, b] = [model.markers.find(m => m.name === 'Enemy TX'), model.markers.find(m => m.name === 'Enemy RX')];
+    // R1 → R2 is 0.045° of latitude ≈ 5.00 km due north.
+    const px = Math.hypot(a.xy[0] - b.xy[0], a.xy[1] - b.xy[1]);
+    const km = px * model.scaleBar.km / model.scaleBar.px;
+    assert.ok(Math.abs(km - 5.0) < 0.05, `measured ${km} km`);
+});
+
+test('report embeds only an inline raster basemap, with attribution', () => {
+    const png = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
+    const html = P.renderReportHtml(P.buildReportData(snapshot({ basemap: { href: png, attribution: 'Imagery: Esri & <friends>' } })));
+    assert.ok(html.includes(`<image href="${png}"`));
+    assert.ok(html.includes('Imagery: Esri &amp; &lt;friends&gt;'));
+    ['https://evil.example/x.png', 'javascript:alert(1)', 'data:image/svg+xml;base64,PHN2Zz4=',
+     'data:image/png;base64,AAA" onload="alert(1)'].forEach(href => {
+        const out = P.renderReportHtml(P.buildReportData(snapshot({ basemap: { href, attribution: 'x' } })));
+        assert.ok(!out.includes('<image'), `accepted ${href}`);
+    });
+    assert.ok(!P.renderReportHtml(P.buildReportData(snapshot())).includes('<image'));
+});
+
 test('map rejects non-hex colours from the snapshot', () => {
     const model = P.buildMapModel(snapshot({ shapes: [{ kind: 'ring', color: 'red" onload="alert(1)', center: [35, -117], radiusKm: 1 }] }));
     assert.equal(model.shapes[0].color, '#888888');
