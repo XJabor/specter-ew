@@ -81,6 +81,7 @@ function clearRedSystemRings(node) {
         removeLayerRef(sys, 'layer', 'label');
         sys.rangeKm       = null;
         sys.polygonPoints = null;
+        sys.result        = null;
     });
     clearOverlapLayer();
 }
@@ -185,7 +186,6 @@ window.calculateRedNodeSystems = async function(nodeId) {
     if (!node || !node.systems || node.systems.length === 0) return;
     markDirty('Enemy system rings updated.');
 
-    const terrain = document.getElementById('enemy_terrain').value;
     // Same reference the node's own ES ring uses, so both answer one question.
     const sensor  = selectedSensorReference();
     const ll      = node.marker.getLatLng();
@@ -195,20 +195,7 @@ window.calculateRedNodeSystems = async function(nodeId) {
         const sys = node.systems[sysIdx];
         // Offset by one slot so system labels stack below the node's own ES label.
         const labelOffset = [0, (sysIdx + 1) * 20];
-        const payload = {
-            freq_mhz:            sys.freqMhz,
-            enemy_terrain:       terrain,
-            enemy_tx_w:          sys.txPowerW,
-            enemy_tx_gain:       sys.txGainDbi,
-            rx_sensitivity:      sensor.rxSensitivityDbm,
-            friendly_rx_gain:    sensor.rxGainDbi,
-            enemy_lat:           ll.lat,
-            enemy_lon:           ll.lng,
-            tx_antenna_type:     sys.antennaType,
-            tx_azimuth_deg:      sys.antennaAzimuth,
-            tx_beamwidth_deg:    sys.antennaBeamwidth,
-            tx_antenna_height_m: sys.antennaHeightAgl
-        };
+        const payload = buildRedSystemPayload(node, sys, sensor);
         try {
             const r = await fetch('/calculate_es_terrain', {
                 method:  'POST',
@@ -219,6 +206,17 @@ window.calculateRedNodeSystems = async function(nodeId) {
             if (data.status !== 'success') continue;
 
             sys.rangeKm = data.base_range_km;
+            sys.result = SpecterResults.buildFootprintResult({
+                kind: 'red-system',
+                id: `sys:${sys.id}`,
+                subject: {
+                    node: nodeRef('red', node.id),
+                    system: { id: sys.id, name: sys.name },
+                    sensor: sensor.id ? nodeRef('blue', sensor.id) : { name: sensor.name },
+                },
+                request: payload,
+                response: data,
+            });
             const style = { color: sys.color, fillColor: sys.color, fillOpacity: 0.13, weight: 2 };
             const label = `${sensor.name} detects ${sys.name}: ~${data.base_range_km.toFixed(1)} km`;
 
@@ -233,6 +231,7 @@ window.calculateRedNodeSystems = async function(nodeId) {
                 sys.layer = L.circle(ll, { ...style, radius: radiusMeters }).addTo(map);
                 sys.label = makeEdgeLabel(null, ll.lat, ll.lng, radiusMeters, label, labelOffset);
             }
+            bindInspectOnClick(sys.layer, { kind: 'red-system', nodeId: node.id, sysId: sys.id });
         } catch (e) {
             console.error('Enemy system calculate error for', sys.id, e);
         }
@@ -240,6 +239,24 @@ window.calculateRedNodeSystems = async function(nodeId) {
     updateRedSystemsWorkbench();
     renderOverlapControls();
 };
+
+function buildRedSystemPayload(node, sys, sensor = selectedSensorReference()) {
+    const ll = node.marker.getLatLng();
+    return {
+        freq_mhz:            sys.freqMhz,
+        enemy_terrain:       document.getElementById('enemy_terrain').value,
+        enemy_tx_w:          sys.txPowerW,
+        enemy_tx_gain:       sys.txGainDbi,
+        rx_sensitivity:      sensor.rxSensitivityDbm,
+        friendly_rx_gain:    sensor.rxGainDbi,
+        enemy_lat:           ll.lat,
+        enemy_lon:           ll.lng,
+        tx_antenna_type:     sys.antennaType,
+        tx_azimuth_deg:      sys.antennaAzimuth,
+        tx_beamwidth_deg:    sys.antennaBeamwidth,
+        tx_antenna_height_m: sys.antennaHeightAgl
+    };
+}
 
 // ============================================================
 // WORKBENCH
@@ -249,6 +266,7 @@ function updateRedSystemsWorkbench() {
     const container = document.getElementById('red-systems-list');
     if (!container) return;
 
+    refreshInspector();
     if (redNodes.length === 0) {
         container.innerHTML = '<p class="results-empty">No enemy nodes placed.</p>';
         return;
@@ -274,6 +292,7 @@ function updateRedSystemsWorkbench() {
                         oninput="redUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
                     <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
+                    ${sys.result ? `<button class="inspect-btn" onclick="openInspector({kind:'red-system', nodeId:'${node.id}', sysId:'${sys.id}'})" title="Explain this ring">ⓘ</button>` : ''}
                     <button class="sys-delete" onclick="removeSystemFromRedNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
                     <div class="sys-params">
                         <label class="sys-label">Freq (MHz)

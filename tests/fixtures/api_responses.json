@@ -1,0 +1,825 @@
+{
+ "ea_no_coords": {
+  "request": {
+   "apply_fh": true,
+   "enemy_bw_khz": 25,
+   "enemy_dist_km": 5.0,
+   "enemy_rx_gain": 0,
+   "enemy_terrain": "rural",
+   "enemy_tx_gain": 0,
+   "enemy_tx_w": 5,
+   "freq_mhz": 60,
+   "jammer_bw_khz": 250,
+   "jammer_dist_km": 3.0,
+   "jammer_terrain": "rural",
+   "jammer_tx_gain": 3,
+   "jammer_tx_w": 50,
+   "lower_threshold": -6,
+   "upper_threshold": 6
+  },
+  "response": {
+   "diagnostics": {
+    "bearing_gains_applied": false,
+    "enemy": {
+     "distance_km": 5.0,
+     "eirp_dbm": 36.99,
+     "elevation": null,
+     "path_loss": {
+      "base_loss_db": 151.48,
+      "clutter_db": 0.0,
+      "diffraction_db": 0.0,
+      "fspl_db": 81.98,
+      "fspl_floor_applied": false,
+      "is_los": false,
+      "loss_db": 151.48,
+      "model": "egli",
+      "near_ground_penalty_db": 0.0,
+      "terrain_category": "open",
+      "terrain_correction_db": 0.0
+     },
+     "rx_dbm": -114.49,
+     "rx_gain_effective_dbi": 0.0,
+     "rx_gain_peak_dbi": 0.0,
+     "rx_height_m": 0.0,
+     "terrain": "rural",
+     "terrain_profile_used": false,
+     "tx_gain_effective_dbi": 0.0,
+     "tx_gain_peak_dbi": 0.0,
+     "tx_height_m": 0.0,
+     "tx_power_dbm": 36.99
+    },
+    "freq_mhz": 60.0,
+    "jammer": {
+     "distance_km": 3.0,
+     "eirp_before_fh_dbm": 49.99,
+     "eirp_dbm": 39.99,
+     "elevation": null,
+     "fh": {
+      "applied": true,
+      "enemy_bw_khz": 25.0,
+      "jammer_bw_khz": 250.0,
+      "tax_db": 10.0
+     },
+     "path_loss": {
+      "base_loss_db": 142.61,
+      "clutter_db": 0.0,
+      "diffraction_db": 0.0,
+      "fspl_db": 77.55,
+      "fspl_floor_applied": false,
+      "is_los": false,
+      "loss_db": 142.61,
+      "model": "egli",
+      "near_ground_penalty_db": 0.0,
+      "terrain_category": "open",
+      "terrain_correction_db": 0.0
+     },
+     "rx_dbm": -102.62,
+     "rx_gain_effective_dbi": 0.0,
+     "rx_gain_peak_dbi": 0.0,
+     "rx_height_m": 0.0,
+     "terrain": "rural",
+     "terrain_profile_used": false,
+     "tx_gain_effective_dbi": 3.0,
+     "tx_gain_peak_dbi": 3.0,
+     "tx_height_m": 0.0,
+     "tx_power_dbm": 46.99
+    },
+    "thresholds_db": {
+     "complete_at_or_above": 6.0,
+     "no_effect_at_or_below": -6.0
+    }
+   },
+   "effect": "Complete Jamming (Jammer captures receiver)",
+   "enemy_los": null,
+   "enemy_rx_signal": -114.49,
+   "jammer_los": null,
+   "jammer_rx_signal": -102.62,
+   "margin": 11.87,
+   "status": "success",
+   "terrain_warnings": []
+  }
+ },
+ "ea_terrain": {
+  "request": {
+   "apply_fh": true,
+   "enemy_bw_khz": 25,
+   "enemy_dist_km": 5.0,
+   "enemy_rx_gain": 0,
+   "enemy_terrain": "rural",
+   "enemy_tx_gain": 0,
+   "enemy_tx_w": 5,
+   "freq_mhz": 60,
+   "jammer_antenna_height_m": 5,
+   "jammer_antenna_type": "directional",
+   "jammer_azimuth_deg": 250,
+   "jammer_beamwidth_deg": 60,
+   "jammer_bw_khz": 250,
+   "jammer_dist_km": 3.0,
+   "jammer_lat": 35.045,
+   "jammer_lon": -116.967,
+   "jammer_terrain": "rural",
+   "jammer_tx_gain": 3,
+   "jammer_tx_w": 50,
+   "lower_threshold": -6,
+   "rx_antenna_height_m": 2,
+   "rx_antenna_type": "omni",
+   "rx_lat": 35.045,
+   "rx_lon": -117.0,
+   "tx_antenna_height_m": 2,
+   "tx_antenna_type": "omni",
+   "tx_lat": 35.0,
+   "tx_lon": -117.0,
+   "upper_threshold": 6
+  },
+  "response": {
+   "diagnostics": {
+    "bearing_gains_applied": true,
+    "enemy": {
+     "distance_km": 5.0,
+     "eirp_dbm": 36.99,
+     "elevation": {
+      "local_samples": 36,
+      "profiles": 1,
+      "remote_samples": 12,
+      "source": "mixed",
+      "void_samples": 0
+     },
+     "path_loss": {
+      "base_loss_db": 139.44,
+      "clutter_db": 0.0,
+      "diffraction_db": 0.0,
+      "fspl_db": 81.98,
+      "fspl_floor_applied": false,
+      "is_los": true,
+      "loss_db": 139.44,
+      "model": "egli",
+      "near_ground_penalty_db": 0.0,
+      "terrain_category": "open",
+      "terrain_correction_db": 0.0
+     },
+     "rx_dbm": -102.45,
+     "rx_gain_effective_dbi": 0.0,
+     "rx_gain_peak_dbi": 0.0,
+     "rx_height_m": 2.0,
+     "terrain": "rural",
+     "terrain_profile_used": true,
+     "tx_gain_effective_dbi": 0.0,
+     "tx_gain_peak_dbi": 0.0,
+     "tx_height_m": 2.0,
+     "tx_power_dbm": 36.99
+    },
+    "freq_mhz": 60.0,
+    "jammer": {
+     "distance_km": 3.0,
+     "eirp_before_fh_dbm": 48.66,
+     "eirp_dbm": 38.66,
+     "elevation": {
+      "local_samples": 36,
+      "profiles": 1,
+      "remote_samples": 12,
+      "source": "mixed",
+      "void_samples": 0
+     },
+     "fh": {
+      "applied": true,
+      "enemy_bw_khz": 25.0,
+      "jammer_bw_khz": 250.0,
+      "tax_db": 10.0
+     },
+     "path_loss": {
+      "base_loss_db": 122.61,
+      "clutter_db": 0.0,
+      "diffraction_db": 0.0,
+      "fspl_db": 77.55,
+      "fspl_floor_applied": false,
+      "is_los": true,
+      "loss_db": 122.61,
+      "model": "egli",
+      "near_ground_penalty_db": 0.0,
+      "terrain_category": "open",
+      "terrain_correction_db": 0.0
+     },
+     "rx_dbm": -83.95,
+     "rx_gain_effective_dbi": 0.0,
+     "rx_gain_peak_dbi": 0.0,
+     "rx_height_m": 2.0,
+     "terrain": "rural",
+     "terrain_profile_used": true,
+     "tx_gain_effective_dbi": 1.67,
+     "tx_gain_peak_dbi": 3.0,
+     "tx_height_m": 5.0,
+     "tx_power_dbm": 46.99
+    },
+    "thresholds_db": {
+     "complete_at_or_above": 6.0,
+     "no_effect_at_or_below": -6.0
+    }
+   },
+   "effect": "Complete Jamming (Jammer captures receiver)",
+   "enemy_los": {
+    "diffraction_loss_db": 0.0,
+    "is_los": true,
+    "max_obstruction_m": -1.6,
+    "obstruction_distance_km": 2.449
+   },
+   "enemy_rx_signal": -102.45,
+   "jammer_los": {
+    "diffraction_loss_db": 0.0,
+    "is_los": true,
+    "max_obstruction_m": -2.1,
+    "obstruction_distance_km": 2.94
+   },
+   "jammer_rx_signal": -83.95,
+   "margin": 18.5,
+   "status": "success",
+   "terrain_warnings": []
+  }
+ },
+ "es_ring": {
+  "request": {
+   "enemy_lat": 35.0,
+   "enemy_lon": -117.0,
+   "enemy_terrain": "rural",
+   "enemy_tx_gain": 0,
+   "enemy_tx_w": 5,
+   "freq_mhz": 150,
+   "friendly_rx_gain": 0,
+   "rx_sensitivity": -100,
+   "tx_antenna_height_m": 2,
+   "tx_antenna_type": "omni"
+  },
+  "response": {
+   "base_range_km": 1.942,
+   "diagnostics": {
+    "antenna": {
+     "azimuth_deg": 0.0,
+     "beamwidth_deg": 90.0,
+     "height_m": 2.0,
+     "type": "omni"
+    },
+    "bearing_ranges_km": [
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942,
+     1.942
+    ],
+    "bearings_at_projection_limit": 36,
+    "blocked_bearings": 0,
+    "elevation": {
+     "local_samples": 297,
+     "profiles": 36,
+     "remote_samples": 99,
+     "source": "mixed",
+     "void_samples": 0
+    },
+    "fallback_circle": false,
+    "flat_los": {
+     "budget_db": 136.99,
+     "distance_km": 1.942,
+     "fspl_floor_limited": false,
+     "horizon_capped": false,
+     "horizon_km": null,
+     "model": "egli",
+     "uncapped_distance_km": 1.942
+    },
+    "flat_nlos": {
+     "budget_db": 136.99,
+     "distance_km": 1.942,
+     "fspl_floor_limited": false,
+     "horizon_capped": false,
+     "horizon_km": null,
+     "model": "egli",
+     "uncapped_distance_km": 1.942
+    },
+    "freq_mhz": 150.0,
+    "locally_covered": false,
+    "models_used": {
+     "egli": 36
+    },
+    "num_bearings": 36,
+    "num_samples": 11,
+    "peak_eirp_dbm": 36.99,
+    "projection_range_km": 1.942,
+    "ranges": {
+     "max_km": 1.942,
+     "mean_km": 1.942,
+     "median_km": 1.942,
+     "min_km": 1.942
+    },
+    "rx_gain_dbi": 0.0,
+    "rx_sensitivity_dbm": -100.0,
+    "terrain": "rural",
+    "tx_power_dbm": 36.99
+   },
+   "polygon_points": [
+    [
+     35.017464825586934,
+     -117.0
+    ],
+    [
+     35.01719943942229,
+     -116.99629693554033
+    ],
+    [
+     35.01641134962902,
+     -116.9927064570955
+    ],
+    [
+     35.01512451653264,
+     -116.98933772132645
+    ],
+    [
+     35.01337806229616,
+     -116.98629313141129
+    ],
+    [
+     35.01122507950934,
+     -116.98366522004447
+    ],
+    [
+     35.00873101468207,
+     -116.98153383494055
+    ],
+    [
+     35.00597167615907,
+     -116.9799637127132
+    ],
+    [
+     35.00303092741043,
+     -116.97900251484282
+    ],
+    [
+     34.999998136185646,
+     -116.97867938505006
+    ],
+    [
+     34.99696545736262,
+     -116.97900407123768
+    ],
+    [
+     34.9940250322619,
+     -116.97996663777879
+    ],
+    [
+     34.99126618959632,
+     -116.98153777587086
+    ],
+    [
+     34.988772733028235,
+     -116.9836697015052
+    ],
+    [
+     34.98662039753734,
+     -116.98629761287216
+    ],
+    [
+     34.9848745515601,
+     -116.98934166225712
+    ],
+    [
+     34.98358821432121,
+     -116.99270938216151
+    ],
+    [
+     34.98280044817592,
+     -116.99629849193546
+    ],
+    [
+     34.98253517441306,
+     -117.0
+    ],
+    [
+     34.98280044817592,
+     -117.00370150806452
+    ],
+    [
+     34.98358821432121,
+     -117.00729061783849
+    ],
+    [
+     34.9848745515601,
+     -117.01065833774288
+    ],
+    [
+     34.98662039753734,
+     -117.01370238712784
+    ],
+    [
+     34.988772733028235,
+     -117.0163302984948
+    ],
+    [
+     34.99126618959632,
+     -117.01846222412914
+    ],
+    [
+     34.9940250322619,
+     -117.02003336222121
+    ],
+    [
+     34.99696545736263,
+     -117.0209959287623
+    ],
+    [
+     34.999998136185646,
+     -117.02132061494994
+    ],
+    [
+     35.00303092741043,
+     -117.02099748515718
+    ],
+    [
+     35.00597167615907,
+     -117.0200362872868
+    ],
+    [
+     35.00873101468207,
+     -117.01846616505945
+    ],
+    [
+     35.01122507950934,
+     -117.01633477995553
+    ],
+    [
+     35.01337806229616,
+     -117.01370686858871
+    ],
+    [
+     35.01512451653264,
+     -117.01066227867355
+    ],
+    [
+     35.01641134962902,
+     -117.0072935429045
+    ],
+    [
+     35.01719943942229,
+     -117.00370306445967
+    ]
+   ],
+   "status": "success"
+  }
+ },
+ "footprint_fallback": {
+  "request": {
+   "freq_mhz": 150,
+   "friendly_rx_gain": 0,
+   "jammer_antenna_height_m": 2,
+   "jammer_antenna_type": "omni",
+   "jammer_lat": 35.0,
+   "jammer_lon": -117.0,
+   "jammer_terrain": "rural",
+   "jammer_tx_gain": 3,
+   "jammer_tx_w": 20,
+   "rx_sensitivity": -90
+  },
+  "response": {
+   "base_range_km": 1.835,
+   "diagnostics": {
+    "antenna": {
+     "azimuth_deg": 0.0,
+     "beamwidth_deg": 90.0,
+     "height_m": 2.0,
+     "type": "omni"
+    },
+    "bearing_ranges_km": [],
+    "bearings_at_projection_limit": 0,
+    "blocked_bearings": 0,
+    "elevation": {
+     "local_samples": 0,
+     "profiles": 0,
+     "remote_samples": 0,
+     "source": "none",
+     "void_samples": 0
+    },
+    "fallback_circle": true,
+    "flat_los": {
+     "budget_db": 136.01,
+     "distance_km": 1.835,
+     "fspl_floor_limited": false,
+     "horizon_capped": false,
+     "horizon_km": null,
+     "model": "egli",
+     "uncapped_distance_km": 1.835
+    },
+    "flat_nlos": {
+     "budget_db": 136.01,
+     "distance_km": 1.835,
+     "fspl_floor_limited": false,
+     "horizon_capped": false,
+     "horizon_km": null,
+     "model": "egli",
+     "uncapped_distance_km": 1.835
+    },
+    "freq_mhz": 150.0,
+    "locally_covered": false,
+    "models_used": {},
+    "num_bearings": 36,
+    "num_samples": 11,
+    "peak_eirp_dbm": 46.01,
+    "projection_range_km": 1.835,
+    "ranges": {
+     "max_km": 1.835,
+     "mean_km": 1.835,
+     "median_km": 1.835,
+     "min_km": 1.835
+    },
+    "rx_gain_dbi": 0.0,
+    "rx_sensitivity_dbm": -90.0,
+    "terrain": "rural",
+    "tx_power_dbm": 43.01
+   },
+   "polygon_points": null,
+   "status": "success"
+  }
+ },
+ "shf_ring": {
+  "request": {
+   "enemy_lat": 35.0,
+   "enemy_lon": -117.0,
+   "enemy_terrain": "light forest",
+   "enemy_tx_gain": 0,
+   "enemy_tx_w": 1,
+   "freq_mhz": 5800,
+   "friendly_rx_gain": 0,
+   "rx_sensitivity": -100,
+   "tx_antenna_height_m": 2,
+   "tx_antenna_type": "omni"
+  },
+  "response": {
+   "base_range_km": 1.296,
+   "diagnostics": {
+    "antenna": {
+     "azimuth_deg": 0.0,
+     "beamwidth_deg": 90.0,
+     "height_m": 2.0,
+     "type": "omni"
+    },
+    "bearing_ranges_km": [
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296,
+     1.296
+    ],
+    "bearings_at_projection_limit": 36,
+    "blocked_bearings": 0,
+    "elevation": {
+     "local_samples": 297,
+     "profiles": 36,
+     "remote_samples": 99,
+     "source": "mixed",
+     "void_samples": 0
+    },
+    "fallback_circle": false,
+    "flat_los": {
+     "budget_db": 130.0,
+     "distance_km": 1.296,
+     "fspl_floor_limited": false,
+     "horizon_capped": false,
+     "horizon_km": 9.954,
+     "model": "shf",
+     "uncapped_distance_km": 1.296
+    },
+    "flat_nlos": {
+     "budget_db": 130.0,
+     "distance_km": 1.296,
+     "fspl_floor_limited": false,
+     "horizon_capped": false,
+     "horizon_km": 9.954,
+     "model": "shf",
+     "uncapped_distance_km": 1.296
+    },
+    "freq_mhz": 5800.0,
+    "locally_covered": false,
+    "models_used": {
+     "shf": 36
+    },
+    "num_bearings": 36,
+    "num_samples": 11,
+    "peak_eirp_dbm": 30.0,
+    "projection_range_km": 1.296,
+    "ranges": {
+     "max_km": 1.296,
+     "mean_km": 1.296,
+     "median_km": 1.296,
+     "min_km": 1.296
+    },
+    "rx_gain_dbi": 0.0,
+    "rx_sensitivity_dbm": -100.0,
+    "terrain": "light forest",
+    "tx_power_dbm": 30.0
+   },
+   "polygon_points": [
+    [
+     35.011655208012684,
+     -117.0
+    ],
+    [
+     35.01147811417833,
+     -116.99752892077524
+    ],
+    [
+     35.01095221584179,
+     -116.99513295533141
+    ],
+    [
+     35.01009349866512,
+     -116.99288493137875
+    ],
+    [
+     35.00892806430412,
+     -116.99085317440338
+    ],
+    [
+     35.00749133611946,
+     -116.98909942916886
+    ],
+    [
+     35.00582698138009,
+     -116.98767698232406
+    ],
+    [
+     35.003985582885605,
+     -116.98662904331867
+    ],
+    [
+     35.00202310055891,
+     -116.98598743282062
+    ],
+    [
+     34.999999169930966,
+     -116.98577161832759
+    ],
+    [
+     34.99797528936233,
+     -116.98598812597723
+    ],
+    [
+     34.99601295117558,
+     -116.98663034602696
+    ],
+    [
+     34.99417177351635,
+     -116.9876787374582
+    ],
+    [
+     34.99250768967152,
+     -116.9891014250338
+    ],
+    [
+     34.99107124976679,
+     -116.99085517026835
+    ],
+    [
+     34.98990608630033,
+     -116.99288668651297
+    ],
+    [
+     34.98904758995892,
+     -116.99513425803977
+    ],
+    [
+     34.988521835762356,
+     -116.99752961393189
+    ],
+    [
+     34.98834479198729,
+     -117.0
+    ],
+    [
+     34.988521835762356,
+     -117.00247038606811
+    ],
+    [
+     34.98904758995892,
+     -117.00486574196023
+    ],
+    [
+     34.98990608630033,
+     -117.00711331348703
+    ],
+    [
+     34.99107124976679,
+     -117.00914482973165
+    ],
+    [
+     34.99250768967152,
+     -117.0108985749662
+    ],
+    [
+     34.99417177351635,
+     -117.0123212625418
+    ],
+    [
+     34.99601295117558,
+     -117.01336965397304
+    ],
+    [
+     34.99797528936233,
+     -117.01401187402277
+    ],
+    [
+     34.999999169930966,
+     -117.01422838167241
+    ],
+    [
+     35.002023100558894,
+     -117.01401256717936
+    ],
+    [
+     35.003985582885605,
+     -117.01337095668133
+    ],
+    [
+     35.00582698138009,
+     -117.01232301767594
+    ],
+    [
+     35.00749133611946,
+     -117.01090057083114
+    ],
+    [
+     35.00892806430412,
+     -117.00914682559662
+    ],
+    [
+     35.01009349866512,
+     -117.00711506862125
+    ],
+    [
+     35.01095221584179,
+     -117.00486704466859
+    ],
+    [
+     35.01147811417833,
+     -117.00247107922476
+    ]
+   ],
+   "status": "success"
+  }
+ }
+}

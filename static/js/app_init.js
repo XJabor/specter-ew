@@ -3,8 +3,14 @@
 // all functions/state from the earlier files exist before any of it runs.
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') setMode(null);
+    if (e.key === 'Escape') {
+        // First Esc cancels a placement/link mode; with none active it closes the inspector.
+        if (activeMode) setMode(null);
+        else closeInspector();
+    }
 });
+
+document.getElementById('btn-generate-report').addEventListener('click', openReport);
 
 document.getElementById('btn-ep-mode').addEventListener('click', toggleEpMode);
 
