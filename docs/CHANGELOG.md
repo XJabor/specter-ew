@@ -10,7 +10,7 @@
 - Fixed detection ranges running slightly too far for tall antennas at short range; above 1 GHz, low antennas now include the ground reflection, which previously made ranges look far longer than realistic
 - Added automated checks that compare the models against hand calculations from published formulas and alert on any unexpected change in results
 - EP mode now assumes Rural / Open terrain by default instead of Free Space, which had drawn ground-level EP rings hundreds of kilometres wide
-- Terrain lookups from the free online elevation service now wait their turn instead of arriving all at once, so loading a saved scenario no longer gets most requests refused and drawn as plain circles (large scenarios take longer to finish loading as a result)
+- Terrain lookups from the free online elevation service now wait their turn instead of arriving all at once, so loading a saved scenario no longer gets most requests refused and drawn as plain circles (large scenarios take longer to finish loading, so a progress bar now shows how many calculations remain)
 
 -----
 16AUG26 Claude Code
