@@ -20,7 +20,8 @@ function createRedNode(latlng, opts) {
                    systems: [] };
     applyEquipmentToNode(node, opts.equipment, 'red');
     node.antennaAzimuth = Number(opts.antennaAzimuth || 0);
-    node.systems = (opts.systems || []).map((sys, idx) => redSystemFromScenario(sys, idx, node.id));
+    const sysIds = scenarioSystemIds(opts.systems, node.id);
+    node.systems = (opts.systems || []).map((sys, idx) => redSystemFromScenario(sys, idx, node.id, sysIds[idx]));
     marker.on('click', function() { handleNodeClick('red', node.id); });
     marker.on('dragend', function() {
         // Every system polygon is position-derived, so a move invalidates them all.
@@ -82,7 +83,7 @@ function scenarioLatLng(item) {
 
 function makeRedNodeFromScenario(item) {
     createRedNode(scenarioLatLng(item), {
-        id: item.id, name: item.name,
+        id: item.id, name: item.name == null ? null : storedNodeName(item.name),
         equipment: scenarioEquipment(item),
         antennaAzimuth: item.antenna_azimuth,
         esActive: item.es_active,
@@ -92,7 +93,7 @@ function makeRedNodeFromScenario(item) {
 
 function makeBlueNodeFromScenario(item) {
     createBlueNode(scenarioLatLng(item), {
-        id: item.id, name: item.name,
+        id: item.id, name: item.name == null ? null : storedNodeName(item.name),
         equipment: scenarioEquipment(item),
         antennaAzimuth: item.antenna_azimuth,
         sensorActive: item.sensor_active,
@@ -101,7 +102,7 @@ function makeBlueNodeFromScenario(item) {
 }
 
 function makeBlackNodeFromScenario(item) {
-    createBlackNode(scenarioLatLng(item), { id: item.id, name: item.name });
+    createBlackNode(scenarioLatLng(item), { id: item.id, name: item.name == null ? null : storedNodeName(item.name) });
 }
 
 // ============================================================
@@ -109,7 +110,7 @@ function makeBlackNodeFromScenario(item) {
 // ============================================================
 
 function libraryNodeName(template, fallbackId) {
-    const base = String(template?.name || fallbackId).slice(0, 20);
+    const base = storedNodeName(String(template?.name || fallbackId).slice(0, 20));
     const existing = new Set([...redNodes, ...blueNodes].map(n => n.name));
     if (!existing.has(base)) return base;
     for (let i = 2; i < 100; i++) {
@@ -193,13 +194,19 @@ function antennaPopupSection(team, id, node) {
 
 // Shared trailer: every node popup ends with the MGRS jump section and
 // (except black markers) the antenna configuration section.
+// bodyHtml may be a function: Leaflet then builds the popup when it opens, so
+// it reflects results (e.g. an "Explain" button) that arrived after binding.
 function bindNodePopup(node, team, bodyHtml, { antenna = true } = {}) {
     node.marker.bindPopup(
-        bodyHtml
-        + mgrsInputSection(team, node.id, node)
-        + (antenna ? antennaPopupSection(team, node.id, node) : ''),
+        () => (typeof bodyHtml === 'function' ? bodyHtml() : bodyHtml)
+            + mgrsInputSection(team, node.id, node)
+            + (antenna ? antennaPopupSection(team, node.id, node) : ''),
         { minWidth: 180 }
     );
+}
+
+function popupInspectButton(ref, label) {
+    return `<button ${inspectDataAttr(ref)}>ⓘ ${label}</button><br>`;
 }
 
 // Re-binds the popup for any node type; replaces per-call-site type chains.
@@ -212,10 +219,11 @@ function bindRedPopup(id) {
     const node = findNode('red', id);
     if (!node) return;
     const esLabel = node.esActive ? '🚫 Hide Detection Ring' : '📡 Show Detection Ring';
-    bindNodePopup(node, 'red',
+    bindNodePopup(node, 'red', () =>
         `<b>Enemy Node ${node.name}</b><br>
         <button onclick="startEnemyLink('${id}')">🔗 Link Enemy Comms</button><br>
         <button onclick="toggleNodeES('${id}')">${esLabel}</button><br>
+        ${node.esResult ? popupInspectButton({ kind: 'es-ring', nodeId: id }, 'Explain Detection Ring') : ''}
         <button onclick="renameNode('red','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('red','${id}')">🗑️ Remove Node</button>`);
 }
@@ -231,10 +239,11 @@ function bindBluePopup(id) {
     const sensorButton = isReceiverCapableNode(node, 'blue')
         ? `<button onclick="toggleNodeSensorCoverage('${id}')">${node.sensorActive ? '🚫 Hide Sensor Coverage' : '📡 Show Sensor Coverage'}</button><br>`
         : '';
-    bindNodePopup(node, 'blue',
+    bindNodePopup(node, 'blue', () =>
         `<b>Friendly Node ${node.name}</b><br>
         ${sensorButton}
         ${jammerButton}
+        ${node.fpResult ? popupInspectButton({ kind: 'jammer-footprint', nodeId: id }, 'Explain Jammer Footprint') : ''}
         <button onclick="renameNode('blue','${id}')">✏️ Rename Node</button><br>
         <button onclick="removeNode('blue','${id}')">🗑️ Remove Node</button>`);
 }
@@ -457,16 +466,18 @@ function createEnemyLink(txId, rxId) {
         permanent: true, direction: 'center', className: 'dist-label'
     }).addTo(map);
 
-    // Click the line to remove it
+    // Click the line to inspect it (removal lives in the inspector and the results table)
     line.on('click', function(e) {
         L.DomEvent.stopPropagation(e);
         if (activeMode) return;
-        removeEnemyLink(linkId);
+        openInspector({ kind: 'enemy-link', enemyLinkId: linkId });
     });
 
     enemyLinks.push({ id: linkId, txId, rxId, line });
     markDirty('Enemy link added.');
-    recalculateAll();
+    // loadScenario() recreates every link, then recalculates once at the end;
+    // a round per link would queue N duplicate batches of terrain requests.
+    if (!scenarioLoading) recalculateAll();
 }
 
 function createJammingLink(blueId, rxId) {
@@ -485,16 +496,16 @@ function createJammingLink(blueId, rxId) {
         permanent: true, direction: 'center', className: 'dist-label'
     }).addTo(map);
 
-    // Click the line to remove it
+    // Click the line to inspect it (removal lives in the inspector and the results table)
     line.on('click', function(e) {
         L.DomEvent.stopPropagation(e);
         if (activeMode) return;
-        removeJammingLink(linkId);
+        openInspector({ kind: 'ea-link', jammingLinkId: linkId, enemyLinkId: null });
     });
 
     jammingLinks.push({ id: linkId, blueId, rxId, line, results: null });
     markDirty('Jamming link added.');
-    recalculateAll();
+    if (!scenarioLoading) recalculateAll();   // see createEnemyLink
 }
 
 // ============================================================

@@ -3,7 +3,7 @@
 // Scenario/profile-pack validation, migration, and serialization helpers.
 
 const SCENARIO_SCHEMA_VERSION = 5;
-const SPECTER_APP_VERSION = 'release-1-dev';
+const SPECTER_APP_VERSION = '1.2.0'; // keep in sync with APP_VERSION in app.py
 
 const PROFILE_CATEGORIES = ['radio', 'receiver', 'jammer', 'antenna'];
 const PROFILE_NUMERIC_RANGES = {
@@ -25,28 +25,141 @@ function latLngToPlain(latlng) {
     return { lat: latlng.lat, lon: latlng.lng };
 }
 
+// Ids are interpolated into generated markup and inline handlers, and are
+// composed into other ids (links are `${from}-${to}`, systems `${node}_S<n>`),
+// so a scenario file may only carry exactly the formats the app generates.
+// Hyphen-free node ids keep link ids unambiguous; the per-kind prefix keeps
+// setCounterFromIds() from handing a loaded id to a newly placed node.
+const NODE_ID_PATTERNS = {
+    red:   /^R[0-9]{1,9}$/,
+    blue:  /^B[0-9]{1,9}$/,
+    black: /^M[0-9]{1,9}$/,
+    ep:    /^EP[0-9]{1,9}$/,
+};
+const SCENARIO_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const SYSTEM_NUMERIC_FIELDS = ['freq_mhz', 'tx_power_w', 'tx_gain_dbi', 'antenna_azimuth',
+                               'antenna_beamwidth', 'antenna_height_agl'];
+// UI names are capped at MAX_PLAIN_NAME_LENGTH characters. Red/blue/black names
+// are stored HTML-escaped (up to 6 characters per input character), so the
+// validator allows that expansion: anything the app saves, it can reload.
+const MAX_PLAIN_NAME_LENGTH = 80;
+const MAX_NAME_LENGTH = MAX_PLAIN_NAME_LENGTH * 6;
+
+function isPlainObject(v) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function assertNodeId(id, kind, what) {
+    if (typeof id !== 'string' || !NODE_ID_PATTERNS[kind].test(id)) {
+        throw new Error(`${what} has an invalid id (expected the app's ${kind} node format, e.g. ${NODE_ID_PATTERNS[kind].source.replace(/[\^$]|\[0-9\]\{1,9\}/g, '')}1).`);
+    }
+}
+
+function systemIdPattern(nodeId) {
+    return new RegExp(`^${nodeId}_S[0-9]{1,9}$`);  // nodeId already validated: no regex metacharacters
+}
+
+function assertOptionalName(name, what) {
+    if (name == null) return;
+    if (!['string', 'number'].includes(typeof name) || String(name).length > MAX_NAME_LENGTH) {
+        throw new Error(`${what} has an invalid name.`);
+    }
+}
+
+// Ids for a node's systems as the app will use them: explicit ids kept, missing
+// ones given the next unused <nodeId>_S<n>, so they can never collide with an
+// explicit sibling (the old `_S${index + 1}` fallback could).
+function scenarioSystemIds(systems, nodeId) {
+    const list = Array.isArray(systems) ? systems : [];
+    const used = list.map(s => /_S(\d+)$/.exec(s?.id || '')).filter(Boolean).map(m => Number(m[1]));
+    let next = Math.max(0, ...used) + 1;
+    return list.map(s => s?.id || `${nodeId}_S${next++}`);
+}
+
+function validateScenarioSystems(systems, nodeId) {
+    if (systems == null) return;
+    if (!Array.isArray(systems)) throw new Error(`Scenario node ${nodeId} systems must be an array.`);
+    const ids = new Set();
+    const pattern = systemIdPattern(nodeId);
+    systems.forEach((sys, i) => {
+        const what = `Scenario node ${nodeId} system ${i + 1}`;
+        if (!isPlainObject(sys)) throw new Error(`${what} must be an object.`);
+        if (sys.id != null) {
+            if (typeof sys.id !== 'string' || !pattern.test(sys.id)) {
+                throw new Error(`${what} has an invalid id (expected ${nodeId}_S<number>).`);
+            }
+            if (ids.has(sys.id)) throw new Error(`${what} duplicates id ${sys.id}.`);
+            ids.add(sys.id);
+        }
+        assertOptionalName(sys.name, what);
+        SYSTEM_NUMERIC_FIELDS.forEach(field => {
+            if (sys[field] != null && !Number.isFinite(Number(sys[field]))) {
+                throw new Error(`${what} has an invalid ${field}.`);
+            }
+        });
+        if (sys.color != null && !SCENARIO_COLOR_PATTERN.test(String(sys.color))) {
+            throw new Error(`${what} has an invalid color.`);
+        }
+        if (sys.antenna_type != null && !['omni', 'directional'].includes(sys.antenna_type)) {
+            throw new Error(`${what} has an invalid antenna_type.`);
+        }
+    });
+}
+
+function validateScenarioLinks(links, kind, fromKey, fromKind) {
+    const items = links[kind] || [];
+    if (!Array.isArray(items)) throw new Error(`Scenario links.${kind} must be an array.`);
+    items.forEach((link, i) => {
+        if (!isPlainObject(link)) throw new Error(`Scenario links.${kind}[${i}] must be an object.`);
+        assertNodeId(link[fromKey], fromKind, `Scenario links.${kind}[${i}] ${fromKey}`);
+        assertNodeId(link.rx_id, 'red', `Scenario links.${kind}[${i}] rx_id`);
+    });
+}
+
+// Full structural validation. loadScenario() runs this (via migrateScenario)
+// BEFORE clearing the current scenario, so a malformed file can never leave
+// the user with an emptied map.
 function validateScenario(data) {
     if (!data || typeof data !== 'object') throw new Error('Scenario file is not valid JSON.');
     if (data.schema_version == null) throw new Error('Scenario is missing schema_version.');
     if (Number(data.schema_version) > SCENARIO_SCHEMA_VERSION) {
         throw new Error(`Scenario schema v${data.schema_version} is newer than this app supports.`);
     }
-    if (!data.nodes || typeof data.nodes !== 'object') throw new Error('Scenario is missing nodes.');
-    if (!data.links || typeof data.links !== 'object') throw new Error('Scenario is missing links.');
+    if (!isPlainObject(data.nodes)) throw new Error('Scenario is missing nodes.');
+    if (!isPlainObject(data.links)) throw new Error('Scenario is missing links.');
+    const nodeIds = new Set();
     ['red', 'blue', 'black', 'ep'].forEach(kind => {
         const items = data.nodes[kind] || [];
         if (!Array.isArray(items)) throw new Error(`Scenario nodes.${kind} must be an array.`);
         items.forEach(item => {
-            if (!item.id || !item.location) throw new Error(`Scenario ${kind} node is missing id or location.`);
+            if (!isPlainObject(item) || !item.id || !isPlainObject(item.location)) {
+                throw new Error(`Scenario ${kind} node is missing id or location.`);
+            }
+            assertNodeId(item.id, kind, `Scenario ${kind} node`);
+            if (nodeIds.has(item.id)) throw new Error(`Scenario has more than one node with id ${item.id}.`);
+            nodeIds.add(item.id);
+            assertOptionalName(item.name, `Scenario ${kind} node ${item.id}`);
             const lat = Number(item.location.lat);
             const lon = Number(item.location.lon);
             if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
                 throw new Error(`Scenario ${kind} node ${item.id} has an invalid location.`);
             }
+            if (item.equipment != null && !isPlainObject(item.equipment)) {
+                throw new Error(`Scenario ${kind} node ${item.id} equipment must be an object.`);
+            }
+            if (kind === 'red' || kind === 'ep') validateScenarioSystems(item.systems, item.id);
         });
     });
-    if (!Array.isArray(data.links.enemy || [])) throw new Error('Scenario links.enemy must be an array.');
-    if (!Array.isArray(data.links.jamming || [])) throw new Error('Scenario links.jamming must be an array.');
+    validateScenarioLinks(data.links, 'enemy', 'tx_id', 'red');
+    validateScenarioLinks(data.links, 'jamming', 'blue_id', 'blue');
+    if (data.settings != null && !isPlainObject(data.settings)) throw new Error('Scenario settings must be an object.');
+    if (data.overlays != null) {
+        if (!isPlainObject(data.overlays)) throw new Error('Scenario overlays must be an object.');
+        const checked = data.overlays.overlap_checked;
+        if (checked != null && (!Array.isArray(checked) || checked.some(v => typeof v !== 'string'))) {
+            throw new Error('Scenario overlays.overlap_checked must be a list of strings.');
+        }
+    }
     if (data.profile_library != null) {
         if (!data.profile_library || typeof data.profile_library !== 'object') throw new Error('Scenario profile_library must be an object.');
         if (!Array.isArray(data.profile_library.packs || [])) throw new Error('Scenario profile_library.packs must be an array.');
@@ -218,7 +331,8 @@ function validateProfilePack(pack, options = {}) {
 // Browser: classic script, everything above is already a shared global.
 // Node (tests/js/): no package.json, so this file loads as CommonJS.
 const SpecterSchema = {
-    SCENARIO_SCHEMA_VERSION, SPECTER_APP_VERSION,
+    SCENARIO_SCHEMA_VERSION, SPECTER_APP_VERSION, MAX_PLAIN_NAME_LENGTH,
+    scenarioSystemIds,
     PROFILE_CATEGORIES, PROFILE_NUMERIC_RANGES,
     validateScenario, migrateScenario, validateProfilePack,
     normalizeProfileId, assertFiniteRange, scenarioNow,

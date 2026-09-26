@@ -11,15 +11,16 @@ function makeEpNodeFromScenario(item) {
         iconAnchor: [12, 12]
     });
     const marker = L.marker(ll, { icon, draggable: true }).addTo(map);
+    const sysIds = scenarioSystemIds(item.systems, item.id);
     const node = {
         id: item.id,
-        name: item.name || item.id,
+        name: cappedName(item.name || item.id),
         lat: ll[0],
         lon: ll[1],
         marker,
         systems: (item.systems || []).map((sys, idx) => ({
-            id: sys.id || item.id + '_S' + (idx + 1),
-            name: sys.name || 'System ' + (idx + 1),
+            id: sysIds[idx],
+            name: cappedName(sys.name || 'System ' + (idx + 1)),
             freqMhz: Number(sys.freq_mhz || 150),
             txPowerW: Number(sys.tx_power_w || 5),
             txGainDbi: Number(sys.tx_gain_dbi || 0),
@@ -123,6 +124,7 @@ function clearEpNodeRings(node) {
         removeLayerRef(s, 'layer', 'label');
         s.rangeKm       = null;
         s.polygonPoints = null;
+        s.result        = null;
     });
 }
 
@@ -194,7 +196,7 @@ window.addLibrarySystemToEpNode = function(nodeId) {
     const sysIdx = nextSystemIndex(node);
     node.systems.push({
         id:               nodeId + '_S' + sysIdx,
-        name:             template.name || ('System ' + sysIdx),
+        name:             cappedName(template.name || ('System ' + sysIdx)),
         freqMhz:          Number(template.frequency_mhz || 150),
         txPowerW:         Number(template.tx_power_w || 5),
         txGainDbi:        Number(template.antenna_gain_dbi || 0),
@@ -216,6 +218,8 @@ window.addLibrarySystemToEpNode = function(nodeId) {
 window.removeSystemFromEpNode = function(nodeId, sysId) {
     const node = epNodes.find(n => n.id === nodeId);
     if (!node) return;
+    // A running calculateEpNode() may still hold this system object; it checks
+    // membership after each response, so no ring is drawn for it once removed.
     const sys = node.systems.find(s => s.id === sysId);
     if (sys) removeLayerRef(sys, 'layer', 'label');
     node.systems = node.systems.filter(s => s.id !== sysId);
@@ -225,13 +229,13 @@ window.removeSystemFromEpNode = function(nodeId, sysId) {
 
 window.epUpdateNodeName = function(nodeId, val) {
     const node = epNodes.find(n => n.id === nodeId);
-    if (node) { node.name = val; updateMGRSTooltips(); markDirty('EP node renamed.'); }
+    if (node) { node.name = cappedName(val); updateMGRSTooltips(); markDirty('EP node renamed.'); }
 };
 
 window.epUpdateSysName = function(nodeId, sysId, val) {
     const node = epNodes.find(n => n.id === nodeId);
     const sys  = node && node.systems.find(s => s.id === sysId);
-    if (sys) { sys.name = val; markDirty('EP system renamed.'); }
+    if (sys) { sys.name = cappedName(val); markDirty('EP system renamed.'); }
 };
 
 // Normalizers mirror the EA setters in nodes_links.js so both modes agree.
@@ -272,8 +276,6 @@ window.calculateEpNode = async function(nodeId) {
     if (!node || node.systems.length === 0) return;
     markDirty('EP rings updated.');
 
-    const terrain = document.getElementById('ep_terrain').value;
-    const rxSens  = parseFloat(document.getElementById('ep_rx_sensitivity').value);
     clearEpNodeRings(node);   // also aborts any previous run for this node
 
     const controller = new AbortController();
@@ -282,25 +284,16 @@ window.calculateEpNode = async function(nodeId) {
     // True until this run is superseded by a newer one or the node disappears.
     const stillCurrent = () => _epAbortControllers[nodeId] === controller && epNodes.includes(node);
 
-    for (let sysIdx = 0; sysIdx < node.systems.length; sysIdx++) {
-        const sys = node.systems[sysIdx];
+    // Iterate a snapshot: deleting a system mid-run shifts the live array, and
+    // indexing it would skip the system after the deleted one. Membership is
+    // re-checked after each response instead.
+    const systems = node.systems.slice();
+    for (let sysIdx = 0; sysIdx < systems.length; sysIdx++) {
+        const sys = systems[sysIdx];
         const labelOffset = [0, sysIdx * 20];
-        const payload = {
-            freq_mhz:            sys.freqMhz,
-            enemy_terrain:       terrain,
-            enemy_tx_w:          sys.txPowerW,
-            enemy_tx_gain:       sys.txGainDbi,
-            rx_sensitivity:      rxSens,
-            friendly_rx_gain:    0,
-            enemy_lat:           node.lat,
-            enemy_lon:           node.lon,
-            tx_antenna_type:     sys.antennaType,
-            tx_azimuth_deg:      sys.antennaAzimuth,
-            tx_beamwidth_deg:    sys.antennaBeamwidth,
-            tx_antenna_height_m: sys.antennaHeightAgl
-        };
+        const payload = buildEpSystemPayload(node, sys);
         try {
-            const r    = await fetch('/calculate_es_terrain', {
+            const r    = await calcFetch('/calculate_es_terrain', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(payload),
@@ -310,11 +303,20 @@ window.calculateEpNode = async function(nodeId) {
             // Bail before touching the map: the node may have been deleted or
             // recalculated while these awaits were pending.
             if (!stillCurrent()) return;
+            // The system itself may have been deleted mid-run; skip only it.
+            if (!node.systems.includes(sys)) continue;
             if (data.status !== 'success') continue;
 
             sys.rangeKm       = data.base_range_km;
             sys.polygonPoints = data.polygon_points;
-            const label = `${sys.name}: ~${data.base_range_km.toFixed(1)} km`;
+            sys.result = SpecterResults.buildFootprintResult({
+                kind: 'ep-system',
+                id: `ep:${sys.id}`,
+                subject: { node: { id: node.id, name: plainNodeName(node.name) }, system: { id: sys.id, name: sys.name } },
+                request: payload,
+                response: data,
+            });
+            const label = `${escapeHtml(sys.name)}: ~${data.base_range_km.toFixed(1)} km`;
 
             if (data.polygon_points) {
                 sys.layer = L.polygon(data.polygon_points, {
@@ -329,6 +331,7 @@ window.calculateEpNode = async function(nodeId) {
                 }).addTo(map);
                 sys.label = makeEdgeLabel(null, node.lat, node.lon, radiusMeters, label, labelOffset);
             }
+            bindInspectOnClick(sys.layer, { kind: 'ep-system', nodeId: node.id, sysId: sys.id });
             // The toggle stays authoritative: a hidden node collects fresh
             // geometry and range readouts without its rings hitting the map.
             if (node.ringsHidden) setEpRingsHidden(node, true);
@@ -341,10 +344,29 @@ window.calculateEpNode = async function(nodeId) {
     updateEpWorkbench();
 };
 
+function buildEpSystemPayload(node, sys) {
+    return {
+        freq_mhz:            sys.freqMhz,
+        enemy_terrain:       document.getElementById('ep_terrain').value,
+        enemy_tx_w:          sys.txPowerW,
+        enemy_tx_gain:       sys.txGainDbi,
+        rx_sensitivity:      parseFloat(document.getElementById('ep_rx_sensitivity').value),
+        friendly_rx_gain:    0,
+        rx_antenna_height_m: receiverHeightSetting('ep_rx_height_m'),
+        enemy_lat:           node.lat,
+        enemy_lon:           node.lon,
+        tx_antenna_type:     sys.antennaType,
+        tx_azimuth_deg:      sys.antennaAzimuth,
+        tx_beamwidth_deg:    sys.antennaBeamwidth,
+        tx_antenna_height_m: sys.antennaHeightAgl
+    };
+}
+
 function updateEpWorkbench() {
     const container = document.getElementById('ep-nodes-list');
     if (!container) return;
 
+    refreshInspector();
     if (epNodes.length === 0) {
         container.innerHTML = '<p class="results-empty">No EP nodes placed.</p>';
         return;
@@ -353,7 +375,7 @@ function updateEpWorkbench() {
     container.innerHTML = epNodes.map(node => `
         <div class="sys-card ep-theme" id="ep-card-${node.id}">
             <div class="sys-card-header">
-                <input type="text" class="sys-card-name-input" value="${escapeHtml(node.name)}"
+                <input type="text" class="sys-card-name-input" maxlength="${MAX_PLAIN_NAME_LENGTH}" value="${escapeHtml(node.name)}"
                     oninput="epUpdateNodeName('${node.id}', this.value)"
                     onclick="this.select()" title="Click to rename node">
                 <button class="sys-card-delete-btn" onclick="removeEpNode('${node.id}')" title="Remove node">✕</button>
@@ -369,10 +391,11 @@ function updateEpWorkbench() {
                 : node.systems.map(sys => `
                 <div class="sys-row">
                     <span class="sys-color-dot" style="background:${sys.color};"></span>
-                    <input type="text" class="sys-name" value="${escapeHtml(sys.name)}"
+                    <input type="text" class="sys-name" maxlength="${MAX_PLAIN_NAME_LENGTH}" value="${escapeHtml(sys.name)}"
                         oninput="epUpdateSysName('${node.id}','${sys.id}',this.value)"
                         onclick="this.select()" title="System name">
                     <span class="sys-range">${sys.rangeKm !== null ? '~' + sys.rangeKm.toFixed(1) + ' km' : ''}</span>
+                    ${sys.result ? `<button class="inspect-btn" ${inspectDataAttr({ kind: 'ep-system', nodeId: node.id, sysId: sys.id })} title="Explain this ring" aria-label="Explain ${escapeHtml(sys.name)} ring">ⓘ</button>` : ''}
                     <button class="sys-delete" onclick="removeSystemFromEpNode('${node.id}','${sys.id}')" title="Remove system">✕</button>
                     <div class="sys-params">
                         <label class="sys-label">Freq (MHz)

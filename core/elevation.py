@@ -1,5 +1,8 @@
+import contextlib
+import contextvars
 import logging
 import math
+import threading
 import time
 import requests
 from core.local_data import sample_dted
@@ -9,11 +12,104 @@ _logger = logging.getLogger(__name__)
 ELEVATION_API_URL = "https://api.opentopodata.org/v1/srtm30m"
 _BATCH_SIZE = 100        # public API hard limit: 100 locations per request
 _RATE_LIMIT_DELAY = 1.1  # seconds between requests; public API limit is 1 req/sec
+_MAX_RETRIES = 3         # retries of a 429 (rate-limited) response before giving up
+_MAX_BACKOFF_S = 10.0    # cap on any single Retry-After / backoff wait
+_HTTP_TIMEOUT_S = 20     # per API request
+_QUEUE_TIMEOUT_S = 120.0 # longest a request waits for the API slot before falling back
+_POINT_CACHE_MAX = 200_000  # point elevations kept (≈ tens of MB); cleared when exceeded
+
+# API elevations by rounded (lat, lon); see _fetch_online().
+_point_cache = {}
+
+# Process-wide pacing clock for the public API; see _post_rate_limited().
+_API_LOCK = threading.Lock()
+_last_api_request = float('-inf')  # time.monotonic() of the last request start
 
 EARTH_EFFECTIVE_RADIUS_KM = 8500  # 4/3 Earth model for standard atmosphere
 
 # Module-level cache keyed by rounded coordinates to avoid redundant API calls
 _profile_cache = {}
+# Per-profile elevation provenance, same keys as _profile_cache:
+# {'local': n, 'remote': n, 'void': n}, or None when the source is unknown.
+_profile_source = {}
+
+SRTM_VOID_M = -32000  # SRTM/DTED voids are reported as -32768
+
+# Request-scoped provenance accumulator; see elevation_tally().
+_tally = contextvars.ContextVar('elevation_tally', default=None)
+
+
+class _Elevations(list):
+    """Elevation list that also records which samples came from the remote API.
+
+    A plain list subclass so callers (and test mocks returning plain lists)
+    keep working; `remote` is a parallel list of bools, or absent."""
+
+    def __init__(self, values, remote):
+        super().__init__(values)
+        self.remote = remote
+
+
+@contextlib.contextmanager
+def elevation_tally():
+    """Collect elevation provenance for every profile fetched (or served from
+    cache) inside the block.  Yields a dict that elevation_summary() reads."""
+    tally = {'local': 0, 'remote': 0, 'void': 0, 'unknown_paths': 0, 'paths': 0}
+    token = _tally.set(tally)
+    try:
+        yield tally
+    finally:
+        _tally.reset(token)
+
+
+def _tally_profile(cache_key):
+    tally = _tally.get()
+    if tally is None:
+        return
+    tally['paths'] += 1
+    source = _profile_source.get(cache_key)
+    if source is None:
+        tally['unknown_paths'] += 1
+        return
+    for k in ('local', 'remote', 'void'):
+        tally[k] += source[k]
+
+
+def _record_source(cache_key, elevations, start, end):
+    remote = getattr(elevations, 'remote', None)
+    if remote is None:
+        _profile_source[cache_key] = None
+        return
+    values = elevations[start:end]
+    n_remote = sum(1 for r in remote[start:end] if r)
+    _profile_source[cache_key] = {
+        'local': len(values) - n_remote,
+        'remote': n_remote,
+        'void': sum(1 for v in values if v is None or v <= SRTM_VOID_M),
+    }
+
+
+def elevation_summary(tally):
+    """Condense an elevation_tally() dict into the diagnostic shape the
+    frontend inspector reads."""
+    local, remote = tally['local'], tally['remote']
+    if tally['paths'] == 0:
+        source = 'none'
+    elif tally['unknown_paths'] == tally['paths']:
+        source = 'unknown'
+    elif remote and local:
+        source = 'mixed'
+    elif remote:
+        source = 'remote'
+    else:
+        source = 'local'
+    return {
+        'source': source,
+        'local_samples': local,
+        'remote_samples': remote,
+        'void_samples': tally['void'],
+        'profiles': tally['paths'],
+    }
 
 
 def _haversine(lat1, lon1, lat2, lon2):
@@ -27,54 +123,121 @@ def _haversine(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def _fetch_online(locations):
-    """POST a list of {latitude, longitude} dicts to Open-Topo-Data in batches.
+def _retry_after_seconds(resp, attempt):
+    """Server-requested wait from a 429's Retry-After header (seconds form),
+    else exponential backoff from the base rate-limit interval, capped."""
+    header = resp.headers.get("Retry-After", "") if resp is not None else ""
+    try:
+        wait = float(header)
+    except (TypeError, ValueError):
+        wait = _RATE_LIMIT_DELAY * (2 ** attempt)
+    return max(_RATE_LIMIT_DELAY, min(wait, _MAX_BACKOFF_S))
 
-    Splits requests into chunks of at most _BATCH_SIZE to stay within the
-    public API's per-request location limit, sleeping _RATE_LIMIT_DELAY seconds
-    between chunks to respect the 1 req/sec rate limit.
+
+def _post_paced_locked(payload):
+    """POST to the elevation API, paced and retried on 429. Caller holds _API_LOCK.
+
+    The public API allows 1 request/second per client. Flask (and each
+    Gunicorn worker) serves requests on several threads, and a page load or
+    scenario load fires the J/S, ring, footprint and EP calculations at
+    once — so pacing inside one call is not enough: concurrent calls each
+    hit the API immediately and most get 429 and fall back to flat circles.
+    Holding _API_LOCK across the request makes every thread in the process
+    queue behind one pacing clock with only one call in flight. Separate
+    processes (multiple Gunicorn workers) can still collide occasionally,
+    which the 429 retry absorbs.
+    """
+    global _last_api_request
+    for attempt in range(_MAX_RETRIES + 1):
+        wait = _RATE_LIMIT_DELAY - (time.monotonic() - _last_api_request)
+        if wait > 0:
+            time.sleep(wait)
+        _last_api_request = time.monotonic()
+        resp = requests.post(ELEVATION_API_URL, json=payload, timeout=_HTTP_TIMEOUT_S)
+        if resp.status_code != 429 or attempt == _MAX_RETRIES:
+            resp.raise_for_status()
+            return resp
+        backoff = _retry_after_seconds(resp, attempt)
+        _logger.info("elevation API rate-limited (429); retrying in %.1fs (attempt %d/%d)",
+                     backoff, attempt + 1, _MAX_RETRIES)
+        # Push the shared clock forward so the retry (and every queued
+        # caller after it) waits out the backoff.
+        _last_api_request = time.monotonic() + backoff - _RATE_LIMIT_DELAY
+
+
+@contextlib.contextmanager
+def _api_slot():
+    """Hold the process-wide API lock, waiting at most _QUEUE_TIMEOUT_S.
+
+    A slow or rate-limited service would otherwise leave every waiting request
+    thread parked on the lock indefinitely; past the bound the request fails
+    like any network error and the caller falls back (flat circle, non-terrain
+    path loss)."""
+    if not _API_LOCK.acquire(timeout=_QUEUE_TIMEOUT_S):
+        raise requests.RequestException(
+            f"elevation request queue busy for more than {_QUEUE_TIMEOUT_S:.0f}s")
+    try:
+        yield
+    finally:
+        _API_LOCK.release()
+
+
+def _point_key(loc):
+    return (round(loc['latitude'], 5), round(loc['longitude'], 5))  # ~1 m
+
+
+def _post_rate_limited(payload):
+    """One paced, retried API call (acquires the process-wide slot itself)."""
+    with _api_slot():
+        return _post_paced_locked(payload)
+
+
+def _fetch_online(locations):
+    """Elevations for a list of {latitude, longitude} dicts from Open-Topo-Data.
+
+    Points already fetched (by this or any concurrent request) come from the
+    point cache. The rest go out in chunks of at most _BATCH_SIZE (the public
+    API's per-request limit), each under the process-wide API slot — and the
+    cache is re-checked after the slot is acquired, so a request that queued
+    behind an identical one reuses its answer instead of repeating the call.
 
     Returns elevation values (metres) in the same order as the input.
-    Raises requests.RequestException on network failure, or ValueError if the
-    API returns an error status or an unexpected number of results.
+    Raises requests.RequestException on network failure or queue timeout, or
+    ValueError if the API returns an error status or an unexpected number of
+    results.
     """
-    all_elevations = []
-    last_request_start = None
+    out = [_point_cache.get(_point_key(loc)) for loc in locations]
+    missing = [i for i, v in enumerate(out) if v is None]
 
-    for i in range(0, len(locations), _BATCH_SIZE):
-        # Sleep only the remaining time needed since the last request started,
-        # so that request latency counts toward the rate-limit window.
-        if last_request_start is not None:
-            elapsed = time.time() - last_request_start
-            if elapsed < _RATE_LIMIT_DELAY:
-                time.sleep(_RATE_LIMIT_DELAY - elapsed)
+    for c in range(0, len(missing), _BATCH_SIZE):
+        chunk_idx = missing[c:c + _BATCH_SIZE]
+        with _api_slot():
+            # Read this chunk's cached values and write fetched ones straight
+            # into `out` while holding the slot, so a cache clear — by this
+            # request or another thread — can never leave a gap in the result.
+            for i in chunk_idx:
+                out[i] = _point_cache.get(_point_key(locations[i]))
+            todo = [i for i in chunk_idx if out[i] is None]
+            if todo:
+                loc_string = "|".join(
+                    f"{locations[i]['latitude']},{locations[i]['longitude']}" for i in todo
+                )
+                resp = _post_paced_locked({"locations": loc_string})
+                body = resp.json()
+                if body.get("status") != "OK":
+                    raise ValueError(f"Elevation API error: {body.get('error', 'unknown status')}")
+                results = body.get("results", [])
+                if len(results) != len(todo):
+                    raise ValueError(
+                        f"Elevation API returned {len(results)} results for {len(todo)} locations"
+                    )
+                if len(_point_cache) + len(todo) > _POINT_CACHE_MAX:
+                    _point_cache.clear()
+                for i, r in zip(todo, results):
+                    out[i] = r["elevation"]
+                    _point_cache[_point_key(locations[i])] = r["elevation"]
 
-        last_request_start = time.time()
-        chunk = locations[i:i + _BATCH_SIZE]
-        loc_string = "|".join(
-            f"{loc['latitude']},{loc['longitude']}" for loc in chunk
-        )
-
-        resp = requests.post(
-            ELEVATION_API_URL,
-            json={"locations": loc_string},
-            timeout=30
-        )
-        resp.raise_for_status()
-
-        body = resp.json()
-        if body.get("status") != "OK":
-            raise ValueError(f"Elevation API error: {body.get('error', 'unknown status')}")
-
-        results = body.get("results", [])
-        if len(results) != len(chunk):
-            raise ValueError(
-                f"Elevation API returned {len(results)} results for {len(chunk)} locations"
-            )
-
-        all_elevations.extend(r["elevation"] for r in results)
-
-    return all_elevations
+    return out
 
 
 def _fetch_elevations(locations):
@@ -88,9 +251,10 @@ def _fetch_elevations(locations):
 
     uncovered = [i for i, v in enumerate(local) if v is None]
     n_local = len(locations) - len(uncovered)
+    remote = [False] * len(locations)
     if not uncovered:
         _logger.info("elevations: %d/%d from local DTED (all local)", n_local, len(locations))
-        return local
+        return _Elevations(local, remote)
 
     _logger.info("elevations: %d/%d from local DTED, %d from API", n_local, len(locations), len(uncovered))
     api_locs = [locations[i] for i in uncovered]
@@ -98,8 +262,9 @@ def _fetch_elevations(locations):
 
     for i, val in zip(uncovered, api_results):
         local[i] = val
+        remote[i] = True
 
-    return local
+    return _Elevations(local, remote)
 
 
 def get_point_elevations(points):
@@ -127,6 +292,7 @@ def get_elevation_profile(lat1, lon1, lat2, lon2, num_samples=20):
     cache_key = (round(lat1, 4), round(lon1, 4),
                  round(lat2, 4), round(lon2, 4), num_samples)
     if cache_key in _profile_cache:
+        _tally_profile(cache_key)
         return _profile_cache[cache_key]
 
     total_km = _haversine(lat1, lon1, lat2, lon2)
@@ -151,6 +317,8 @@ def get_elevation_profile(lat1, lon1, lat2, lon2, num_samples=20):
         })
 
     _profile_cache[cache_key] = profile
+    _record_source(cache_key, elevations, 0, num_samples)
+    _tally_profile(cache_key)
     return profile
 
 
@@ -228,7 +396,10 @@ def get_elevation_profiles_batch(paths, num_samples=12):
                     "distance_km": (i / (num_samples - 1)) * total_km,
                 })
             _profile_cache[cache_keys[path_idx]] = profile
+            _record_source(cache_keys[path_idx], all_elevations, start, end)
 
+    for k in cache_keys:
+        _tally_profile(k)
     return [_profile_cache[k] for k in cache_keys]
 
 
