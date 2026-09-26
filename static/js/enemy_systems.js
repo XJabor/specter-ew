@@ -197,7 +197,7 @@ window.calculateRedNodeSystems = async function(nodeId) {
         const labelOffset = [0, (sysIdx + 1) * 20];
         const payload = buildRedSystemPayload(node, sys, sensor);
         try {
-            const r = await fetch('/calculate_es_terrain', {
+            const r = await calcFetch('/calculate_es_terrain', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(payload)

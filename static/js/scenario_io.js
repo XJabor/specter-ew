@@ -296,6 +296,85 @@ function resetScenarioState() {
     updateMGRSTooltips();
 }
 
+// ============================================================
+// SCENARIO LOAD PROGRESS
+// ============================================================
+// A load recreates nodes and links, then fires the J/S, ring, footprint and
+// system calculations — which queue server-side behind the 1 req/sec terrain
+// limit, so a large scenario can take a minute. The bar counts requests made
+// through calcFetch() since the load began, against the number the loaded
+// scenario is known to need (expectedLoadCalculations()).
+
+const LOAD_IDLE_MS = 1500;  // quiet time that ends a load: covers the 300 ms ring
+                            // debounces and the 1200 ms delayed overlap redraw
+let loadProgress = null;    // { startedBase, finishedBase, expected, bodyDone, idleTimer }
+
+function expectedLoadCalculations(scenario) {
+    const eaPairs = jammingLinks.reduce((n, j) =>
+        n + enemyLinks.filter(e => e.rxId === j.rxId).length, 0);
+    const sensorRings = blueNodes
+        .filter(n => n.sensorActive && isReceiverCapableNode(n, 'blue'))
+        .reduce((n, s) => n + compatibleRedTransmitters(nodeEquipment(s, 'blue')).length, 0);
+    const systems = [...epNodes, ...redNodes].reduce((n, node) =>
+        n + ((node.systems || []).some(s => s.ringActive) ? node.systems.length : 0), 0);
+    return redNodes.length + blueNodes.length              // marker elevations
+        + eaPairs
+        + redNodes.filter(n => n.esActive).length
+        + sensorRings
+        + blueNodes.filter(n => n.footprintActive && isJammerNode(n, 'blue')).length
+        + systems
+        + (scenario.overlays?.overlap_visible ? 1 : 0);
+}
+
+function beginLoadProgress() {
+    loadProgress = {
+        startedBase: calcActivity.started,
+        finishedBase: calcActivity.finished,
+        expected: 0,
+        bodyDone: false,
+        idleTimer: null,
+    };
+    updateLoadProgress();
+}
+
+function endLoadProgress(message) {
+    if (!loadProgress) return;
+    clearTimeout(loadProgress.idleTimer);
+    loadProgress = null;
+    const panel = document.getElementById('load-progress');
+    if (!panel) return;
+    if (!message) { panel.hidden = true; return; }
+    panel.querySelector('.load-progress-fill').style.width = '100%';
+    panel.querySelector('.load-progress-text').textContent = message;
+    panel.querySelector('.load-progress-note').textContent = '';
+    setTimeout(() => { if (!loadProgress) panel.hidden = true; }, 1500);
+}
+
+// Called by calcFetch() on every request start/finish and by loadScenario().
+function updateLoadProgress() {
+    const panel = document.getElementById('load-progress');
+    if (!loadProgress || !panel) return;
+    const started = calcActivity.started - loadProgress.startedBase;
+    const done = calcActivity.finished - loadProgress.finishedBase;
+    const total = Math.max(loadProgress.expected, started, 1);
+    const pct = Math.min(100, Math.round((done / total) * 100));
+    panel.hidden = false;
+    panel.querySelector('.load-progress-fill').style.width = `${pct}%`;
+    panel.querySelector('.load-progress-text').textContent = loadProgress.bodyDone || done
+        ? `Calculating results… ${Math.min(done, total)} of ${total}`
+        : 'Placing nodes and links…';
+    panel.querySelector('.load-progress-note').textContent = total > 6
+        ? 'Online terrain lookups are limited to one per second; areas with local DTED load much faster.'
+        : '';
+
+    clearTimeout(loadProgress.idleTimer);
+    if (loadProgress.bodyDone && calcActivity.inFlight === 0) {
+        loadProgress.idleTimer = setTimeout(() => {
+            if (loadProgress && calcActivity.inFlight === 0) endLoadProgress('Scenario loaded.');
+        }, LOAD_IDLE_MS);
+    }
+}
+
 async function loadScenario(data) {
     const originalSchema = Number(data?.schema_version);
     const scenario = migrateScenario(data);
@@ -303,6 +382,8 @@ async function loadScenario(data) {
         mergeUserProfilePacks(scenario.profile_library.packs);
     }
     scenarioLoading = true;
+    beginLoadProgress();
+    let loaded = false;
     try {
         resetScenarioState();
         if (Number.isFinite(originalSchema) && originalSchema < SCENARIO_SCHEMA_VERSION) {
@@ -338,6 +419,7 @@ async function loadScenario(data) {
         updateEpWorkbench();
         updateRedSystemsWorkbench();
         renderOverlapControls();
+        if (loadProgress) loadProgress.expected = expectedLoadCalculations(scenario);
         recalculateAll();
         const epNodesToCalculate = epNodes.filter(node => node.systems.some(sys => sys.ringActive));
         for (const node of epNodesToCalculate) {
@@ -350,8 +432,17 @@ async function loadScenario(data) {
         if (scenario.overlays?.overlap_visible) {
             setTimeout(() => computeAndShowOverlap(true), 1200);
         }
+        loaded = true;
     } finally {
         scenarioLoading = false;
+        if (loaded && loadProgress) {
+            // Links, rings and footprints are still in flight; the bar closes
+            // itself once requests go quiet (see updateLoadProgress).
+            loadProgress.bodyDone = true;
+            updateLoadProgress();
+        } else {
+            endLoadProgress(null);
+        }
     }
     markClean('Scenario loaded.');
 }

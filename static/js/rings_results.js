@@ -130,7 +130,7 @@ function recalculateAll() {
     tasks.forEach(({ jLink, eLink, i }) => {
         const payload = buildEaPayload(jLink, eLink, params);
 
-        fetch('/calculate_ea', {
+        calcFetch('/calculate_ea', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -382,7 +382,7 @@ function computeAndShowOverlap(suppressDirty = false) {
     }
 
     if (statusEl) statusEl.textContent = 'Calculating...';
-    fetch('/compute_overlap', {
+    calcFetch('/compute_overlap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ polygons: selected.map(item => item.coverage.polygonPoints) })
@@ -513,7 +513,7 @@ async function updateBlueSensorCoverages() {
             const payload = buildSensorCoveragePayload(sensor, txNode);
 
             try {
-                const r = await fetch('/calculate_es_terrain', {
+                const r = await calcFetch('/calculate_es_terrain', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -643,7 +643,7 @@ async function updateRedDetectionRings() {
         const payload = buildRedRingPayload(node, sensor);
 
         try {
-            const r = await fetch('/calculate_es_terrain', {
+            const r = await calcFetch('/calculate_es_terrain', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -750,7 +750,7 @@ async function updateJammerFootprints() {
         const payload = buildFootprintPayload(node);
 
         try {
-            const r = await fetch('/calculate_jammer_footprint', {
+            const r = await calcFetch('/calculate_jammer_footprint', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),

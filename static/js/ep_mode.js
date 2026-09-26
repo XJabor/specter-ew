@@ -286,7 +286,7 @@ window.calculateEpNode = async function(nodeId) {
         const labelOffset = [0, sysIdx * 20];
         const payload = buildEpSystemPayload(node, sys);
         try {
-            const r    = await fetch('/calculate_es_terrain', {
+            const r    = await calcFetch('/calculate_es_terrain', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(payload),

@@ -259,10 +259,30 @@ function updateMGRSTooltips() {
     });
 }
 
+// ============================================================
+// CALCULATION REQUEST TRACKING
+// ============================================================
+// Every calculation / elevation request goes through calcFetch() so the
+// scenario-load progress bar (scenario_io.js) can count started and finished
+// requests. Aborted and failed requests count as finished.
+
+const calcActivity = { inFlight: 0, started: 0, finished: 0 };
+
+function calcFetch(url, options) {
+    calcActivity.inFlight++;
+    calcActivity.started++;
+    updateLoadProgress();
+    return fetch(url, options).finally(() => {
+        calcActivity.inFlight--;
+        calcActivity.finished++;
+        updateLoadProgress();
+    });
+}
+
 async function fetchAndStoreElevation(node) {
     const latlng = node.marker.getLatLng();
     try {
-        const resp = await fetch('/get_elevations', {
+        const resp = await calcFetch('/get_elevations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify([{ lat: latlng.lat, lon: latlng.lng }])
